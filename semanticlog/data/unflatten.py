@@ -9,8 +9,6 @@ import random
 import logging
 import warnings
 
-warnings.filterwarnings("ignore", category=UserWarning)
-logging.basicConfig(format='%(asctime)s | %(message)s', level=logging.INFO)
 random.seed(1234)
 
 
@@ -23,7 +21,7 @@ class XES_Preprocessor:
 
     def clean_dataframe(self, df):
         """applies string cleaning to all column names and row cleaning to all entries in the dataframe"""
-        clean_df = df.map(self.clean_string_row)
+        clean_df = df.applymap(self.clean_string_row)
         clean_columns = {
             col_str: self.clean_string(col_str) for col_str in clean_df.columns
         }
@@ -55,8 +53,13 @@ class XES_Preprocessor:
 
     def filter_to_timeintervall(self, log, mintime, maxtime, time_col="time:timestamp"):
         """takes a log, time intervall defined via a mintime and maxtime in unixtime seconds and returns the log filltered to this interval"""
-        maxtime = pd.to_datetime(maxtime, unit="s", utc=True)
-        mintime = pd.to_datetime(mintime, unit="s", utc=True)
+        if log[time_col].dtype == 'datetime64[ns, UTC]':
+            maxtime = pd.to_datetime(maxtime, unit="s", utc=True)
+            mintime = pd.to_datetime(mintime, unit="s", utc=True)
+        else:
+            maxtime = pd.to_datetime(maxtime, unit="s", utc=False)
+            mintime = pd.to_datetime(mintime, unit="s", utc=False)
+        
         traces_outside_intervall = log[
             ((log["time:timestamp"] > maxtime) | (log["time:timestamp"] < mintime))
         ]
@@ -244,6 +247,19 @@ class Unflattener_BPIC19:
         events["timestamp_column"] = "timestamp"
         events["attribute_columns"] = []
         events["file_path"] = ""
+        
+        #### Miscellaneous ####
+        misc = {}
+        misc["case_concepts"] = {
+            "df_purchase_order":{
+                "event_key": "event",
+                "timestamp_column": "timestamp",
+                "event_type_column": "activity",
+                "primary_key": "purchase_order",
+                "file_path": "misc/case_concepts/df_purchase_order.csv",
+                "data": log[["event", "purchase_order", "activity", "timestamp"]]
+            }
+        }
         
         logging.info("         created event data with a total of %i rows..", events["data"].shape[0])
 
@@ -436,6 +452,7 @@ class Unflattener_BPIC19:
                 "event_to_object": event_to_object,
                 "object_to_object": object_to_object,
             },
+            "misc": misc
         }
 
         return data

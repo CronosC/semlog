@@ -1,3 +1,4 @@
+import cython
 import owlready2 as owl
 
 def setup_datatypes():

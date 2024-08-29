@@ -6,10 +6,8 @@ import semanticlog.onto.datatypes as dt
 
 import logging
 
-logging.basicConfig(format='%(asctime)s | %(message)s', level=logging.INFO)
-
 class OCEDUpperOntologyBuilder:
-    ontoURI = "https://Uni-Bamberg/KIGA/OCED.owl"
+    ontoURI = "https://uni-bamberg.de/KIGA/OCED.owl"
     
     def __init__(self):
         """constructor which creates the upper level ontology and makes it available as .onto"""
@@ -31,18 +29,22 @@ class OCEDUpperOntologyBuilder:
             class ObjectAttribute(Attribute):pass
             # eventand object related classes
             class Event(owl.Thing):pass
+            class Trace(owl.Thing):pass
             class Start(Event):pass
+            class End(Event):pass
             class Object(owl.Thing):pass
             class Time(owl.Thing):pass
             # reified object_to_object relations
             class ObjectObjectRelation(owl.Thing):pass
             class child_of(ObjectObjectRelation):pass
             class parent_of(ObjectObjectRelation):pass
+            # misc
+            class DeclareConstraint(Trace):pass
 
             #### Properties ####
             class partOf(owl.ObjectProperty):
-                domain    = [Event]
-                range     = [Log]
+                domain    = [Event | Trace]
+                range     = [Log | Trace]
             # event_to_object relations
             class EventObjectRelation(owl.ObjectProperty):
                 domain    = [Event]
@@ -89,11 +91,11 @@ class OCEDUpperOntologyBuilder:
             #### Constraints ####
             Event.equivalent_to = [recordedAt.some(onto.Time)]
             Start.equivalent_to = [Event & owl.Not(owl.Inverse(df).some(Event))]
+            End.equivalent_to = [Event & owl.Not(df.some(Event))]
             Attribute.equivalent_to = [EventAttribute | ObjectAttribute, hasValue.some(owl.Thing)]
             EventAttribute.equivalent_to = [owl.Inverse(hasAttribute).some(Event)]
             ObjectAttribute.equivalent_to = [owl.Inverse(hasAttribute).some(Object)]
             Time.equivalent_to = [onto_time.Instant & owl.Inverse(recordedAt).some(Event)]
-
 
             owl.AllDisjoint([Event, Object, ObjectObjectRelation, Attribute, Time])
 

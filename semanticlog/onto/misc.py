@@ -3,13 +3,12 @@ import cython
 import owlready2 as owl
 from rdflib import Graph
 
-logging.basicConfig(format='%(asctime)s | %(message)s', level=logging.INFO)
-
-def save_onto(onto, path):
-    logging.info("Saving ontology to file(s) %s..", path)
+def save_onto(onto, path, save_as="ttl"):
     with onto:
-        logging.info("   saving as .xml..")
-        onto.save(file = path + ".xml", format = "rdfxml")
-        logging.info("   saving as .ttl..")
-        graph = owl.default_world.as_rdflib_graph()
-        graph.serialize(destination=path + ".ttl", format='turtle')
+        if save_as=="xml":
+            logging.info("saving ontology to file(s) %s.xml..", path)
+            onto.save(file = path + ".xml", format = "rdfxml")
+        elif save_as=="ttl":
+            logging.info("saving ontology to file(s) %s.ttl..", path)
+            graph = owl.default_world.as_rdflib_graph()
+            graph.serialize(destination=path + ".ttl", format='turtle')
