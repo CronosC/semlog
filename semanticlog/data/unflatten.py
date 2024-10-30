@@ -9,8 +9,6 @@ import random
 import logging
 import warnings
 
-random.seed(1234)
-
 
 class XES_Preprocessor:
 
@@ -19,19 +17,21 @@ class XES_Preprocessor:
 
     #### Cleaning ####
 
-    def clean_dataframe(self, df):
+    def clean_dataframe(self, df, clean_columns=True, casefold=True):
         """applies string cleaning to all column names and row cleaning to all entries in the dataframe"""
         clean_df = df.applymap(self.clean_string_row)
-        clean_columns = {
-            col_str: self.clean_string(col_str) for col_str in clean_df.columns
-        }
-        clean_df = clean_df.rename(columns=clean_columns)
+        if clean_columns:
+            clean_columns = {
+                col_str: self.clean_string(col_str, casefold=casefold) for col_str in clean_df.columns
+            }
+            clean_df = clean_df.rename(columns=clean_columns)
         return clean_df
 
-    def clean_string(self, string):
-        """replaces all special characters with underscores and cleans capizalization"""
-        string = re.sub(r"[^A-Za-z0-9]", "_", string)
-        string = string.casefold()
+    def clean_string(self, string, casefold=True):
+        """replaces special characters with underscores and cleans capizalization"""
+        string = re.sub(r"[^A-Za-z0-9_\-()]", "_", string)
+        if casefold:
+            string = string.casefold()
         return string
 
     def clean_string_row(self, row):
@@ -139,6 +139,7 @@ class Unflattener_BPIC19:
         max_variant_repetitions=10,
         min_traces_per_variant=2,
     ):
+        random.seed(1234)
         logging.info("Constructing BPIC19 dataset from file %s..", path)
         self.PrePro = XES_Preprocessor()
         logging.info("   loading classical event log data..")
@@ -149,6 +150,7 @@ class Unflattener_BPIC19:
         )
         logging.info("   cleaning data..")
         log = self.clean_log(log)
+        print(log)
         logging.info("   splitting data into entities and relations..")
         data = self.split_log(log)
         logging.info("done." + "-"*25)
@@ -444,6 +446,175 @@ class Unflattener_BPIC19:
             "file_path": "",
         }
         logging.info("         created invoice_for data with a total of %i rows..", invoice_for.shape[0])
+        
+        data = {
+            "events": events,
+            "objects": objects,
+            "relations": {
+                "event_to_object": event_to_object,
+                "object_to_object": object_to_object,
+            },
+            "misc": misc
+        }
+
+        return data
+
+    
+class Unflattener_XES:
+
+    data = {
+        "events": {},
+        "objects": {},
+        "relations": {
+            "event_to_object": {},
+            "object_to_object": {},
+        },
+    }
+
+    def __init__(
+        self,
+        path,
+        months_to_remove=[],
+        max_variant_repetitions=999999,
+        min_traces_per_variant=1,
+        case_column="case:concept:name",
+        event_type_column="concept:name",
+        time_column="time:timestamp",
+        additional_attribute_path=None
+    ):
+        self.case_column = case_column
+        self.event_type_column = event_type_column
+        self.time_column = time_column
+        
+        random.seed(1234)
+        logging.info("Constructing dataset from file %s..", path)
+        self.PrePro = XES_Preprocessor()
+        logging.info("   loading classical event log data..")
+        log = self.load_raw_log(path)
+        logging.info("   loading additional attribute data..")
+        log = self.add_attribute_from_file(log, additional_attribute_path)
+        logging.info("   filtering data..")
+        log = self.filter_log(
+            log, months_to_remove, max_variant_repetitions, min_traces_per_variant
+        )
+        logging.info("   cleaning data..")
+        log = self.clean_log(log)
+        logging.info("   splitting data into entities and relations..")
+        data = self.split_log(log)
+        logging.info("done." + "-"*25)
+        self.log = log
+        self.data = data
+
+    def load_raw_log(self, path):
+        """loads a event log from a given path"""
+        if path.endswith(".xes"):
+            return pm.read_xes(path)
+        elif path.endswith(".csv"):
+            log = pd.read_csv(path, sep=";")
+            log.rename(columns={self.case_column: 'case:concept:name', self.event_type_column: 'concept:name', self.time_column: "time:timestamp"}, inplace=True)
+            self.case_column = 'case:concept:name'
+            self.event_type_column = 'concept:name'
+            self.time_column = "time:timestamp"
+            log['time:timestamp'] = pd.to_datetime(log['time:timestamp'])
+            return log
+        else:
+            raise ValueError("Can only read .xes or .csv logs, but was given the file:", path)
+
+    def add_attribute_from_file(self, log, path):
+        df_attribute = pd.read_csv(path, delimiter=",")
+        shared_column = [x for x in log.columns if x in df_attribute.columns][0]
+        merged_df = pd.merge(log, df_attribute, on=shared_column, how='inner')
+        self.additional_attributes = list(df_attribute.columns)
+        self.additional_attributes.remove(shared_column)
+        return merged_df
+
+    def filter_log(
+        self, log, months_to_remove, max_variant_repetitions, min_traces_per_variant
+    ):
+        """reduces the size of the BPIC log, removing outliers, variant repetitions and rare variants"""
+        if min_traces_per_variant > 1:
+            logging.info("      removing case variants which occur less than %i times..", min_traces_per_variant)
+            log = self.PrePro.filter_variants_by_minimum_occurence(
+                log, min_traces_per_variant
+            )
+        if max_variant_repetitions < 999999:
+            logging.info("      limiting case variant repetitions to a maximum of %i times..", max_variant_repetitions)
+            log = self.PrePro.filter_variants_by_maximum_repetition(
+                log, max_variant_repetitions
+            )
+        return log
+
+    def clean_log(self, log):
+        """cleans up column names, renames columns, adds new key columns and adds index to key columns which are not specific enough"""
+        log["event"] = log.index
+        logging.info("      adding prefixes to key columns..")
+        log = self.PrePro.add_prefix(
+            log,
+            {
+                "event": "event_",
+            },
+        )
+
+        logging.info("      cleaning special characters and unifying string casing..")
+        log = self.PrePro.clean_dataframe(log, clean_columns=False, casefold=False)
+
+        return log
+
+    def split_log(self, log):
+        """splits the log into individual entities and relations"""
+        
+        events = {}
+        objects = {}
+        event_to_object = {}
+        object_to_object = {}
+        misc = {}
+        
+        #### Events ####
+        logging.info("      creating events..")
+        
+        events["data"] = log[["event", self.event_type_column, self.time_column]]
+        events["primary_key"] = "event"
+        events["event_type_column"] = self.event_type_column
+        events["timestamp_column"] = self.time_column
+        events["attribute_columns"] = []
+        events["file_path"] = ""
+        
+        #### Miscellaneous ####
+        misc["case_concepts"] = {
+            "df_case":{
+                "event_key": "event",
+                "timestamp_column": self.time_column,
+                "event_type_column": self.event_type_column,
+                "primary_key": self.case_column,
+                "file_path": "misc/case_concepts/df_case.csv",
+                "data": log[["event", self.case_column, self.event_type_column, self.time_column]]
+            }
+        }
+        
+        logging.info("         created event data with a total of %i rows..", events["data"].shape[0])
+       
+       
+        logging.info("      creating objects..")
+        
+        objects["abstract_case_object"] = {
+            "data": log[[self.case_column] + self.additional_attributes].drop_duplicates(),
+            "primary_key": self.case_column,
+            "attribute_columns": self.additional_attributes,
+            "file_path": "",
+        }
+        logging.info("         created object data with a total of %i rows..", objects["abstract_case_object"]["data"].shape[0])
+        
+        modify = log[["event", self.case_column]].drop_duplicates()
+        modify["modify"] = "modify" + modify.index.astype(str)
+        event_to_object["modify"] = {
+            "data": modify,
+            "primary_key": "modify",
+            "from_foreign_key": "event",
+            "to_foreign_key": self.case_column,
+            "file_path": "",
+        }
+        logging.info("         created modify data with a total of %i rows..", modify.shape[0])
+        
         
         data = {
             "events": events,

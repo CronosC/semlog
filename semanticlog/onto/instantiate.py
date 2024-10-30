@@ -5,6 +5,7 @@ import types
 import datetime
 import semanticlog.onto.datatypes as dt
 from urllib.parse import quote
+from rdflib import Graph, URIRef, RDF
 
 import logging
 
@@ -14,7 +15,7 @@ class OCEDInstantiator:
     def __init__(self):
         pass
 
-    def instantiate(self, onto, data, logname):
+    def instantiate(self, onto, data, logname, reason=False):
         """takes an OCED upper-level ontology and data to instantiate it with, returns an instantiated ontology"""
         logging.info("instantiating upper level ontology with data for %s..", logname)
         with onto:
@@ -40,6 +41,11 @@ class OCEDInstantiator:
             if "declare" in data["misc"].keys():
                 logging.info("   instantiating declare constraints..")
                 onto = self.instantiate_declare_constraints(onto, data["misc"]["declare"])
+                
+        if reason:
+            logging.info("   running Pellet..")
+            with onto:
+                owl.sync_reasoner_pellet()
 
         self.onto = onto
 
@@ -55,7 +61,7 @@ class OCEDInstantiator:
 
         activities = df[activity_column].unique()
         onto = self.setup_classes(onto, activities, onto.Event)
-        onto = self.setup_classes(onto, attributes, onto.EventAttribute)
+        onto = self.setup_classes(onto, attributes, onto.EventAttribute, disjoint=False)
 
         df.apply(
             lambda x: self.instantiate_event(
@@ -98,11 +104,12 @@ class OCEDInstantiator:
             df = objects[object_name]["data"]
             attributes = objects[object_name]["attribute_columns"]
 
-            onto = self.setup_classes(onto, attributes, onto.ObjectAttribute)
+            onto = self.setup_classes(onto, attributes, onto.ObjectAttribute, disjoint=False)
             onto = self.setup_classes(
                 onto,
                 ["has_" + str(x) + "_attribute" for x in attributes],
                 onto.hasAttribute,
+                disjoint=False
             )
 
             df.apply(
@@ -126,9 +133,10 @@ class OCEDInstantiator:
         attribute_assignment_dict = {"hasAttribute": []}
 
         for attribute in attributes:
-            string_value = str(row_data[attribute])
+            string_value = quote(str(row_data[attribute]), safe="/:#")
             attribute_class = onto[attribute]
-            attribute_instance = attribute_class(string_value)
+            attribute_instance = attribute_class(attribute + "_" + string_value)
+            attribute_instance.hasValue = string_value
 
             attribute_assignment_dict["hasAttribute"].append(attribute_instance)
 
@@ -146,9 +154,9 @@ class OCEDInstantiator:
 
     def instantiate_event_to_object_relations(self, onto, event_to_object_relations):
         """takes an OCED ontology and event to object relation data, instantiates the data in the ontology"""  #
-
+        relations_to_setup = list(event_to_object_relations.keys())
         onto = self.setup_classes(
-            onto, event_to_object_relations.keys(), onto.EventObjectRelation
+            onto, relations_to_setup, onto.EventObjectRelation, disjoint=False, create_inverse_relation=True
         )
 
         for relation_name in event_to_object_relations:
@@ -172,11 +180,11 @@ class OCEDInstantiator:
         self, onto, object_to_object_relations, reify=True
     ):
         """takes an OCED ontology and object to object relation data, instantiates the data in the ontology"""
+        relations_to_setup = list(object_to_object_relations.keys())
+        onto = self.setup_classes(
+            onto, relations_to_setup, onto.ObjectObjectRelation, disjoint=False
+        )
         if reify:
-            onto = self.setup_classes(
-                onto, object_to_object_relations.keys(), onto.ObjectObjectRelation
-            )
-
             for relation_name in object_to_object_relations:
                 logging.info(
                     "      instantiating object to object relation %s..", relation_name
@@ -194,10 +202,6 @@ class OCEDInstantiator:
                     axis=1,
                 )
         else:
-            onto = self.setup_classes(
-                onto, object_to_object_relations.keys(), onto.ObjectObjectRelation
-            )
-
             for relation_name in object_to_object_relations:
                 logging.info(
                     "      instantiating object to object relation %s..", relation_name
@@ -240,30 +244,49 @@ class OCEDInstantiator:
         from_instance.inRelation.append(relation_instance)
         relation_instance.with_ = to_instance
 
-    def instantiate_case_concepts(self, onto, case_concepts):
+    def instantiate_case_concepts(self, onto, case_concepts, add_variants=True):
         """instantiates the event order via directlyFollows relations over events derived from case concepts"""
-        onto = self.setup_classes(onto, case_concepts.keys(), onto.df)
-
+        onto = self.setup_classes(onto, case_concepts.keys(), onto.df, disjoint=False)
+        if add_variants:
+            onto = self.setup_classes(onto, ["has_variant_attribute"], onto.hasAttribute, disjoint=False, create_inverse_relation=True)
+            onto = self.setup_classes(onto, ["variant"], onto.ObjectAttribute, disjoint=False)
+        
         for case_co_name in case_concepts:
             logging.info(
                 "      instantiating df relations for case concept %s..", case_co_name
             )
             df_case_co = case_concepts[case_co_name]["data"]
+            event_type_column = case_concepts[case_co_name]["event_type_column"]
             event_column = case_concepts[case_co_name]["event_key"]
             time_column = case_concepts[case_co_name]["timestamp_column"]
             primary_key = case_concepts[case_co_name]["primary_key"]
+            
+
 
             df_case_co = df_case_co.sort_values(by=[primary_key, time_column])
-            df_case_co = (
+            df_event_sequence = (
                 df_case_co.groupby(primary_key)[event_column].apply(list).reset_index()
             )
 
-            df_case_co.apply(
+            df_event_sequence.apply(
                 lambda x: self.instantiate_case_concept(
                     x, onto, case_co_name, event_column, primary_key
                 ),
                 axis=1,
             )
+
+            if add_variants:
+                df_variants = (
+                    df_case_co.groupby(primary_key)[event_type_column].apply(list).reset_index()
+                )
+
+                df_variants = df_variants.rename(columns={event_type_column: "variant"})
+                df_variants.apply(
+                    lambda x: self.instantiate_variant_information(
+                        x, onto, case_co_name, primary_key
+                    ),
+                    axis=1,
+                )
 
         return onto
 
@@ -276,7 +299,7 @@ class OCEDInstantiator:
             onto.Start(event_sequence[0])
             onto.End(event_sequence[-1])
 
-            trace_instance = onto.Trace(self.get_trace_id_from_case_concept_id(case_concept_row[case_co_column]))
+            trace_instance = onto.Trace(case_concept_row[case_co_column])
             trace_instance.partOf.append(self.log_instance)
             for i in range(0, len(event_sequence)):
                 event_instance = onto[event_sequence[i]]
@@ -286,43 +309,60 @@ class OCEDInstantiator:
                 event_instance_current = onto[event_sequence[i]]
                 event_instance_next = onto[event_sequence[i + 1]]
                 setattr(event_instance_current, case_co_name, event_instance_next)
+                
 
-    def get_trace_id_from_case_concept_id(self, case_co_id):
-        return "trace_" + case_co_id
+    def instantiate_variant_information(
+        self, case_concept_row, onto, case_co_name, case_co_column
+    ):
+        with onto:
+            variant = case_concept_row["variant"]
+            trace_instance = onto.Trace(case_concept_row[case_co_column])
+
+            self.instantiate_attributes(onto, trace_instance, case_concept_row, ["variant"])
 
     def instantiate_declare_constraints(self, onto, declare):
         for declare_view in declare:
             df_declare = declare[declare_view]["data"]
             case_column = declare[declare_view]["df_view"]
 
-            constraints = list(df_declare.columns)
-            constraints.remove(case_column)
-            constraints.remove("Unnamed: 0")
-            onto = self.setup_classes(onto, constraints, onto.DeclareConstraint)
+            constraints = [
+                col for col in df_declare.columns 
+                if col not in {case_column, "Unnamed: 0"} and (df_declare[col] == 0).any()
+            ]
+            onto = self.setup_classes(onto, constraints, onto.DeclareConstraint, disjoint=False)
+
+            # pre-filter once to create a dictionary of trace_ids by constraint
+            valid_constraints = {
+                onto[constraint]: df_declare.loc[df_declare[constraint] == 1, case_column].tolist()
+                for constraint in constraints
+            }
             
-            df_declare.apply(
-                lambda x: self.instantiate_declare_constraint(x, onto, case_column),
-                axis=1,
-            )
+            n=1
+            l=len(constraints)
+            with onto:
+                for constraint, trace_ids in valid_constraints.items():
+                    logging.info(f"      {n}/{l}..\033[1A")
+                    n=n+1
+                    for trace_id in trace_ids:
+                        constraint(trace_id)
 
         return onto
 
-    def instantiate_declare_constraint(self, constraint_row, onto, case_column):
-        trace_id = self.get_trace_id_from_case_concept_id(constraint_row[case_column])
-        constraints = list(constraint_row.keys())
-        constraints.remove(case_column)
-        constraints.remove("Unnamed: 0")
-        with onto:
-            valid_constraints = filter(lambda c: constraint_row[c] == 1, constraints)
-            list(map(lambda c: (onto[c](trace_id)), valid_constraints))
-
-    def setup_classes(self, onto, classes, superclass, disjoint=True):
+    def setup_classes(self, onto, classes, superclass, disjoint=True, create_inverse_relation=False):
         """gets an OCED ontology, list of new concept names and their superclass and creates the new classes in the ontology as
         children of the superclass"""
         with onto:
+            class_instances = []
             for class_ in classes:
-                types.new_class(class_, (superclass,))
+                new_class = types.new_class(class_, (superclass,))
+                class_instances.append(new_class)
+                if create_inverse_relation:
+                    inverse_relation = types.new_class(self.get_name_of_inverse(class_), (owl.ObjectProperty,))
+                    new_class.inverse_property = inverse_relation
             if disjoint:
-                owl.AllDisjoint(classes)
+                owl.AllDisjoint(class_instances)
 
         return onto
+    
+    def get_name_of_inverse(self, relation_name):
+        return "inverse_" + relation_name

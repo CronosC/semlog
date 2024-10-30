@@ -291,13 +291,13 @@ class DataPipeline:
 
             self.save_dataframe(df_declare, full_declare_path)
 
-    def add_all_declare_constraints(self, declare_constraints):
+    def add_all_declare_constraints(self, declare_constraints, consider_vacuity=False):
         """adds the declare constraints at the trace level to all case_concepts in the data"""
         for case_concept_name in self.data["misc"]["case_concepts"]:
             self.add_declare_constraints(case_concept_name, declare_constraints)
 
     def add_declare_constraints(
-        self, case_concept_name, declare_constraints
+        self, case_concept_name, declare_constraints, consider_vacuity=False
     ):
         """constructs a declare constraint file via the DeclareEnricher object,
         the declare_constraints must be a pair of strings corresponding to unary
@@ -315,7 +315,7 @@ class DataPipeline:
             declare_model_path,
         )
 
-        enricher.evaluate_declare_model(declare_model_path)
+        enricher.evaluate_declare_model(declare_model_path, consider_vacuity=consider_vacuity)
 
         trace_constraints_mapping = enricher.results.get_metric(metric="state")
         trace_constraints_mapping = trace_constraints_mapping.rename(columns=self.preprocess_constraint_string)
@@ -344,9 +344,8 @@ class DataPipeline:
     def preprocess_constraint_string(self, constraint_string):
         constraint_string = constraint_string.replace("|", "")
         constraint_string = constraint_string.replace(" ", "")
-        constraint_string = constraint_string.replace("[", "___")
-        constraint_string = constraint_string.replace(",", "__")
-        constraint_string = constraint_string.replace("]", "")
+        constraint_string = constraint_string.replace("[", "(")
+        constraint_string = constraint_string.replace("]", ")")
         return constraint_string
 
     def prepare_declare_enricher(self, case_concept_name):

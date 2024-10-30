@@ -1,12 +1,14 @@
 import cython
 import owlready2 as owl
 
-def setup_datatypes():
+def setup_datatypes(onto):
     """makes the necessary datatypes available to owlready"""
-    owl.declare_datatype(NonNegInt, "http://www.w3.org/2001/XMLSchema#nonNegativeInteger", parse_non_negative_int, unparse_non_negative_int)
-    owl.declare_datatype(gYear, "http://www.w3.org/2001/XMLSchema#gYear", parse_gYear, unparse_gYear)
-    owl.declare_datatype(gMonth, "http://www.w3.org/2001/XMLSchema#gMonth", parse_gMonth, unparse_gMonth)
-    owl.declare_datatype(gDay, "http://www.w3.org/2001/XMLSchema#gDay", parse_gDay, unparse_gDay)
+    with onto:
+        owl.declare_datatype(NonNegInt, "http://www.w3.org/2001/XMLSchema#nonNegativeInteger", parse_non_negative_int, unparse_non_negative_int)
+        owl.declare_datatype(gYear, "http://www.w3.org/2001/XMLSchema#gYear", parse_gYear, unparse_gYear)
+        owl.declare_datatype(gMonth, "http://www.w3.org/2001/XMLSchema#gMonth", parse_gMonth, unparse_gMonth)
+        owl.declare_datatype(gDay, "http://www.w3.org/2001/XMLSchema#gDay", parse_gDay, unparse_gDay)
+    return onto
 
 #### Datatype definitions and parse/unparse functions ####
 

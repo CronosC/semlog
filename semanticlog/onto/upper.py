@@ -15,10 +15,11 @@ class OCEDUpperOntologyBuilder:
         self.onto = self.build_oced_ul_ontology()
 
 
-    def build_oced_ul_ontology(self):
+    def build_oced_ul_ontology(self, include_time=False):
         """sets up a generic upper level ontology according to the full OCED meta model for process mining"""
         onto = owl.get_ontology(self.ontoURI)
-        onto_time = owl.get_ontology("data/ontos/Time.xml").load()
+        if include_time:
+            onto_time = owl.get_ontology("data/ontos/Time.xml").load()
 
         with onto:
             #### Concepts ####
@@ -45,6 +46,8 @@ class OCEDUpperOntologyBuilder:
             class partOf(owl.ObjectProperty):
                 domain    = [Event | Trace]
                 range     = [Log | Trace]
+            class consistsOf(owl.ObjectProperty):
+                inverse_property = partOf
             # event_to_object relations
             class EventObjectRelation(owl.ObjectProperty):
                 domain    = [Event]
@@ -63,6 +66,8 @@ class OCEDUpperOntologyBuilder:
             class recordedAt(owl.ObjectProperty, owl.FunctionalProperty):
                 domain    = [Event]
                 range     = [Time]
+            class records(owl.ObjectProperty):
+                inverse_property = recordedAt
 
             # relations to create reified object_to_object relations
             class inRelation(owl.ObjectProperty, owl.InverseFunctionalProperty):
@@ -76,8 +81,11 @@ class OCEDUpperOntologyBuilder:
             class hasAttribute(owl.ObjectProperty):
                 domain    = [Event | Object]
                 range     = [Attribute]
+            class isAttributeOf(owl.ObjectProperty):
+                inverse_property = hasAttribute
             class hasValue(owl.DataProperty, owl.FunctionalProperty):
                 domain    = [Attribute]
+                range     = [str]
 
             # event order relations
             class ef(owl.ObjectProperty, owl.TransitiveProperty):
@@ -92,11 +100,16 @@ class OCEDUpperOntologyBuilder:
             Event.equivalent_to = [recordedAt.some(onto.Time)]
             Start.equivalent_to = [Event & owl.Not(owl.Inverse(df).some(Event))]
             End.equivalent_to = [Event & owl.Not(df.some(Event))]
-            Attribute.equivalent_to = [EventAttribute | ObjectAttribute, hasValue.some(owl.Thing)]
+            Attribute.equivalent_to = [EventAttribute | ObjectAttribute, hasValue.some(str)]
             EventAttribute.equivalent_to = [owl.Inverse(hasAttribute).some(Event)]
             ObjectAttribute.equivalent_to = [owl.Inverse(hasAttribute).some(Object)]
-            Time.equivalent_to = [onto_time.Instant & owl.Inverse(recordedAt).some(Event)]
+            if include_time:
+                Time.equivalent_to = [onto_time.Instant & owl.Inverse(recordedAt).some(Event)]
 
             owl.AllDisjoint([Event, Object, ObjectObjectRelation, Attribute, Time])
+            
+            #### Data types ####
+            
+            onto = dt.setup_datatypes(onto)
 
         return onto
