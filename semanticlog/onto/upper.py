@@ -1,11 +1,60 @@
-import cython
-import owlready2 as owl
-import pandas as pd
 import datetime
-import semanticlog.onto.datatypes as dt
+import pandas as pd
+import owlapy as owl
+from owlapy.iri import IRI
+from owlapy.owl_axiom import OWLDeclarationAxiom, OWLSubClassOfAxiom
+from owlapy.owl_ontology_manager import OntologyManager
+from owlapy.class_expression import OWLClass
 
-import logging
+from semanticlog.onto.builder import OCEDBaseBuilder
+from semanticlog.onto.transform import parse_manchester
 
+
+class OCEDUpperOntoBuilder(OCEDBaseBuilder):
+
+    def __init__(self, iri):
+        super().__init__(iri)
+
+    def construct_upper_ontology(self, path: str) -> None:
+        self.add_classes(["Object", "Event", "Attribute", "Time"])
+        self.add_classes(["ObjectAttribute", "EventAttribute"], "Attribute")
+
+        self.add_property(
+            "observed_at",
+            domain_class="Event",
+            range_class="Time",
+            create_inverse=True,
+            inverse_name="observes",
+        )
+        self.add_property(
+            "event_object_relation",
+            domain_class="Event",
+            range_class="Object",
+            create_inverse=True,
+        )
+        self.add_property(
+            "object_object_relation",
+            domain_class="Object",
+            range_class="Object",
+            create_inverse=True,
+        )
+        self.add_property(
+            "has_attribute",
+            domain_class="Object or Event",
+            range_class="Attribute",
+            create_inverse=True,
+            inverse_name="attribute_of",
+        )
+        self.add_property(
+            "has_value",
+            domain_class="Attribute or Time",
+            data_prop=True,
+        )
+
+        self.save_onto(path)
+
+
+'''
 class OCEDUpperOntologyBuilder:
     ontoURI = "https://uni-bamberg.de/KIGA/OCED.owl"
     
@@ -100,7 +149,7 @@ class OCEDUpperOntologyBuilder:
             Event.equivalent_to = [recordedAt.some(onto.Time)]
             Start.equivalent_to = [Event & owl.Not(owl.Inverse(df).some(Event))]
             End.equivalent_to = [Event & owl.Not(df.some(Event))]
-            Attribute.equivalent_to = [EventAttribute | ObjectAttribute, hasValue.some(str)]
+            Attribute.equivalent_to = [EventAttribute | ObjectAttribute] #, hasValue.some(str)] leads to error in onto!
             EventAttribute.equivalent_to = [owl.Inverse(hasAttribute).some(Event)]
             ObjectAttribute.equivalent_to = [owl.Inverse(hasAttribute).some(Object)]
             if include_time:
@@ -113,3 +162,4 @@ class OCEDUpperOntologyBuilder:
             onto = dt.setup_datatypes(onto)
 
         return onto
+'''
