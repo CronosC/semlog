@@ -6,7 +6,7 @@ setuptools.setup(
     author="Christian Dormagen",
     author_email="christian.dormagen@oth-regensburg.de",
     description="OCED based OWL ontology construction and instantiation for event log data",
-    packages=["semlog"],
+    packages=["semanticlog"],
     include_package_data=True,
     install_requires=[
     ],

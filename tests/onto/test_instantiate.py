@@ -19,8 +19,8 @@ class TestOntoBuilder(unittest.TestCase):
         self.data = OCEDStore()
         self.data._events = {
             "activity1": {
-                "id_col": "id",
-                "time_col": "time",
+                "id": "id",
+                "time": "time",
                 "data": pd.DataFrame(
                     {
                         "time": [
@@ -35,7 +35,7 @@ class TestOntoBuilder(unittest.TestCase):
         }
         self.data._objects = {
             "thing1": {
-                "id_col": "id",
+                "id": "id",
                 "data": pd.DataFrame(
                     {
                         "id": ["o" + str(i) for i in range(10)],

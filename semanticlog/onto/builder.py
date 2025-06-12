@@ -29,6 +29,8 @@ from owlapy.owl_ontology_manager import OntologyManager
 from owlapy.class_expression import OWLClass
 from owlapy.owl_property import OWLObjectProperty, OWLDataProperty
 from owlapy.owl_datatype import OWLDatatype
+import logging
+import owlready2
 
 from semanticlog.onto.transform import parse_manchester
 
@@ -39,15 +41,17 @@ class OCEDBaseBuilder:
         self.manager = OntologyManager()
         try:
             self.onto = self.manager.load_ontology(iri)
-            self.iri = self.onto.get_ontology_id().get_ontology_iri().str + "#"
+            self.iri = self.onto.get_ontology_id().get_ontology_iri().str
         except:
-
             self.onto = self.manager.create_ontology(iri)
             self.iri = iri
+        if not self.iri.endswith("#"):
+            self.iri = self.iri + "#"
 
     def add_classes(
         self, class_list: list[str], superclasses: list[str] | str | None = None
     ) -> None:
+        logging.info(f"  adding {len(class_list)} classes..")
         if type(superclasses) == str or superclasses is None:
             for class_name in class_list:
                 self.add_class(class_name, superclasses)
@@ -60,7 +64,10 @@ class OCEDBaseBuilder:
             )
 
     def add_class(self, class_name: str, superclass: str | None = None) -> None:
+        logging.info(f"  adding class {class_name} as subclass of {superclass}..")
+        
         owl_class = parse_manchester(self.iri, class_name)
+        
         self.onto.add_axiom(OWLDeclarationAxiom(owl_class))
 
         if superclass is not None:
@@ -91,6 +98,7 @@ class OCEDBaseBuilder:
         Raises:
             ValueError: If a data property is specified with create_inverse=True.
         """
+        logging.info(f"  adding property {prop_name} ..")
         datatypes = ["integer", "double", "boolean"]  # TODO datetime?
         if data_prop and create_inverse:
             raise ValueError(
@@ -151,10 +159,11 @@ class OCEDBaseBuilder:
 
     def assert_individual(self, individual: str, class_name: str) -> None:
         owl_class = parse_manchester(self.iri, class_name)
-        owl_individual = OWLNamedIndividual(self.iri + individual)
+        owl_individual = OWLNamedIndividual(f"{self.iri}{individual}")
         self.onto.add_axiom(OWLClassAssertionAxiom(owl_individual, owl_class))
 
     def assert_individuals(self, individuals: list[str], class_name: str) -> None:
+        logging.info(f"  asserting {len(individuals)} individuals of class {class_name}..")
         owl_class = parse_manchester(self.iri, class_name)
         iri = self.iri
         axioms = [
@@ -205,10 +214,14 @@ class OCEDBaseBuilder:
         to_key: str,
         data_prop=False,
     ) -> None:
+        logging.info(f"  asserting {len(dataframe)} relations of property {prop}..")
         iri = self.iri
-
+        
+        dataframe = dataframe[~(dataframe[from_key].isin([None, "", pd.NA]) | dataframe[to_key].isin([None, "", pd.NA]))]
+        
         if data_prop:
             owl_prop = OWLDataProperty(f"{iri}{prop}")
+            dataframe[to_key] = dataframe[to_key].dropna()
             axioms = [
                 OWLDataPropertyAssertionAxiom(
                     OWLNamedIndividual(f"{iri}{from_name}"),
@@ -227,7 +240,6 @@ class OCEDBaseBuilder:
                 )
                 for from_name, to in zip(dataframe[from_key], dataframe[to_key])
             ]
-
         self.onto.add_axiom(axioms)
 
     #### HELPER ####

@@ -3,7 +3,6 @@ import pandas as pd
 from pandas.testing import assert_frame_equal
 from semanticlog.data.oced import OCEDStore
 
-
 class TestOCEDStore(unittest.TestCase):
 
     def setUp(self):
@@ -35,6 +34,55 @@ class TestOCEDStore(unittest.TestCase):
         self.o2o_relation_data = pd.DataFrame(
             {"from_id": [1, 1, 4, 5], "to_id": [1, 3, 2, 1]}
         )
+        
+    def test_rename_relation(self):
+        self.oced.add_event("type1", "event", "timestamp", self.event_1)
+        self.oced.add_event("type2", "event", "timestamp", self.event_2)
+        self.oced.add_object(self.object_A_type, "object", self.object_A_data)
+        self.oced.add_object(self.object_B_type, "object", self.object_B_data)
+        self.oced.add_event_to_object_relation("rel1", "from_id", "to_id", [self.object_A_type], self.e2o_relation_data)
+        self.oced.add_object_to_object_relation("rel2", "from_id", [self.object_A_type], "to_id", [self.object_B_type], self.o2o_relation_data)
+        
+        self.oced.rename_relation('rel1', 'rel1_new')
+        self.assertIn('rel1_new', self.oced._relations['event_to_object'])
+        self.assertNotIn('rel1', self.oced._relations['event_to_object'])
+        with self.assertRaises(ValueError):
+            self.oced.rename_relation('nonexistent_rel', 'rel_new')
+
+    def test_rename_object(self):
+        self.oced.add_event("type1", "event", "timestamp", self.event_1)
+        self.oced.add_event("type2", "event", "timestamp", self.event_2)
+        self.oced.add_object(self.object_A_type, "object", self.object_A_data)
+        self.oced.add_object(self.object_B_type, "object", self.object_B_data)
+        self.oced.add_event_to_object_relation("rel1", "from_id", "to_id", [self.object_A_type], self.e2o_relation_data)
+        self.oced.add_object_to_object_relation("rel2", "from_id", [self.object_A_type], "to_id", [self.object_B_type], self.o2o_relation_data)
+        
+        self.oced.rename_object(self.object_A_type, 'C')
+        self.assertIn('C', self.oced._objects)
+        self.assertNotIn(self.object_A_type, self.oced._objects)
+
+        for relation in self.oced._relations['event_to_object'].values():
+            self.assertNotIn(self.object_A_type, relation['to_type'])
+        for relation in self.oced._relations['object_to_object'].values():
+            self.assertNotIn(self.object_A_type, relation['from_type'])
+            self.assertNotIn(self.object_A_type, relation['to_type'])
+        with self.assertRaises(ValueError):
+            self.oced.rename_object('nonexistent_object', 'object_new')
+
+    def test_rename_activity(self):
+        self.oced.add_event("type1", "event", "timestamp", self.event_1)
+        self.oced.add_event("type2", "event", "timestamp", self.event_2)
+        self.oced.add_object(self.object_A_type, "object", self.object_A_data)
+        self.oced.add_object(self.object_B_type, "object", self.object_B_data)
+        self.oced.add_event_to_object_relation("rel1", "from_id", "to_id", [self.object_A_type], self.e2o_relation_data)
+        self.oced.add_object_to_object_relation("rel2", "from_id", [self.object_A_type], "to_id", [self.object_B_type], self.o2o_relation_data)
+        
+        self.oced.rename_activity('type1', 'type1_new')
+        self.assertIn('type1_new', self.oced._events)
+        self.assertNotIn('type1', self.oced._events)
+
+        with self.assertRaises(ValueError):
+            self.oced.rename_activity('nonexistent_activity', 'activity_new')
 
     def test_add_and_get_events(self):
         # Add events and verify stored metadata and data.
@@ -83,22 +131,22 @@ class TestOCEDStore(unittest.TestCase):
         self.oced.add_object(self.object_A_type, "object", self.object_A_data)
         # Add a valid event-to-object relation.
         self.oced.add_event_to_object_relation(
-            "rel1", "from_id", "to_id", self.object_A_type, self.e2o_relation_data
+            "rel1", "from_id", "to_id", [self.object_A_type], self.e2o_relation_data
         )
         rel = self.oced.get_relation("rel1")
         self.assertEqual(rel["from_id"], "from_id")
         self.assertEqual(rel["to_id"], "to_id")
-        self.assertEqual(rel["to_type"], self.object_A_type)
+        self.assertEqual(rel["to_type"], [self.object_A_type])
         assert_frame_equal(rel["data"], self.e2o_relation_data)
         # Duplicate relation addition should error.
         with self.assertRaises(ValueError):
             self.oced.add_event_to_object_relation(
-                "rel1", "from_id", "to_id", self.object_A_type, self.e2o_relation_data
+                "rel1", "from_id", "to_id", [self.object_A_type], self.e2o_relation_data
             )
         # Unknown object type for relation.
         with self.assertRaises(ValueError):
             self.oced.add_event_to_object_relation(
-                "rel2", "from_id", "to_id", "Unknown", self.e2o_relation_data
+                "rel2", "from_id", "to_id", ["Unknown"], self.e2o_relation_data
             )
 
     def test_add_object_to_object_relation(self):
@@ -109,25 +157,25 @@ class TestOCEDStore(unittest.TestCase):
         self.oced.add_object_to_object_relation(
             "rel_o2o",
             "from_id",
-            self.object_A_type,
+            [self.object_A_type],
             "to_id",
-            self.object_B_type,
+            [self.object_B_type],
             self.o2o_relation_data,
         )
         rel = self.oced.get_relation("rel_o2o")
         self.assertEqual(rel["from_id"], "from_id")
-        self.assertEqual(rel["from_type"], self.object_A_type)
+        self.assertEqual(rel["from_type"], [self.object_A_type])
         self.assertEqual(rel["to_id"], "to_id")
-        self.assertEqual(rel["to_type"], self.object_B_type)
+        self.assertEqual(rel["to_type"], [self.object_B_type])
         assert_frame_equal(rel["data"], self.o2o_relation_data)
         # Duplicate addition should error.
         with self.assertRaises(ValueError):
             self.oced.add_object_to_object_relation(
                 "rel_o2o",
                 "from_id",
-                self.object_A_type,
+                [self.object_A_type],
                 "to_id",
-                self.object_B_type,
+                [self.object_B_type],
                 self.o2o_relation_data,
             )
         # Unknown object type in relation.
@@ -135,9 +183,9 @@ class TestOCEDStore(unittest.TestCase):
             self.oced.add_object_to_object_relation(
                 "rel_invalid",
                 "from_id",
-                "X",
+                ["X"],
                 "to_id",
-                self.object_B_type,
+                [self.object_B_type],
                 self.o2o_relation_data,
             )
 
@@ -147,7 +195,7 @@ class TestOCEDStore(unittest.TestCase):
         self.oced.add_event("type2", "event", "timestamp", self.event_2)
         self.oced.add_object(self.object_A_type, "object", self.object_A_data)
         self.oced.add_event_to_object_relation(
-            "rel_log", "event", "object", self.object_A_type, self.e2o_relation_data
+            "rel_log", "from_id", "to_id", self.object_A_type, self.e2o_relation_data
         )
         # Get log and verify its type and expected columns.
         log = self.oced.get_log(self.object_A_type)
@@ -166,13 +214,13 @@ class TestOCEDStore(unittest.TestCase):
         self.oced.add_event("event_type", "event", "timestamp", self.event_1)
 
         # Test get_type with an id present in the object dataset.
-        self.assertEqual(self.oced.get_type(["1"]), self.object_A_type)
+        self.assertEqual(self.oced.get_types(["1"]), [self.object_A_type])
 
         # Test get_type with an id present in the event dataset.
-        self.assertEqual(self.oced.get_type(["e2"]), "event_type")
+        self.assertEqual(self.oced.get_types(["e2"]), ["event_type"])
 
         # Test get_type with an id not present in any dataset.
-        self.assertIsNone(self.oced.get_type(["nonexistent"]))
+        self.assertEqual(self.oced.get_types(["nonexistent"]), [])
 
 if __name__ == "__main__":
     unittest.main()

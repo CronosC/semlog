@@ -23,19 +23,26 @@ class OCEDStore:
         self._relations = {"event_to_object": {}, "object_to_object": {}}
 
     #### MISCELLANEOUS ####
-    
-    def get_type(self, ids: list[str]) -> str:
+
+    def get_types(self, ids: list[str] | pd.Series) -> list[str]:
         """
         Finds that object or event type that includes any of the given ids.
         """
-
+        if type(ids) == list:
+            ids = pd.Series(ids)
+        types = []
         for object_type in self._objects.keys():
-            if self._objects[object_type]['data'][self._objects[object_type]["id"]].isin(ids).any():
-                return object_type
-        for event_type in self._events.keys():
-            if self._events[event_type]['data'][self._events[event_type]["id"]].isin(ids).any():
-                return event_type
-        return None
+            object_df = self._objects[object_type]["data"]
+            object_id = self._objects[object_type]["id"]
+            if ids.isin(object_df[object_id]).any():
+                types.append(object_type)
+        for activity in self._events.keys():
+            event_df = self._events[activity]["data"]
+            event_id = self._events[activity]["id"]
+            if ids.isin(event_df[event_id]).any():
+                types.append(activity)
+
+        return types
 
     def get_log(self, case_concept: str) -> pd.DataFrame:
         """
@@ -58,33 +65,38 @@ class OCEDStore:
         data_list = []
         for relation in self._relations["event_to_object"].keys():
             relation_dict = self._relations["event_to_object"][relation]
-            if relation_dict["to_type"] == case_concept:
-                data_list.append(relation_dict["data"])
+            to_id = relation_dict["to_id"]
+            if case_concept in relation_dict["to_type"]:
+                data_list.append(relation_dict["data"].rename(columns={to_id: case_concept}))
 
         rel_data = pd.concat(data_list, ignore_index=True)
         rel_data = rel_data.rename(columns={"from_id": "event_id"})
-        
+
         events_data_list = []
         for event_type in self._events.keys():
             id_col = self._events[event_type]["id"]
             time_col = self._events[event_type]["time"]
             event_data = self._events[event_type]["data"][[id_col, time_col]]
             event_data["concept:name"] = event_type
-            event_data = event_data.rename(columns={id_col: "event_id", time_col: "time:timestamp"})
+            event_data = event_data.rename(
+                columns={id_col: "event_id", time_col: "time:timestamp"}
+            )
             events_data_list.append(event_data)
-            
+
         events_data = pd.concat(events_data_list)
         log = pd.merge(events_data, rel_data, on="event_id", how="inner")
         log = log.set_index("event_id")
 
         log = pm.format_dataframe(
             log,
-            case_id="to_id",
+            case_id=case_concept,
             activity_key="concept:name",
             timestamp_key="time:timestamp",
         )
-
-        return log[["case:concept:name", "concept:name", "time:timestamp"]].sort_values(by=['case:concept:name', 'time:timestamp'], ascending=True)
+        
+        return log[["case:concept:name", "concept:name", "time:timestamp"]].sort_values(
+            by=["case:concept:name", "time:timestamp"], ascending=True
+        )
 
     #### EVENTS ####
     def add_event(
@@ -125,7 +137,7 @@ class OCEDStore:
 
     def get_activities(self) -> list[str]:
         return self._events.keys()
-    
+
     def get_event(self, event_type) -> dict[str, str | pd.DataFrame]:
         return self._events[event_type]
 
@@ -163,7 +175,7 @@ class OCEDStore:
         return self._objects
 
     def get_object_types(self) -> list[str]:
-        return self._objects.keys()
+        return list(self._objects.keys())
 
     def get_object(self, obj_type) -> dict[str, str | pd.DataFrame]:
         return self._objects[obj_type]
@@ -174,7 +186,7 @@ class OCEDStore:
         relation: str,
         from_id_col: str,
         to_id_col: str,
-        to_type: str,
+        to_type: list[str],
         data: pd.DataFrame,
         overwrite: bool = False,
     ) -> None:
@@ -185,7 +197,7 @@ class OCEDStore:
             relation (str): The name/identifier of the relation.
             from_id_col (str): The column name representing the event identifier in the relation DataFrame.
             to_id_col (str): The column name representing the object identifier in the relation DataFrame.
-            to_type (str): The column name representing the object type in the relation DataFrame.
+            to_type (list[str]): The column names representing the object type in the relation DataFrame.
             data (pd.DataFrame): The DataFrame containing relation data.
             overwrite (bool, optional): If True, overwrites an existing relation with the same name. Defaults to False.
 
@@ -200,9 +212,9 @@ class OCEDStore:
             raise ValueError(
                 f"Relation ({relation}) already exists! Set overwrite to True if you want to disregard this."
             )
-        if to_type not in self.get_object_types():
+        if not set(to_type).issubset(set(self.get_object_types())):
             raise ValueError(
-                f"Can not instantiate relation ({relation}). Unknown object type ({to_type})!"
+                f"Can not instantiate relation ({relation}). Unknown object type in ({to_type})!"
             )
 
         rel_value = {
@@ -211,16 +223,16 @@ class OCEDStore:
             "to_type": to_type,
             "data": data,
         }
-
+        
         self._relations["event_to_object"][relation] = rel_value
 
     def add_object_to_object_relation(
         self,
         relation: str,
         from_id_col: str,
-        from_type: str,
+        from_type: list[str],
         to_id_col: str,
-        to_type: str,
+        to_type: list[str],
         data: pd.DataFrame,
         overwrite: bool = False,
     ) -> None:
@@ -247,12 +259,12 @@ class OCEDStore:
             raise ValueError(
                 f"Relation ({relation}) already exists! Set overwrite to True if you want to disregard this."
             )
-        if (
-            from_type not in self.get_object_types()
-            or to_type not in self.get_object_types()
+        if not (
+            set(to_type).issubset(set(self.get_object_types()))
+            and set(from_type).issubset(set(self.get_object_types()))
         ):
             raise ValueError(
-                f"Can not instantiate relation ({relation}). Unknown object type ({from_type} or {to_type})!"
+                f"Can not instantiate relation ({relation}). Unknown object type in ({to_type + from_type})!"
             )
 
         rel_value = {
@@ -310,3 +322,50 @@ class OCEDStore:
         if relation_type == "o2o" or relation_type == "all":
             relations = relations + list(self._relations["object_to_object"].keys())
         return relations
+
+    def rename_relation(self, old_name: str, new_name: str) -> None:
+        """
+        Renames an relation that exists in the data.
+        """
+        if old_name in self._relations["event_to_object"].keys():
+            self._relations["event_to_object"][new_name] = self._relations[
+                "event_to_object"
+            ].pop(old_name)
+        elif old_name in self._relations["object_to_object"].keys():
+            self._relations["object_to_object"][new_name] = self._relations[
+                "object_to_object"
+            ].pop(old_name)
+        else:
+            raise ValueError("Cant rename relation that does not exist!")
+
+    def rename_object(self, old_name: str, new_name: str) -> None:
+        """
+        Renames an object that exists in the data, while ensuring that its relations stay consistent.
+        """
+        if old_name in self._objects.keys():
+            self._objects[new_name] = self._objects.pop(old_name)
+            for relation in self._relations["event_to_object"]:
+                self._relations["event_to_object"][relation]["to_type"] = [
+                    new_name if x == old_name else x
+                    for x in self._relations["event_to_object"][relation]["to_type"]
+                ]
+            for relation in self._relations["object_to_object"]:
+                self._relations["object_to_object"][relation]["from_type"] = [
+                    new_name if x == old_name else x
+                    for x in self._relations["object_to_object"][relation]["from_type"]
+                ]
+                self._relations["object_to_object"][relation]["to_type"] = [
+                    new_name if x == old_name else x
+                    for x in self._relations["object_to_object"][relation]["to_type"]
+                ]
+        else:
+            raise ValueError("Cant rename object that does not exist!")
+
+    def rename_activity(self, old_name: str, new_name: str) -> None:
+        """
+        Renames an activity that exists in the data, while ensuring that its relations stay consistent.
+        """
+        if old_name in self._events.keys():
+            self._events[new_name] = self._events.pop(old_name)
+        else:
+            raise ValueError("Cant rename activity that does not exist!")

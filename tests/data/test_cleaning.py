@@ -3,6 +3,23 @@ import pandas as pd
 import re
 from semanticlog.data.cleaning import *
 
+class TestApplyFunctionToValue(unittest.TestCase):
+    def test_apply_function_to_value_with_dict(self):
+        sample_dict = {'A': 1, 'B': {'C': 'hello', 'D': 2}}
+        result = apply_function_to_value(sample_dict, lambda x: x.upper() if isinstance(x, str) else x)
+        self.assertEqual(result, {'A': 1, 'B': {'C': 'HELLO', 'D': 2}})
+
+    def test_apply_function_to_value_with_dataframe(self):
+        sample_df = pd.DataFrame({'col1': ['a', 'b'], 'col2': [1, 2]})
+        result = apply_function_to_value(sample_df, lambda x: str(x).upper())
+        expected_df = pd.DataFrame({'COL1': ['A', 'B'], 'COL2': ['1', '2']})
+        pd.testing.assert_frame_equal(result, expected_df)
+
+    def test_apply_function_to_value_with_str(self):
+        result = apply_function_to_value('hello', lambda x: x.upper())
+        self.assertEqual(result, 'HELLO')
+
+
 class TestCleanFunctions(unittest.TestCase):
 
     # Tests for clean_string

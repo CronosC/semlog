@@ -3,6 +3,7 @@ from semanticlog.data.oced import OCEDStore
 import sqlite3
 import pandas as pd
 import os
+import logging
 
 
 class OCELLoader(AbstractLoader):
@@ -18,6 +19,7 @@ class OCELLoader(AbstractLoader):
 
     def get_oced(self) -> OCEDStore:
         """Returns the data as a OCEDStore object"""
+        logging.info(f"Loading ocel data from file {self.path}..")
         if self.config["file_format"] == "xml":
             raise NotImplementedError(
                 "The xml file format for OCEL is not implemented."
@@ -30,8 +32,6 @@ class OCELLoader(AbstractLoader):
             return self.get_data_from_sqlite_file(self.path)
         
     def get_data_from_sqlite_file(self, path: str) -> OCEDStore:
-        print("\n",path)
-        print("Current working directory:", os.getcwd())
         #db = sqlite3.connect(path)
 
         #df_event = pd.read_sql_query("SELECT * FROM event", db)
@@ -83,7 +83,7 @@ class OCELLoader(AbstractLoader):
             relation_data = relation_data.drop(["ocel_qualifier"], axis=1, errors='ignore')
             if relation_type == None or relation_type == "None":
                 relation_type = "modifies"
-            to_type = oced.get_type(relation_data["ocel_object_id"])
+            to_type = oced.get_types(relation_data["ocel_object_id"])
             oced.add_event_to_object_relation(relation_type, "ocel_event_id", "ocel_object_id", to_type, relation_data)
            
         # O2O relations # 
@@ -93,8 +93,8 @@ class OCELLoader(AbstractLoader):
             relation_data = relation_data.drop(["ocel_qualifier"], axis=1, errors='ignore')
             if relation_type == None or relation_type == "None":
                 relation_type = "modifies"
-            from_type = oced.get_type(relation_data["ocel_source_id"])
-            to_type = oced.get_type(relation_data["ocel_target_id"])
+            from_type = oced.get_types(relation_data["ocel_source_id"])
+            to_type = oced.get_types(relation_data["ocel_target_id"])
             oced.add_object_to_object_relation(relation_type, "ocel_source_id", from_type, "ocel_target_id", to_type, relation_data)
         
         return oced
