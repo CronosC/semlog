@@ -1,5 +1,6 @@
 import pandas as pd
 import pm4py as pm
+import numpy as np
 
 
 class OCEDStore:
@@ -21,6 +22,7 @@ class OCEDStore:
         self._events = {}
         self._objects = {}
         self._relations = {"event_to_object": {}, "object_to_object": {}}
+        self._used_ids = []
 
     #### MISCELLANEOUS ####
 
@@ -66,11 +68,13 @@ class OCEDStore:
         for relation in self._relations["event_to_object"].keys():
             relation_dict = self._relations["event_to_object"][relation]
             to_id = relation_dict["to_id"]
+            from_id = relation_dict["from_id"]
             if case_concept in relation_dict["to_type"]:
                 data_list.append(relation_dict["data"].rename(columns={to_id: case_concept}))
 
         rel_data = pd.concat(data_list, ignore_index=True)
-        rel_data = rel_data.rename(columns={"from_id": "event_id"})
+        rel_data = rel_data.rename(columns={from_id: "event_id"})
+        rel_data = rel_data[rel_data[case_concept].isin(self.get_ids("object", case_concept))]
 
         events_data_list = []
         for event_type in self._events.keys():
@@ -82,10 +86,9 @@ class OCEDStore:
                 columns={id_col: "event_id", time_col: "time:timestamp"}
             )
             events_data_list.append(event_data)
-
+            
         events_data = pd.concat(events_data_list)
         log = pd.merge(events_data, rel_data, on="event_id", how="inner")
-        log = log.set_index("event_id")
 
         log = pm.format_dataframe(
             log,
@@ -94,9 +97,12 @@ class OCEDStore:
             timestamp_key="time:timestamp",
         )
         
-        return log[["case:concept:name", "concept:name", "time:timestamp"]].sort_values(
+        log = log.set_index("event_id")
+        log = log[["case:concept:name", "concept:name", "time:timestamp"]].sort_values(
             by=["case:concept:name", "time:timestamp"], ascending=True
         )
+        
+        return log
 
     #### EVENTS ####
     def add_event(
@@ -129,8 +135,15 @@ class OCEDStore:
             raise ValueError(
                 "Events data already exists! Set overwrite to True if you want to disregard this."
             )
-
+        if not overwrite and not self.ids_not_used(data[id_col].unique()):
+            raise ValueError(
+                "IDs in this data are already used."
+            )
+        
+        data = self.data_check(data, ignore_cols=[id_col])
         self._events[event_type] = {"id": id_col, "time": time_col, "data": data}
+        self.update_used_ids()
+        
 
     def get_events(self, event_type) -> dict[str, str | pd.DataFrame]:
         return self._events[event_type]
@@ -166,10 +179,15 @@ class OCEDStore:
             raise ValueError(
                 f"Object ({obj_type}) already exists! Set overwrite to True if you want to disregard this."
             )
-
+        if not overwrite and not self.ids_not_used(data[id_col].unique()):
+            raise ValueError(
+                "IDs in this data are already used."
+            )
+        
+        data = self.data_check(data, ignore_cols=[id_col])
         obj = {"id": id_col, "data": data}
-
         self._objects[obj_type] = obj
+        self.update_used_ids()
 
     def get_objects(self) -> dict[str, [dict[str, str | pd.DataFrame]]]:
         return self._objects
@@ -179,6 +197,9 @@ class OCEDStore:
 
     def get_object(self, obj_type) -> dict[str, str | pd.DataFrame]:
         return self._objects[obj_type]
+    
+    def get_most_common_objects(self, n:int=1) -> list[str]:
+        return sorted(self.get_objects(), key=lambda k: len(self.get_objects()[k]["data"]), reverse=True)[:n]
 
     #### RELATIONS ####
     def add_event_to_object_relation(
@@ -369,3 +390,134 @@ class OCEDStore:
             self._events[new_name] = self._events.pop(old_name)
         else:
             raise ValueError("Cant rename activity that does not exist!")
+    
+    def change_ids(self, of, type_to_change, change_function):
+        if of not in ["event", "object"]:
+            raise ValueError("Can only change the ids of events or objects!")
+        if of=="event":
+            self.change_event_ids(type_to_change, change_function)
+        if of=="object":
+            self.change_object_ids(type_to_change, change_function)
+    
+    def change_object_ids(self, object_type, change_function):
+        object_data = self._objects[object_type]["data"]
+        id_col = self._objects[object_type]["id"]
+        unique_ids = object_data[id_col].unique()
+        
+        # change IDs in the object table
+        self._objects[object_type]["data"][id_col] = change_function(object_data[id_col])
+
+        # change IDs in all o2o relations where this id_col appears
+        for o2o_rel, rel in self._relations.get("object_to_object", {}).items():
+            df = rel["data"]
+            from_id = rel["from_id"]
+            from_type = rel["from_type"]
+            to_id = rel["to_id"]
+            to_type = rel["to_type"]
+            if object_type in from_type:
+                mask = df[from_id].isin(unique_ids)
+                if mask.any():
+                    df.loc[mask, from_id] = change_function(df.loc[mask, from_id])
+            if object_type in to_type:
+                mask = df[to_id].isin(unique_ids)
+                if mask.any():
+                    df.loc[mask, to_id] = change_function(df.loc[mask, to_id])
+            self._relations["object_to_object"][o2o_rel]["data"] = df
+            
+        # change IDs in all e2o relations where this id_col appears
+        for e2o_rel, rel in self._relations.get("event_to_object", {}).items():
+            df = rel["data"]
+            to_id = rel["to_id"]
+            to_type = rel["to_type"]
+            if object_type in to_type:
+                mask = df[to_id].isin(unique_ids)
+                if mask.any():
+                    df.loc[mask, to_id] = change_function(df.loc[mask, to_id])
+            self._relations["event_to_object"][e2o_rel]["data"] = df
+            
+    def change_event_ids(self, activity, change_function):
+        event_data = self._events[activity]["data"]
+        id_col = self._events[activity]["id"]
+        unique_ids = event_data[id_col].unique()
+        
+        # change IDs in the event table
+        self._events[activity]["data"][id_col] = change_function(event_data[id_col])
+        
+        # change IDs in all e2o relations where this id_col appears
+        for e2o_rel, rel in self._relations.get("event_to_object", {}).items():
+            df = rel["data"]
+            from_id = rel["from_id"]
+            mask = df[from_id].isin(unique_ids)
+            if mask.any():
+                df.loc[mask, from_id] = change_function(df.loc[mask, from_id])
+            self._relations["event_to_object"][e2o_rel]["data"] = df
+            
+    def get_ids(self, of, thing_type):
+        ids = []
+        if of not in ["event", "object"]:
+            raise ValueError("get_ids only returns ids of objects or events")
+        elif of == "event":
+            if thing_type not in self.get_activities():
+                raise ValueError(f"Unknown activity {thing_type}")
+            id_col = self._events[thing_type]["id"]
+            ids = self._events[thing_type]["data"][id_col].unique()
+        else:
+            if thing_type not in self.get_object_types():
+                raise ValueError(f"Unknown object {thing_type}")
+            id_col = self._objects[thing_type]["id"]
+            ids = self._objects[thing_type]["data"][id_col].unique()
+        return ids
+
+    def update_used_ids(self):
+        ids = []
+        for activity in self._events:
+            ids.extend(self.get_ids("event", activity))
+        for object_type in self._objects:
+            ids.extend(self.get_ids("object", object_type))
+        unique_ids = set(ids)
+        if not len(unique_ids) == len(ids):
+            raise ValueError("Duplicated ids!")
+        self.unique_ids = unique_ids
+
+    def data_check(self, df, ignore_cols=[], min_parse_ratio=0.95):
+        df = df.copy()  # ensure we write to the real frame, not a view
+        df = df.dropna(how="all").dropna(axis=1, how="all")
+        # normalize empties for object-like cols
+        obj_cols = df.select_dtypes(include="object").columns
+        df[obj_cols] = df[obj_cols].replace(r"^\s*$", np.nan, regex=True)
+
+        for col in df.columns:
+            if col in ignore_cols:
+                continue
+
+            total = len(df[col])
+
+            # already numeric/bool? skip
+            if pd.api.types.is_numeric_dtype(df[col]) or pd.api.types.is_bool_dtype(df[col]):
+                continue
+
+            # try datetime
+            dt = pd.to_datetime(df[col], errors="coerce", utc=True, format="ISO8601")
+            dt = dt.dt.floor("s")
+            if (dt.notna().sum() / total) >= min_parse_ratio:
+                df[col] = dt
+                continue
+
+            # try numeric
+            num = pd.to_numeric(df[col], errors="coerce")
+            if (num.notna().sum() / total) >= min_parse_ratio:
+                vals = set(num.dropna().unique())
+                if vals <= {0, 1}:
+                    df[col] = num.astype("boolean")  # nullable boolean
+                elif (num.dropna() % 1 == 0).all():
+                    df[col] = num.astype("Int64")    # nullable integer
+                else:
+                    df[col] = num.astype("float64")  # float
+        return df
+
+                    
+        
+    def ids_not_used(self, ids):
+        if set(ids).intersection(self._used_ids):
+            return False
+        return True

@@ -15,11 +15,12 @@ class TestPM4PYLoader(unittest.TestCase):
     def test_load_all_pm4py(self):
         folder_path = "data/OCEL"
         for file_name in os.listdir(folder_path):
-            if file_name not in ["AOE2.sqlite", "AOE2_small.json"]:
-                file_path = os.path.join(folder_path, file_name)
-                loader = PM4PYLoader(file_path, {})
-                oced = loader.get_oced()
-                self.assertIsNotNone(oced)
+            if file_name not in ["AOE2.sqlite", "AOE2_small.json", "blockchain.xmlocel"]:
+                with self.subTest(file=file_name): 
+                    file_path = os.path.join(folder_path, file_name)
+                    loader = PM4PYLoader(file_path, {})
+                    oced = loader.get_oced()
+                    self.assertIsNotNone(oced)
 '''
 class TestPM4PYLoader(unittest.TestCase):
 

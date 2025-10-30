@@ -24,7 +24,7 @@ class PM4PYLoader(AbstractLoader):
             else:
                 raise Exception("Unknown file type.")
 
-    def get_oced(self) -> OCEDStore:
+    def get_oced(self, timestamped_attributes=False) -> OCEDStore:
         """Returns the data as a OCEDStore object"""
         logging.info(f"Loading ocel data from file {self.path}..")
         if self.config["file_format"] == "xml":
@@ -36,25 +36,43 @@ class PM4PYLoader(AbstractLoader):
 
         oced = OCEDStore()
 
-        # Events
-        event_dfs = {
-            activity: df for activity, df in log.events.groupby("ocel:activity")
-        }
-        for activity in event_dfs.keys():
-            df = event_dfs[activity]
-            df = df.drop(["ocel:activity"], axis=1)
-            oced.add_event(activity, "ocel:eid", "ocel:timestamp", df)
-
         # Objects
         object_dfs = {
             object_type: df for object_type, df in log.objects.groupby("ocel:type")
         }
+        reindex_objects = []
         for object_type in object_dfs.keys():
             object_dfs[object_type] = object_dfs[object_type].dropna(axis=1, how="all")
             df = object_dfs[object_type]
             df = df.drop(["ocel:type"], axis=1)
-            oced.add_object(object_type, "ocel:oid", df)
+            is_numeric_str = pd.to_numeric(df["ocel:oid"], errors="coerce").notna().all()
+            if is_numeric_str:
+                reindex_objects.append(object_type)
+            if oced.ids_not_used(df["ocel:oid"]):
+                oced.add_object(object_type, "ocel:oid", df)
+            else:
+                raise ValueError("IDs are not unique!")
+                
+        # O2O Relations
+        assert not log.o2o.isnull().values.any()
+        o2o_relation_dfs = {
+            relation_type: df for relation_type, df in log.o2o.groupby("ocel:qualifier")
+        }
+        for relation_type in o2o_relation_dfs.keys():
+            df = o2o_relation_dfs[relation_type]
+            
+            if relation_type in o2o_relation_dfs.keys():
+                relation_type = relation_type + "_o2o"
 
+            type_1 = oced.get_types(df["ocel:oid"])
+            type_2 = oced.get_types(df["ocel:oid_2"])
+
+            assert type_1 != [] and type_2 != []
+            
+            oced.add_object_to_object_relation(
+                relation_type, "ocel:oid", type_1, "ocel:oid_2", type_2, df
+            )
+            
         # E2O Relations
         relations = log.relations
         """ NOTE:
@@ -78,24 +96,39 @@ class PM4PYLoader(AbstractLoader):
                 df[["ocel:eid", "ocel:oid"]],
             )
 
-        # O2O Relations
-        assert not log.o2o.isnull().values.any()
-        o2o_relation_dfs = {
-            relation_type: df for relation_type, df in log.o2o.groupby("ocel:qualifier")
+        # add prefix of its type to all things indexed by purely numerical ids
+        # this prevents potential collisions between numerical indexed objects and activites
+        # and makes the ids clearer. Done before adding events to not rename them too
+        for object_type in reindex_objects:
+            oced.change_ids("object", object_type, lambda x : f"{object_type}_{x}")
+            
+        # Events
+        event_dfs = {
+            activity: df for activity, df in log.events.groupby("ocel:activity")
         }
-        for relation_type in o2o_relation_dfs.keys():
-            df = o2o_relation_dfs[relation_type]
+        reindex_events = []
+        
+        ids = []
+        for activity in event_dfs.keys():
+            ids.extend(event_dfs[activity]["ocel:eid"].unique())
             
-            if relation_type in o2o_relation_dfs.keys():
-                relation_type = relation_type + "_o2o"
-
-            type_1 = oced.get_types(df["ocel:oid"])
-            type_2 = oced.get_types(df["ocel:oid_2"])
-
-            assert type_1 != [] and type_2 != []
+        assert len(ids) == len(set(ids))
+        
+        for activity in event_dfs.keys():
+            df = event_dfs[activity]
+            df = df.drop(["ocel:activity"], axis=1)
+            is_numeric_str = pd.to_numeric(df["ocel:eid"], errors="coerce").notna().all()
+            if is_numeric_str:
+                reindex_events.append(activity)
+            if oced.ids_not_used(df["ocel:eid"]):
+                oced.add_event(activity, "ocel:eid", "ocel:timestamp", df)
+            else:
+                raise ValueError("IDs are not unique!")
             
-            oced.add_object_to_object_relation(
-                relation_type, "ocel:oid", type_1, "ocel:oid_2", type_2, df
-            )
+        # add prefix of its type to all things indexed by purely numerical ids
+        # this prevents porential collisions between numerical indexed objects and activites
+        # and makes the ids clearer.
+        for activity in reindex_events:
+            oced.change_ids("event", activity, lambda x : f"{activity}_{x}")
 
         return oced

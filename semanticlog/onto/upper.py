@@ -3,17 +3,17 @@ import pandas as pd
 import owlapy as owl
 from owlapy.iri import IRI
 from owlapy.owl_axiom import OWLDeclarationAxiom, OWLSubClassOfAxiom
-from owlapy.owl_ontology_manager import OntologyManager
 from owlapy.class_expression import OWLClass
 
 from semanticlog.onto.builder import OCEDBaseBuilder
 from semanticlog.onto.transform import parse_manchester
+from semanticlog.onto.settings import OntoBuildSettings
 
 
 class OCEDUpperOntoBuilder(OCEDBaseBuilder):
 
-    def __init__(self, iri):
-        super().__init__(iri)
+    def __init__(self, iri, settings: OntoBuildSettings):
+        super().__init__(iri, settings)
 
     def construct_upper_ontology(self, path: str) -> None:
         self.add_classes(["Object", "Event", "Attribute", "Time"])
@@ -23,30 +23,30 @@ class OCEDUpperOntoBuilder(OCEDBaseBuilder):
             "observed_at",
             domain_class="Event",
             range_class="Time",
-            create_inverse=True,
+            create_inverse=self.settings.inverse_properties,
             inverse_name="observes",
         )
         self.add_property(
             "event_object_relation",
             domain_class="Event",
             range_class="Object",
-            create_inverse=True,
+            create_inverse=self.settings.inverse_properties,
         )
         self.add_property(
             "object_object_relation",
             domain_class="Object",
             range_class="Object",
-            create_inverse=True,
+            create_inverse=self.settings.inverse_properties,
         )
         self.add_property(
             "has_attribute",
             domain_class="Object or Event",
             range_class="Attribute",
-            create_inverse=True,
+            create_inverse=self.settings.inverse_properties,
             inverse_name="attribute_of",
         )
         self.add_property(
-            "has_value",
+            "has_data_value",
             domain_class="Attribute or Time",
             data_prop=True,
         )

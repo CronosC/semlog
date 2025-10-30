@@ -21,10 +21,12 @@ class ClassicalLoader(AbstractLoader):
         config.setdefault("case_col", "case:concept:name")
         config.setdefault("act_col", "concept:name")
         config.setdefault("time_col", "time:timestamp")
+        config.setdefault("object_cols", "[]")
         
         self.case_col = config["case_col"]
         self.act_col = config["act_col"]
         self.time_col = config["time_col"]
+        self.object_cols = config["object_cols"]
 
     def get_oced(self) -> OCEDStore:
         """Returns the data as a OCEDStore object"""
@@ -41,7 +43,8 @@ class ClassicalLoader(AbstractLoader):
             #log = log_converter.apply(log, variant=log_converter.Variants.TO_EVENT_LOG)
         else:
             raise Exception("Can only load .xes or .csv classical event logs.")
-        log["event_id"] = log.index
+        log["event_id"] = "e" + log.index.astype(str)
+        log["case:concept:name"] = "t" + log["case:concept:name"].astype(str)
 
         oced = OCEDStore()
         
@@ -52,14 +55,19 @@ class ClassicalLoader(AbstractLoader):
 
         for activity in event_dfs.keys():
             df = event_dfs[activity]
+            df = df[["event_id", self.time_col]]
             oced.add_event(activity, "event_id", self.time_col, df)
             
         # Objects
-        object_df = log[[self.case_col]]
+        object_df = log[[self.case_col]].drop_duplicates()
         oced.add_object(self.case_col, self.case_col, object_df)
         
+        for object_col in self.object_cols:
+            object_df = log[[object_col]].drop_duplicates()
+            oced.add_object(object_col, object_col, object_df)
+        
         # E2O
-        rel_df = log[["event_id", self.case_col]]
+        rel_df = log[["event_id", self.case_col]].drop_duplicates()
         oced.add_event_to_object_relation(
                 "modifies",
                 "event_id",
@@ -67,5 +75,16 @@ class ClassicalLoader(AbstractLoader):
                 [self.case_col],
                 rel_df,
             )
+        
+        for object_col in self.object_cols:
+            rel_df = log[["event_id", object_col]].drop_duplicates()
+            oced.add_event_to_object_relation(
+                    f"modifies_{object_col}",
+                    "event_id",
+                    object_col,
+                    [object_col],
+                    rel_df,
+                )
+        
         
         return oced

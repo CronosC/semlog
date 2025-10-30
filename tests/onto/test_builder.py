@@ -1,15 +1,22 @@
 import unittest
 from owlapy.class_expression import OWLClassExpression
 from semanticlog.onto.builder import OCEDBaseBuilder
+from semanticlog.onto.settings import OntoBuildSettings, OwlProfile, EventOrderRepresentation
 from owlapy.iri import IRI
 import time
 import pandas as pd
 
 
 class TestBuilder(unittest.TestCase):
+    
+    def setUp(self):
+        self.settings = OntoBuildSettings()
+        self.settings.profile = OwlProfile.OWL2DL
+        self.settings.order_representation = []
+        self.settings.case_concepts = []
 
     def test_add_class(self):
-        builder = OCEDBaseBuilder("data/test.owl#")
+        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
         self.assertEqual(len(list(builder.onto.classes_in_signature())), 0)
         builder.add_class("Human")
         builder.add_class("Parent", "Human")
@@ -18,14 +25,14 @@ class TestBuilder(unittest.TestCase):
         self.assertEqual(len(list(builder.onto.classes_in_signature())), 4)
 
     def test_add_classes(self):
-        builder = OCEDBaseBuilder("data/test.owl#")
+        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
         builder.add_classes(["Human", "Male", "Female"])
         builder.add_classes(["Man", "Women"], ["Human and Male", "Human and Female"])
         builder.add_classes(["Child"], [None])
         self.assertEqual(len(list(builder.onto.classes_in_signature())), 6)
         
     def test_assert_individual(self):
-        builder = OCEDBaseBuilder("data/test.owl#")
+        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
         individuals =  ["a", "b", "c", "d", "e"]
         builder.add_class("Letter")
         for ind in individuals:
@@ -35,7 +42,7 @@ class TestBuilder(unittest.TestCase):
         builder.save_onto("data/temp.owl")
         
     def test_assert_individuals(self):
-        builder = OCEDBaseBuilder("data/test.owl#")
+        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
         individuals =  ["a", "b", "c", "d", "e"]
         builder.add_class("Letter")
         builder.assert_individuals(individuals, "Letter")
@@ -44,7 +51,7 @@ class TestBuilder(unittest.TestCase):
         builder.save_onto("data/temp.owl")
         
     def test_assert_individuals_scale(self):
-        builder = OCEDBaseBuilder("data/test.owl#")
+        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
         individuals = [str(i) for i in range(100000)]
         builder.add_class("Letter")
         t0 = time.time()
@@ -56,7 +63,7 @@ class TestBuilder(unittest.TestCase):
 
 
     def test_add_property(self):
-        builder = OCEDBaseBuilder("data/test.owl#")
+        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
         builder.add_property("isRelated")
         builder.add_class("Parent")
         builder.add_class("Child")
@@ -83,7 +90,7 @@ class TestBuilder(unittest.TestCase):
         self.assertEqual(len(list(builder.onto.data_properties_in_signature())), 1)
         
     def test_assert_relation(self):
-        builder = OCEDBaseBuilder("data/test.owl#")
+        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
         builder.add_class("Person")
         individuals =  ["Alice", "Bob"]
         builder.assert_individuals(individuals, "Person")
@@ -105,7 +112,7 @@ class TestBuilder(unittest.TestCase):
         builder.save_onto("data/temp.owl") 
         
     def test_assert_relations(self):
-        builder = OCEDBaseBuilder("data/test.owl#")
+        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
         builder.add_class("Number")
         individuals = [str(i) for i in range(100)]
         individuals_int = [i for i in range(100)]
@@ -130,7 +137,7 @@ class TestBuilder(unittest.TestCase):
         builder.assert_relations(relation_data_int, from_key="from", to_key="to", prop="hasValue", data_prop=True)
         
     def test_assert_relations_scale(self):
-        builder = OCEDBaseBuilder("data/test.owl#")
+        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
         builder.add_class("Number")
         individuals = [str(i) for i in range(10000)]
         individuals_int = [i for i in range(10000)]
@@ -164,6 +171,79 @@ class TestBuilder(unittest.TestCase):
         print(f"\nAdding {len(individuals)} data relations took: {str(t1-t0)}s")
         
         builder.save_onto("data/temp.owl")
+        
+    def test_assert_data_relations_with_datetimes(self):
+        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        # Class + individuals
+        builder.add_class("Event")
+        builder.assert_individuals(["e1", "e2"], "Event")
+
+        # Data property without explicit range (allowed by implementation)
+        builder.add_property(
+            "occurredAt",
+            domain_class="Event",
+            range_class=None,
+            data_prop=True,
+        )
+
+        # Datetime column as pandas datetime64
+        df = pd.DataFrame({
+            "from": ["e1", "e2"],
+            "to": pd.date_range("2022-01-01", periods=2, freq="D")  # datetime64
+        })
+
+        # Should NOT raise;
+        builder.assert_relations(df, prop="occurredAt", from_key="from", to_key="to", data_prop=True)
+
+        # If we got here, saving should also not raise
+        builder.save_onto("data/temp.owl")
+        
+    def test_add_property_validation(self):
+        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        builder.add_class("A")
+        builder.add_class("B")
+
+        # 1) inverse_name without create_inverse -> error
+        with self.assertRaises(ValueError):
+            builder.add_property(
+                "p_bad_inv_name",
+                domain_class="A", range_class="B",
+                create_inverse=False, inverse_name="p_bad_inv"  # illegal combo
+            )
+
+        # 2) data property cannot have inverse -> error
+        with self.assertRaises(ValueError):
+            builder.add_property(
+                "age_with_inverse",
+                domain_class="A", range_class="integer",
+                data_prop=True, create_inverse=True
+            )
+
+        # 3) object prop cannot have a data range -> error
+        with self.assertRaises(ValueError):
+            builder.add_property(
+                "p_obj_with_data_range",
+                domain_class="A", range_class="integer",  # data range on object prop
+                data_prop=False
+            )
+
+        # 4) data prop with unknown datatype -> error
+        with self.assertRaises(ValueError):
+            builder.add_property(
+                "p_data_with_unknown_range",
+                domain_class="A", range_class="stringy",  # not in {"integer","double","boolean"}
+                data_prop=True
+            )
+
+        # 5) happy path: object prop with inverse (auto name), and data prop with known range
+        builder.add_property("relatesTo", domain_class="A", range_class="B", create_inverse=True)
+        builder.add_property("hasAge", domain_class="A", range_class="integer", data_prop=True)
+
+        # We should now have: relatesTo + its inverse + hasAge in signatures
+        obj_props = list(builder.onto.object_properties_in_signature())
+        data_props = list(builder.onto.data_properties_in_signature())
+        self.assertGreaterEqual(len(obj_props), 2)   # prop + inverse
+        self.assertGreaterEqual(len(data_props), 1)  # hasAge present
 
 if __name__ == "__main__":
     unittest.main()

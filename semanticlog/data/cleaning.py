@@ -8,6 +8,25 @@ import logging
 from collections.abc import Sequence
 
 
+def null_check(data: OCEDStore) -> bool:
+    res = False
+    for activity in data.get_activities():
+        activity_dict = data.get_event(activity)
+        df = activity_dict["data"]
+        for col in df.columns:
+            n_null = df[col].isnull().sum()
+            if n_null > 0:
+                print(f"{activity}[{col}]: {n_null} null values.")
+                res = True
+    for object_type in data.get_object_types():
+        object_dict = data.get_object(object_type)
+        df = object_dict["data"]
+        for col in df.columns:
+            n_null = df[col].isnull().sum()
+            if n_null > 0:
+                print(f"{object_type}[{col}]: {n_null} null values.")
+                res = True
+
 def fix_duplicate_names(data: OCEDStore) -> None:
     names = [
         "is_a",
@@ -105,12 +124,12 @@ def fix_duplicate_names(data: OCEDStore) -> None:
     return data
 
 
-def clean_oced_data(data: OCEDStore) -> OCEDStore:
+def clean_oced_data(data: OCEDStore, casefold=False) -> OCEDStore:
     """cleans all keys and values in all dicts and dataframes of a OCEDStore"""
     logging.info("Cleaning data..")
-    data._events = clean_value(data._events, casefold=False)
-    data._objects = clean_value(data._objects, casefold=False)
-    data._relations = clean_value(data._relations, casefold=False)
+    data._events = clean_value(data._events, casefold=casefold)
+    data._objects = clean_value(data._objects, casefold=casefold)
+    data._relations = clean_value(data._relations, casefold=casefold)
     data = fix_duplicate_names(data)
     return data
 
@@ -167,7 +186,7 @@ def clean_value(
     """applies string cleaning to some value, handling different datatypes appropriately"""
     if isinstance(value, dict):
         return {
-            clean_string(key, casefold=casefold): clean_value(
+            clean_value(key, casefold=casefold): clean_value(
                 inner_value, casefold=casefold
             )
             for key, inner_value in value.items()
@@ -180,9 +199,9 @@ def clean_value(
     if isinstance(value, pd.DataFrame):
         return clean_dataframe(value, casefold=casefold)
     if isinstance(value, list):
-        return [clean_value(x) for x in value]
+        return [clean_value(x, casefold=casefold) for x in value]
     if isinstance(value, pd.arrays.StringArray):
-        return [clean_value(x) for x in value]
+        return [clean_value(x, casefold=casefold) for x in value]
     if isinstance(value, int):
         return value
     if isinstance(value, float):

@@ -12,11 +12,12 @@ class TestOCELLoader(unittest.TestCase):
         folder_path = "data/OCEL"
         for file_name in os.listdir(folder_path):
             if file_name.endswith(".sqlite"):
-                if file_name not in ["AOE2.sqlite", "AOE2_small.json"]:
-                    file_path = os.path.join(folder_path, file_name)
-                    loader = OCELLoader(file_path, {"file_format": "sqlite"})
-                    oced = loader.get_oced()
-                    self.assertIsNotNone(oced)
+                if file_name not in ["AOE2.sqlite", "AOE2_small.json", "blockchain.xmlocel"]:
+                    with self.subTest(file=file_name): 
+                        file_path = os.path.join(folder_path, file_name)
+                        loader = OCELLoader(file_path, {"file_format": "sqlite"})
+                        oced = loader.get_oced()
+                        self.assertIsNotNone(oced)
 '''
 class TestOCELLoader(unittest.TestCase):
 

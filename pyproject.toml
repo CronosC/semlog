@@ -7,7 +7,7 @@ name = "semlog"
 version = "0.2.0"
 description = "Semantic Event Log - Instantiate process mining data as ontologies, with various options"
 authors = [
-    { name = "Christian Dormagen, email = "christian.dormagen@oth-regensburg.de" }
+    { name = "Christian Dormagen", email = "christian.dormagen@oth-regensburg.de" }
 ]
 readme = "README.md"
 license = { text = "MIT" }
@@ -20,9 +20,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = []
-
-[tool.setuptools]
-packages = ["semanticlog"]
 
 [tool.setuptools.packages.find]
 where = ["."]

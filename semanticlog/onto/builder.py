@@ -25,28 +25,30 @@ from owlapy.owl_literal import (
     BooleanOWLDatatype,
 )
 from owlapy.owl_individual import OWLNamedIndividual
-from owlapy.owl_ontology_manager import OntologyManager
 from owlapy.class_expression import OWLClass
 from owlapy.owl_property import OWLObjectProperty, OWLDataProperty
 from owlapy.owl_datatype import OWLDatatype
+from owlapy.owl_ontology import Ontology
 import logging
 import owlready2
 
 from semanticlog.onto.transform import parse_manchester
+from semanticlog.onto.settings import OntoBuildSettings, OwlProfile
 
 
 class OCEDBaseBuilder:
 
-    def __init__(self, iri):
-        self.manager = OntologyManager()
+    def __init__(self, iri:str, settings: OntoBuildSettings):
         try:
-            self.onto = self.manager.load_ontology(iri)
+            self.onto = Ontology(IRI.create(iri), load=True)
             self.iri = self.onto.get_ontology_id().get_ontology_iri().str
         except:
-            self.onto = self.manager.create_ontology(iri)
+            self.onto = Ontology(IRI.create(iri), load=False)
             self.iri = iri
         if not self.iri.endswith("#"):
             self.iri = self.iri + "#"
+        self.settings = settings
+        self.inverse_dict = {}
 
     def add_classes(
         self, class_list: list[str], superclasses: list[str] | str | None = None
@@ -153,9 +155,11 @@ class OCEDBaseBuilder:
         if create_inverse:
             if inverse_name == None:
                 inverse_name = self.generate_inverse_property_name(prop_name)
+                self.inverse_dict[prop_name] = inverse_name
             owl_inverse = prop_class(self.iri + inverse_name)
             self.onto.add_axiom(OWLDeclarationAxiom(owl_inverse))
-            self.onto.add_axiom(OWLInverseObjectPropertiesAxiom(owl_prop, owl_inverse))
+            if self.settings.profile == OwlProfile.OWL2DL:
+                self.onto.add_axiom(OWLInverseObjectPropertiesAxiom(owl_prop, owl_inverse))
 
     def assert_individual(self, individual: str, class_name: str) -> None:
         owl_class = parse_manchester(self.iri, class_name)
@@ -205,43 +209,90 @@ class OCEDBaseBuilder:
         else:
             owl_to = OWLNamedIndividual(self.iri + to)
         self.onto.add_axiom(funcs["assert"](owl_from, owl_prop, owl_to))
-
-    def assert_relations(
-        self,
-        dataframe: pd.DataFrame,
-        prop: str,
-        from_key: str,
-        to_key: str,
-        data_prop=False,
-    ) -> None:
-        logging.info(f"  asserting {len(dataframe)} relations of property {prop}..")
-        iri = self.iri
         
-        dataframe = dataframe[~(dataframe[from_key].isin([None, "", pd.NA]) | dataframe[to_key].isin([None, "", pd.NA]))]
+        if self.settings.make_inverses_explicit and not data_prop:
+            inverse_prop = self.inverse_dict.get(prop_name, None)
+            if inverse_prop != None:
+                inverse_prop = funcs["prop"](self.iri + inverse_prop)
+                self.onto.add_axiom(funcs["assert"](owl_to, inverse_prop, owl_from))
+
+    def assert_relations(self, df: pd.DataFrame, prop: str, from_key: str, to_key: str, data_prop: bool = False) -> None:
+        df = df[[from_key, to_key]].copy()
+        df = df[df[from_key].notna() & df[to_key].notna()]
+        df = df.drop_duplicates([from_key, to_key])
         
         if data_prop:
-            owl_prop = OWLDataProperty(f"{iri}{prop}")
-            dataframe[to_key] = dataframe[to_key].dropna()
+            self.assert_data_relations(df, prop, from_key, to_key)
+        else:
+            self.assert_object_relations(df, prop, from_key, to_key)
+
+    def assert_object_relations(self, df: pd.DataFrame, prop: str, from_key: str, to_key: str) -> None:
+        logging.info(f"  asserting {len(df)} relations of object property {prop}..")
+        iri = self.iri
+        owl_prop = OWLObjectProperty(f"{iri}{prop}")
+        axioms = [
+            OWLObjectPropertyAssertionAxiom(
+                OWLNamedIndividual(f"{iri}{s}"),
+                owl_prop,
+                OWLNamedIndividual(f"{iri}{o}")
+            )
+            for s, o in df.itertuples(index=False, name=None)
+        ]
+        if axioms:
+            self.onto.add_axiom(axioms)
+            
+        if self.settings.make_inverses_explicit:
+            inverse_prop = self.inverse_dict.get(prop, None)
+            if inverse_prop != None:
+                inverse_prop = OWLObjectProperty(f"{iri}{inverse_prop}")
+                inverse_axioms = [
+                    OWLObjectPropertyAssertionAxiom(
+                        OWLNamedIndividual(f"{iri}{o}"),
+                        inverse_prop,
+                        OWLNamedIndividual(f"{iri}{s}")
+                    )
+                    for s, o in df.itertuples(index=False, name=None)
+                ]
+                if axioms:
+                    self.onto.add_axiom(inverse_axioms)
+                
+                
+
+    def assert_data_relations(self, df: pd.DataFrame, prop: str, from_key: str, to_key: str) -> None:
+        logging.info(f"  asserting {len(df)} relations of data property {prop}..")
+        iri = self.iri
+        owl_prop = OWLDataProperty(f"{iri}{prop}")
+
+        rel_df = df[[from_key, to_key]].copy()
+
+        if pd.api.types.is_datetime64_any_dtype(rel_df[to_key]):
+            axioms = []
+            for s, v in rel_df.itertuples(index=False, name=None):
+                if pd.isna(v):
+                    continue
+                # v may be numpy.datetime64[us] or Timestamp; convert to Python datetime for OWLLIteral class
+                py_dt = v.to_pydatetime() if hasattr(v, "to_pydatetime") else pd.Timestamp(v).to_pydatetime()
+                axioms.append(
+                    OWLDataPropertyAssertionAxiom(
+                        OWLNamedIndividual(f"{iri}{s}"),
+                        owl_prop,
+                        OWLLiteral(py_dt),
+                    )
+                )
+        else:
             axioms = [
                 OWLDataPropertyAssertionAxiom(
-                    OWLNamedIndividual(f"{iri}{from_name}"),
+                    OWLNamedIndividual(f"{iri}{s}"),
                     owl_prop,
-                    OWLLiteral(to),
+                    OWLLiteral(v),
                 )
-                for from_name, to in zip(dataframe[from_key], dataframe[to_key])
+                for s, v in rel_df.itertuples(index=False, name=None)
+                if not (isinstance(v, float) and pd.isna(v))
             ]
-        else:
-            owl_prop = OWLObjectProperty(f"{iri}{prop}")
-            axioms = [
-                OWLObjectPropertyAssertionAxiom(
-                    OWLNamedIndividual(f"{iri}{from_name}"),
-                    owl_prop,
-                    OWLNamedIndividual(f"{iri}{to}"),
-                )
-                for from_name, to in zip(dataframe[from_key], dataframe[to_key])
-            ]
-        self.onto.add_axiom(axioms)
 
+        if axioms:
+            self.onto.add_axiom(axioms)
+            
     #### HELPER ####
 
     def generate_inverse_property_name(self, prop: str) -> str:
@@ -251,9 +302,15 @@ class OCEDBaseBuilder:
         return "has_" + attribute
     
     def generate_timestamp_string(self, timestamp: pd.Timestamp | str) -> str:
-        if type(timestamp) != str:
-            timestamp =  str(timestamp)
-        return re.sub(r'[^A-Za-z0-9]', '_',  timestamp)
+        if isinstance(timestamp, pd.Timestamp):
+            # safe, compact, sortable format: 20251013T114530
+            return timestamp.strftime("%Y%m%dT%H%M%S")
+        elif isinstance(timestamp, str):
+            # sanitize any string timestamp (remove special chars)
+            return re.sub(r'[^A-Za-z0-9]', '_', timestamp)
+        else:
+            # fallback for unexpected types
+            return re.sub(r'[^A-Za-z0-9]', '_', str(timestamp))
 
     def save_onto(self, path):
         if not os.path.exists(path):

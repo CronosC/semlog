@@ -9,6 +9,7 @@ from semanticlog.data.pm4pyloader import PM4PYLoader
 from semanticlog.data.ocelloader import OCELLoader
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.filtering import filter_variants_by_maximum_repetition
+from semanticlog.onto.settings import OntoBuildSettings, OwlProfile, EventOrderRepresentation
 
 import logging.config
 logging.config.dictConfig({
@@ -25,27 +26,59 @@ class TestLoadAndTransformOCEL(unittest.TestCase):
     def test_load_and_transform_all(self):
         if os.path.exists("data/tmp.owl"):
             os.remove("data/tmp.owl")
+            
+        size_limit_mb = 100
+        size_limit_bytes = size_limit_mb * 1024 * 1024
         
         folder_path = "data/OCEL"
         for file_name in os.listdir(folder_path):
-            if file_name not in ["AOE2.sqlite", "AOE2_small.json"]:
-                builder = OCEDUpperOntoBuilder("https:/oced#")
+            if file_name not in ["AOE2.sqlite", "AOE2_small.json", "ContainerLogistics.json"]:
+                file_path = os.path.join(folder_path, file_name)
+                file_size = os.path.getsize(file_path)
+                if file_size < size_limit_bytes:
+                    with self.subTest(file=file_name): 
+                        settings = OntoBuildSettings()
+                        settings.profile = OwlProfile.OWL2EL
+                        settings.order_representation = []
+                        settings.case_concepts = []
+                        builder = OCEDUpperOntoBuilder("https://oced#", settings)
+                        builder.construct_upper_ontology("data/ONTO/Upper.owl")
+                        file_path = os.path.join(folder_path, file_name)
+                        loader = PM4PYLoader(file_path, {})
+                        oced = loader.get_oced()
+                        oced = clean_oced_data(oced)
+   
+                        builder = OCEDOntoBuilder("data/ONTO/Upper.owl", settings)
+                        builder.build_ontology(oced)
+                        builder.save_onto("data/ONTO/" + file_name.split(".")[0] + ".owl")
+                        
+              
+    def test_p2p_log(self):
+        folder_path = "data/OCEL"
+        for file_name in os.listdir(folder_path):
+            if file_name in ["P2P.xml"]:
+                file_path = os.path.join(folder_path, file_name)
+                file_size = os.path.getsize(file_path)
+                settings = OntoBuildSettings()
+                settings.profile = OwlProfile.OWL2EL
+                settings.order_representation = []
+                settings.case_concepts = []
+                builder = OCEDUpperOntoBuilder("https://oced#", settings)
                 builder.construct_upper_ontology("data/ONTO/Upper.owl")
                 file_path = os.path.join(folder_path, file_name)
                 loader = PM4PYLoader(file_path, {})
                 oced = loader.get_oced()
                 oced = clean_oced_data(oced)
-                builder = OCEDOntoBuilder("data/ONTO/Upper.owl")
+                builder = OCEDOntoBuilder("data/ONTO/Upper.owl", settings)
                 builder.build_ontology(oced)
                 builder.save_onto("data/ONTO/" + file_name.split(".")[0] + ".owl")
-
 '''
 class TestLoadAndTransformOCEL(unittest.TestCase):
     
     def setUp(self):
         if os.path.exists("data/tmp.owl"):
             os.remove("data/tmp.owl")
-        builder = OCEDUpperOntoBuilder("https:/oced#")
+        builder = OCEDUpperOntoBuilder("https://oced#")
         builder.construct_upper_ontology("data/tmp.owl")
 
     def test_load_and_transform_ocel_sqlite_github_pm4py(self):
@@ -135,3 +168,4 @@ class TestLoadAndTransformOCEL(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    

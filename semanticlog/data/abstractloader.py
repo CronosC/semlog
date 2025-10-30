@@ -13,4 +13,3 @@ class AbstractLoader(ABC):
     def get_oced(self) -> OCEDStore:
         """Returns the data as a OCEDStore object"""
         pass
-
