@@ -1,0 +1,418 @@
+{
+  "objectTypes": [
+    {
+      "name": "item",
+      "attributes": [
+        {
+          "name": "weight",
+          "type": "float"
+        }
+      ]
+    },
+    {
+      "name": "order",
+      "attributes": [
+        {
+          "name": "status",
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "eventTypes": [
+    {
+      "name": "pay",
+      "attributes": [
+        {
+          "name": "amount",
+          "type": "float"
+        },
+        {
+          "name": "resource",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "place_order",
+      "attributes": [
+        {
+          "name": "amount",
+          "type": "float"
+        },
+        {
+          "name": "resource",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "ship_order",
+      "attributes": [
+        {
+          "name": "carrier",
+          "type": "string"
+        },
+        {
+          "name": "weight",
+          "type": "float"
+        }
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "id": "ord_1",
+      "type": "order",
+      "attributes": [
+        {
+          "name": "status",
+          "time": "1970-01-01T00:00:00Z",
+          "value": "pending"
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "item_1",
+          "qualifier": "contains"
+        },
+        {
+          "objectId": "item_2",
+          "qualifier": "contains"
+        }
+      ]
+    },
+    {
+      "id": "ord_2",
+      "type": "order",
+      "attributes": [
+        {
+          "name": "status",
+          "time": "1970-01-01T00:00:00Z",
+          "value": "shipped"
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "item_3",
+          "qualifier": "contains"
+        }
+      ]
+    },
+    {
+      "id": "ord_3",
+      "type": "order",
+      "attributes": [
+        {
+          "name": "status",
+          "time": "1970-01-01T00:00:00Z",
+          "value": "pending"
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "item_4",
+          "qualifier": "contains"
+        }
+      ]
+    },
+    {
+      "id": "item_1",
+      "type": "item",
+      "attributes": [
+        {
+          "name": "weight",
+          "time": "1970-01-01T00:00:00Z",
+          "value": 2.5
+        }
+      ]
+    },
+    {
+      "id": "item_2",
+      "type": "item",
+      "attributes": [
+        {
+          "name": "weight",
+          "time": "1970-01-01T00:00:00Z",
+          "value": 3.0
+        }
+      ]
+    },
+    {
+      "id": "item_3",
+      "type": "item",
+      "attributes": [
+        {
+          "name": "weight",
+          "time": "1970-01-01T00:00:00Z",
+          "value": 1.5
+        }
+      ]
+    },
+    {
+      "id": "item_4",
+      "type": "item",
+      "attributes": [
+        {
+          "name": "weight",
+          "time": "1970-01-01T00:00:00Z",
+          "value": 4.0
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "po_e1",
+      "type": "place_order",
+      "time": "2024-01-01T00:00:00Z",
+      "attributes": [
+        {
+          "name": "amount",
+          "value": 100.0
+        },
+        {
+          "name": "resource",
+          "value": "Alice"
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "ord_1",
+          "qualifier": "modifies"
+        }
+      ]
+    },
+    {
+      "id": "po_e2",
+      "type": "place_order",
+      "time": "2024-01-02T00:00:00Z",
+      "attributes": [
+        {
+          "name": "amount",
+          "value": 200.0
+        },
+        {
+          "name": "resource",
+          "value": "Bob"
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "ord_2",
+          "qualifier": "modifies"
+        }
+      ]
+    },
+    {
+      "id": "po_e3",
+      "type": "place_order",
+      "time": "2024-01-04T00:00:00Z",
+      "attributes": [
+        {
+          "name": "amount",
+          "value": 150.0
+        },
+        {
+          "name": "resource",
+          "value": "Alice"
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "ord_3",
+          "qualifier": "modifies"
+        }
+      ]
+    },
+    {
+      "id": "po_e4",
+      "type": "place_order",
+      "time": "2024-01-08T00:00:00Z",
+      "attributes": [
+        {
+          "name": "amount",
+          "value": 80.0
+        },
+        {
+          "name": "resource",
+          "value": "Bob"
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "ord_1",
+          "qualifier": "modifies"
+        }
+      ]
+    },
+    {
+      "id": "pay_e1",
+      "type": "pay",
+      "time": "2024-01-03T00:00:00Z",
+      "attributes": [
+        {
+          "name": "amount",
+          "value": 100.0
+        },
+        {
+          "name": "resource",
+          "value": "Alice"
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "ord_1",
+          "qualifier": "modifies"
+        }
+      ]
+    },
+    {
+      "id": "pay_e2",
+      "type": "pay",
+      "time": "2024-01-05T00:00:00Z",
+      "attributes": [
+        {
+          "name": "amount",
+          "value": 200.0
+        },
+        {
+          "name": "resource",
+          "value": "Bob"
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "ord_2",
+          "qualifier": "modifies"
+        }
+      ]
+    },
+    {
+      "id": "pay_e3",
+      "type": "pay",
+      "time": "2024-01-07T00:00:00Z",
+      "attributes": [
+        {
+          "name": "amount",
+          "value": 150.0
+        },
+        {
+          "name": "resource",
+          "value": "Bob"
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "ord_3",
+          "qualifier": "modifies"
+        }
+      ]
+    },
+    {
+      "id": "pay_e4",
+      "type": "pay",
+      "time": "2024-01-09T00:00:00Z",
+      "attributes": [
+        {
+          "name": "amount",
+          "value": 80.0
+        },
+        {
+          "name": "resource",
+          "value": "Alice"
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "ord_2",
+          "qualifier": "modifies"
+        }
+      ]
+    },
+    {
+      "id": "so_e1",
+      "type": "ship_order",
+      "time": "2024-01-10T00:00:00Z",
+      "attributes": [
+        {
+          "name": "carrier",
+          "value": "DHL"
+        },
+        {
+          "name": "weight",
+          "value": 2.5
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "item_1",
+          "qualifier": "ships"
+        }
+      ]
+    },
+    {
+      "id": "so_e2",
+      "type": "ship_order",
+      "time": "2024-01-11T00:00:00Z",
+      "attributes": [
+        {
+          "name": "carrier",
+          "value": "UPS"
+        },
+        {
+          "name": "weight",
+          "value": 3.0
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "item_2",
+          "qualifier": "ships"
+        }
+      ]
+    },
+    {
+      "id": "so_e3",
+      "type": "ship_order",
+      "time": "2024-01-12T00:00:00Z",
+      "attributes": [
+        {
+          "name": "carrier",
+          "value": "DHL"
+        },
+        {
+          "name": "weight",
+          "value": 1.5
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "item_3",
+          "qualifier": "ships"
+        }
+      ]
+    },
+    {
+      "id": "so_e4",
+      "type": "ship_order",
+      "time": "2024-01-13T00:00:00Z",
+      "attributes": [
+        {
+          "name": "carrier",
+          "value": "UPS"
+        },
+        {
+          "name": "weight",
+          "value": 4.0
+        }
+      ],
+      "relationships": [
+        {
+          "objectId": "item_4",
+          "qualifier": "ships"
+        }
+      ]
+    }
+  ]
+}

@@ -1,23 +1,39 @@
-from owlapy import dl_to_owl_expression, manchester_to_owl_expression, owl_expression_to_sparql, owl_expression_to_manchester
-from owlapy.class_expression import OWLClassExpression
 import enum
+import functools
+
+from owlapy import (
+    dl_to_owl_expression,
+    manchester_to_owl_expression,
+    owl_expression_to_manchester,
+    owl_expression_to_sparql,
+)
+from owlapy.class_expression import OWLClassExpression
+
+from semanticlog.onto.settings import DEFAULT_IRI
+
 
 class Format(enum.Enum):
     OWL = "OWL"
     DL = "DL"
     MANCHESTER = "Manchester"
-    
-### Parsing string expressions ####
 
-def parse_manchester(iri: str, manchester : str) -> OWLClassExpression:
+
+# Parsing string expressions
+
+
+@functools.lru_cache(maxsize=None)
+def parse_manchester(iri: str, manchester: str) -> OWLClassExpression:
     return manchester_to_owl_expression(manchester, iri)
 
-def parse_dl(iri: str, dl : str) -> OWLClassExpression:
-    return dl_to_owl_expression(dl, iri)
-    
-#### To sparql ####
 
-def theory_to_sparql_query(theory: str, format: Format, iri:str = "https://uni-bamberg.de/KIGA/OCED.owl#"):
+def parse_dl(iri: str, dl: str) -> OWLClassExpression:
+    return dl_to_owl_expression(dl, iri)
+
+
+# To sparql
+
+
+def theory_to_sparql_query(theory: str, format: Format, iri: str = DEFAULT_IRI):
     match format:
         case Format.OWL:
             return transform_owl_to_sparql(iri, theory)
@@ -27,8 +43,9 @@ def theory_to_sparql_query(theory: str, format: Format, iri:str = "https://uni-b
             return transform_manchester_to_sparql(iri, theory)
         case _:
             raise ValueError("Not a valid theory format!")
-        
-def transform_dl_to_manchester(dl:str, iri:str = "https://uni-bamberg.de/KIGA/OCED.owl#") -> str:
+
+
+def transform_dl_to_manchester(dl: str, iri: str = DEFAULT_IRI) -> str:
     """
     Transforms a DL syntax expression into a Manchester syntax expression.
 
@@ -45,7 +62,8 @@ def transform_dl_to_manchester(dl:str, iri:str = "https://uni-bamberg.de/KIGA/OC
     manchester = unsanitize(manchester)
     return manchester
 
-def transform_manchester_to_sparql(manchester: str, iri:str = "https://uni-bamberg.de/KIGA/OCED.owl#") -> str:
+
+def transform_manchester_to_sparql(manchester: str, iri: str = DEFAULT_IRI) -> str:
     """
     Transforms a Manchester syntax expression into a SPARQL query.
 
@@ -56,14 +74,16 @@ def transform_manchester_to_sparql(manchester: str, iri:str = "https://uni-bambe
     Returns:
         str: The equivalent SPARQL query.
     """
-    
+
     manchester = sanitize(manchester)
     owl = manchester_to_owl_expression(manchester, iri)
     sparql = owl_expression_to_sparql(expression=owl)
+    sparql = "\n".join(line.rstrip() for line in sparql.splitlines())
     sparql = unsanitize(sparql)
     return sparql
 
-def transform_dl_to_sparql(dl: str, iri:str = "https://uni-bamberg.de/KIGA/OCED.owl#") -> str:
+
+def transform_dl_to_sparql(dl: str, iri: str = DEFAULT_IRI) -> str:
     """
     Transforms a Description Logic (DL) expression into a SPARQL query.
 
@@ -77,15 +97,25 @@ def transform_dl_to_sparql(dl: str, iri:str = "https://uni-bamberg.de/KIGA/OCED.
     dl = sanitize(dl)
     owl = dl_to_owl_expression(dl, iri)
     sparql = owl_expression_to_sparql(expression=owl)
+    sparql = "\n".join(line.rstrip() for line in sparql.splitlines())
     sparql = unsanitize(sparql)
     return sparql
 
-def transform_owl_to_sparql(owl: OWLClassExpression, iri:str = "https://uni-bamberg.de/KIGA/OCED.owl#") -> str:
+
+def transform_owl_to_sparql(owl: OWLClassExpression, iri: str = DEFAULT_IRI) -> str:
     raise NotImplementedError("Has not been necessary so far!")
 
-#### Helper ####
 
-# might not be necessary anymore, declare constraint representation in the log has changed
+# Helper
+
+_SANITIZE_MAP = {
+    "%": "PERCENTAGESIGN",
+    "[": "SQUAREBRACKETOPENING",
+    "]": "SQUAREBRACKETCLOSING",
+    ",": "COMMATA",
+}
+
+
 def sanitize(string: str) -> str:
     """
     Replaces special characters in a string with placeholders to ensure compatibility.
@@ -96,14 +126,8 @@ def sanitize(string: str) -> str:
     Returns:
         str: The sanitized string with placeholders for special characters.
     """
-    invalid_special_characters = {
-        "%": "PERCENTAGESIGN",
-        "[": "SQUAREBRACKETOPENING",
-        "]": "SQUAREBRACKETCLOSING",
-        ",": "COMMATA"
-    }
-    for key in invalid_special_characters:
-        string = string.replace(key, invalid_special_characters[key])
+    for key, val in _SANITIZE_MAP.items():
+        string = string.replace(key, val)
     return string
 
 
@@ -117,12 +141,6 @@ def unsanitize(string: str) -> str:
     Returns:
         str: The unsanitized string with original special characters restored.
     """
-    invalid_special_characters = {
-        "%": "PERCENTAGESIGN",
-        "[": "SQUAREBRACKETOPENING",
-        "]": "SQUAREBRACKETCLOSING",
-        ",": "COMMATA"
-    }
-    for key in invalid_special_characters:
-        string = string.replace(invalid_special_characters[key], key)
+    for key, val in _SANITIZE_MAP.items():
+        string = string.replace(val, key)
     return string

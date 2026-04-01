@@ -1,10 +1,9 @@
-from owlapy.owl_ontology import SyncOntology
-from owlapy.owl_axiom import OWLDeclarationAxiom
-from owlapy.class_expression import OWLClass
-from owlapy.owl_reasoner import SyncReasoner
-from owlapy.static_funcs import stopJVM, startJVM
-from semanticlog.onto.settings import OwlProfile
 import os
+
+from owlapy.owl_ontology import SyncOntology
+from owlapy.owl_reasoner import SyncReasoner
+
+from semanticlog.onto.settings import OwlProfile
 
 
 class Reasoner:
@@ -12,7 +11,7 @@ class Reasoner:
     def __init__(self, path, backend="HermiT", profile=OwlProfile.OWL2EL):
         if backend not in ["HermiT", "Pellet", "ELK"]:
             raise ValueError("Unsupported reasoner backend:", backend)
-        
+
         self.path = path
         self.ontology = SyncOntology(self.path)
         self.reasoner = SyncReasoner(self.ontology, reasoner=backend)
@@ -24,6 +23,7 @@ class Reasoner:
             "InferredEquivalentDataPropertiesAxiomGenerator",
             "InferredEquivalentObjectPropertyAxiomGenerator",
             "InferredInverseObjectPropertiesAxiomGenerator",
+            "InferredPropertyAssertionGenerator",
             "InferredSubDataPropertyAxiomGenerator",
             "InferredSubObjectPropertyAxiomGenerator",
         ]
@@ -53,7 +53,7 @@ class Reasoner:
         return self.reasoner.has_consistent_ontology()
 
     def save_onto(self, save_path=None):
-        if save_path == None:
+        if save_path is None:
             save_path = self.path
         if not os.path.exists(save_path):
             with open(save_path, "w") as f:

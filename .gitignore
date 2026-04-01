@@ -1,19 +1,44 @@
-venv/*
-.venv/*
-cache/*
-*.egg-info
-components/RDFox/RDFox.lic
-__pycache__
-log
-RDFox_Export_With_Declare.ttl
-data/logs/*
-data/xes/*
-data/ontos/*
-results
-experiments
-KGs
-KGs/*
-synthetic_problems.json
-.vscode/*
+# LLM
+CLAUDE.md
+.claude
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+
+# Testing & coverage
 .coverage
+htmlcov/
+.pytest_cache/
+
+# Build logs
+logs/
+
+# Generated / temporary data
 data/*
+data/tmp/
+data/logs/
+data/xes/
+data/ontos/
+data/ONTO/*.owl
+simulated.csv
+
+# Project-specific
+cache/
+results/
+experiments/
+KGs/
+synthetic_problems.json
+RDFox_Export_With_Declare.ttl
+components/RDFox/RDFox.lic
+
+# IDE
+.idea/

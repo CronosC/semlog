@@ -1,24 +1,32 @@
-import unittest
-import pandas as pd
-from pandas.testing import assert_frame_equal
-from semanticlog.data.ocelloader import OCELLoader
 import os
+import unittest
 
-pd.set_option('display.max_columns', None)
+import pandas as pd
+
+from semanticlog.data.ocelloader import OCELLoader
+
+pd.set_option("display.max_columns", None)
+
 
 class TestOCELLoader(unittest.TestCase):
-    
+
     def test_load_all_ocel(self):
-        folder_path = "data/OCEL"
+        folder_path = "data/ocel"
         for file_name in os.listdir(folder_path):
             if file_name.endswith(".sqlite"):
-                if file_name not in ["AOE2.sqlite", "AOE2_small.json", "blockchain.xmlocel"]:
-                    with self.subTest(file=file_name): 
+                if file_name not in [
+                    "AOE2.sqlite",
+                    "AOE2_small.json",
+                    "blockchain.xmlocel",
+                ]:
+                    with self.subTest(file=file_name):
                         file_path = os.path.join(folder_path, file_name)
                         loader = OCELLoader(file_path, {"file_format": "sqlite"})
                         oced = loader.get_oced()
                         self.assertIsNotNone(oced)
-'''
+
+
+"""
 class TestOCELLoader(unittest.TestCase):
 
     def test_load_ocel_sqlite_github_pm4py(self):
@@ -65,8 +73,8 @@ class TestOCELLoader(unittest.TestCase):
         loader = OCELLoader("data/transfer_order.sqlite", {"file_format": "sqlite"})
         oced = loader.get_oced()
         self.assertIsNotNone(oced)
-        
- '''
+
+ """
 
 if __name__ == "__main__":
     unittest.main()

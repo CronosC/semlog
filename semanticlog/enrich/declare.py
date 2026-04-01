@@ -1,26 +1,21 @@
-import os
-import time
-import itertools
 import warnings
 
 import pandas as pd
-import pm4py as pm
-
 from pm4py.objects.conversion.log import converter as log_converter
 
 from semanticlog.data.oced import OCEDStore
 
-from Declare4Py.D4PyEventLog import D4PyEventLog
-from Declare4Py.ProcessModels.LTLModel import LTLModel, LTLTemplate
-from Declare4Py.ProcessModels.DeclareModel import DeclareModel, DeclareModelTemplate
-from Declare4Py.ProcessMiningTasks.ConformanceChecking.LTLAnalyzer import LTLAnalyzer
-from Declare4Py.ProcessMiningTasks.ConformanceChecking.MPDeclareAnalyzer import (
-    MPDeclareAnalyzer,
-)
-from Declare4Py.ProcessMiningTasks.ConformanceChecking.MPDeclareResultsBrowser import (
-    MPDeclareResultsBrowser,
-)
-from Declare4Py.ProcessMiningTasks.Discovery.DeclareMiner import DeclareMiner
+try:
+    from Declare4Py.D4PyEventLog import D4PyEventLog
+    from Declare4Py.ProcessMiningTasks.ConformanceChecking.MPDeclareAnalyzer import (
+        MPDeclareAnalyzer,
+    )
+    from Declare4Py.ProcessMiningTasks.Discovery.DeclareMiner import DeclareMiner
+    from Declare4Py.ProcessModels.DeclareModel import DeclareModel
+
+    _DECLARE4PY_AVAILABLE = True
+except ImportError:
+    _DECLARE4PY_AVAILABLE = False
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -30,13 +25,18 @@ warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 class DeclareEnricher:
 
     def __init__(self, data: OCEDStore):
+        if not _DECLARE4PY_AVAILABLE:
+            raise ImportError(
+                "Declare4Py and its Lydia backend are required for DeclareEnricher. "
+                "Install declare4py and the Lydia LTLf/LDLf solver separately."
+            )
         self.data = data
-        
+
     def get_constraints_via_enumeration(
         self,
         case_concepts: list[str],
         constraint_set: list[str],
-        vacuuos_is_considered: bool = False,
+        vacuous_is_considered: bool = False,
     ):
         results = {}
         for case_concept in case_concepts:
@@ -52,7 +52,7 @@ class DeclareEnricher:
             results[case_concept] = result_df
 
         return self.postprocess_results(results)
-            
+
     def construct_model_string(
         self,
         log,
@@ -62,8 +62,19 @@ class DeclareEnricher:
         activities = list(
             set(event["concept:name"] for trace in log.get_log() for event in trace)
         )
-        unary_constraints = ["Absence1", "Existence1", "Absence2", "Existence2", "Absence3", "Existence3", "End", "Init"]
-        unary_constraints_to_include = [x for x in unary_constraints if x in constraint_set]
+        unary_constraints = [
+            "Absence1",
+            "Existence1",
+            "Absence2",
+            "Existence2",
+            "Absence3",
+            "Existence3",
+            "End",
+            "Init",
+        ]
+        unary_constraints_to_include = [
+            x for x in unary_constraints if x in constraint_set
+        ]
         binary_constraint_to_include = [
             x for x in constraint_set if x not in unary_constraints
         ]
@@ -86,7 +97,7 @@ class DeclareEnricher:
         self,
         case_concepts: list[str],
         constraint_set: list[str] = [],
-        vacuuos_is_considered: bool = False,
+        vacuous_is_considered: bool = False,
         constraint_support_threshold: float = 0.5,
         itemset_support_threshold: float = 0.5,
     ):
@@ -95,7 +106,7 @@ class DeclareEnricher:
             log, case_ids = self.get_log(case_concept)
             discovery = DeclareMiner(
                 log=log,
-                consider_vacuity=vacuuos_is_considered,
+                consider_vacuity=vacuous_is_considered,
                 min_support=constraint_support_threshold,
                 itemsets_support=itemset_support_threshold,
                 max_declare_cardinality=3,
@@ -111,8 +122,6 @@ class DeclareEnricher:
         return self.postprocess_results(results)
 
     def postprocess_results(self, results):
-        add_case_concept_to_constraints = len(results.keys()) > 1
-
         for result in results:
             result_df = results[result]
 
@@ -121,7 +130,11 @@ class DeclareEnricher:
 
             # replace brackets
             result_df.columns = [
-                col.replace("[", "__").replace("]", "__").replace(", ", "__").replace(" ", "") for col in result_df.columns
+                col.replace("[", "__")
+                .replace("]", "__")
+                .replace(", ", "__")
+                .replace(" ", "")
+                for col in result_df.columns
             ]
 
             # make bool
@@ -141,7 +154,7 @@ class DeclareEnricher:
             ignore_index=True,
         )
         return results_df
-    
+
     def get_log(self, case_concept):
         # df log
         log = self.data.get_log(case_concept)
@@ -157,5 +170,5 @@ class DeclareEnricher:
         case_ids = [trace.attributes["concept:name"] for trace in log]
         # d4py log
         log = D4PyEventLog(log=log, case_name="case:concept:name")
-        
+
         return log, case_ids

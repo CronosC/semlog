@@ -4,22 +4,56 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "semlog"
-version = "0.2.0"
-description = "Semantic Event Log - Instantiate process mining data as ontologies, with various options"
-authors = [
-    { name = "Christian Dormagen", email = "christian.dormagen@oth-regensburg.de" }
-]
+version = "0.3.0"
+description = "Semantic Event Log - Instantiate process mining data as OWL 2 ontologies"
+authors = [{ name = "Christian Dormagen", email = "christian.dormagen@oth-regensburg.de" }]
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
     "pm4py>=2.7",
-    "declare4py",
-    "pandas>=2.2"
+    "owlapy",
+    "scipy",
+    "pandas>=2.2",
 ]
 
 [project.optional-dependencies]
-dev = []
+declare = [
+    "declare4py",
+]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "isort",
+    "autoflake",
+    "flake8",
+    "mypy",
+    "pre-commit",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["semanticlog"]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.mypy]
+python_version = "3.12"
+files = ["semanticlog"]
+ignore_missing_imports = true
+warn_unused_ignores = true

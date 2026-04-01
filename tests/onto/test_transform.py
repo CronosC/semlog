@@ -1,12 +1,10 @@
 import unittest
-from owlapy.class_expression import OWLClassExpression
+
 from semanticlog.onto.transform import (
-    transform_manchester_to_sparql,
-    transform_dl_to_sparql,
     sanitize,
+    transform_dl_to_sparql,
+    transform_manchester_to_sparql,
     unsanitize,
-    parse_dl,
-    parse_manchester,
 )
 
 
@@ -29,16 +27,16 @@ class TestTransformations(unittest.TestCase):
             '!"§$%&,/()=?¹,,²³¼¼½¬{[]}',
             "",
             """SELECT
- DISTINCT ?x WHERE { 
-?x a <http://example.org#Person> . 
-?x <http://example.org#hasAge> ?s_1 . 
-?s_1 a <http://example.org#Number[]> . 
+ DISTINCT ?x WHERE {
+?x a <http://example.org#Person> .
+?x <http://example.org#hasAge> ?s_1 .
+?s_1 a <http://example.org#Number[]> .
  }""",
             """SELECT
- DISTINCT ?x WHERE { 
-?x a <http://example.org#Class> . 
-?x <http://example.org#hasProperty> ?s_1 . 
-?s_1 a <http://example.org#Value%> . 
+ DISTINCT ?x WHERE {
+?x a <http://example.org#Class> .
+?x <http://example.org#hasProperty> ?s_1 .
+?s_1 a <http://example.org#Value%> .
  }""",
         ]:
             self.assertEqual(string, unsanitize(sanitize(string)))
@@ -53,10 +51,10 @@ class TestTransformations(unittest.TestCase):
         self.assertEqual(
             sparql_output,
             """SELECT
- DISTINCT ?x WHERE { 
-?x a <http://example.org#Person> . 
-?x <http://example.org#hasAge> ?s_1 . 
-?s_1 a <http://example.org#Number[]> . 
+ DISTINCT ?x WHERE {
+?x a <http://example.org#Person> .
+?x <http://example.org#hasAge> ?s_1 .
+?s_1 a <http://example.org#Number[]> .
  }""",
         )
 
@@ -70,10 +68,10 @@ class TestTransformations(unittest.TestCase):
         self.assertEqual(
             sparql_output,
             """SELECT
- DISTINCT ?x WHERE { 
-?x a <http://example.org#Class> . 
-?x <http://example.org#hasProperty> ?s_1 . 
-?s_1 a <http://example.org#Value%> . 
+ DISTINCT ?x WHERE {
+?x a <http://example.org#Class> .
+?x <http://example.org#hasProperty> ?s_1 .
+?s_1 a <http://example.org#Value%> .
  }""",
         )
 
