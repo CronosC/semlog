@@ -3,7 +3,7 @@ import logging
 import pandas as pd
 import pm4py as pm
 
-from semanticlog.data.abstractloader import AbstractLoader
+from semanticlog.data.loading.abstractloader import AbstractLoader
 from semanticlog.data.oced import OCEDStore
 
 
@@ -46,7 +46,7 @@ class ClassicalLoader(AbstractLoader):
             for activity, df in log.drop(columns=[self.case_col]).groupby(self.act_col)
         }
 
-        for activity in event_dfs.keys():
+        for activity in event_dfs:
             df = event_dfs[activity]
             df = df[["event_id", self.time_col]]
             oced.add_event(activity, "event_id", self.time_col, df)

@@ -4,6 +4,11 @@ from semanticlog.data.oced import OCEDStore
 
 
 class AbstractLoader(ABC):
+    """Base class for all event-log loaders.
+
+    Subclasses must implement ``get_oced()`` to read source data and return a
+    populated :class:`~semanticlog.data.oced.OCEDStore`.
+    """
 
     @abstractmethod
     def __init__(self, path, config):

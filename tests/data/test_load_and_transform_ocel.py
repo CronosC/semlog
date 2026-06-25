@@ -3,10 +3,14 @@ import os
 import unittest
 
 from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.pm4pyloader import PM4PYLoader
+from semanticlog.data.loading.pm4pyloader import PM4PYLoader
 from semanticlog.onto.instantiate import OCEDOntoBuilder
-from semanticlog.onto.settings import DEFAULT_IRI, OntoBuildSettings, OwlProfile
-from semanticlog.onto.upper import OCEDUpperOntoBuilder
+from semanticlog.onto.settings import (
+    DEFAULT_IRI,
+    InverseRepresentation,
+    OntoBuildSettings,
+    OwlProfile,
+)
 
 logging.config.dictConfig(
     {
@@ -30,16 +34,15 @@ class TestOCELPipeline(unittest.TestCase):
 
         settings = OntoBuildSettings()
         settings.profile = OwlProfile.OWL2EL
+        settings.inverse_representation = [InverseRepresentation.IMPLICIT]
         settings.order_representation = []
         settings.case_concepts = []
-
-        OCEDUpperOntoBuilder(DEFAULT_IRI, settings).construct_upper_ontology(out_path)
 
         loader = PM4PYLoader("data/ocel/P2P.xml", {})
         oced = loader.get_oced()
         oced = clean_oced_data(oced)
 
-        builder = OCEDOntoBuilder(out_path, settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, settings)
         builder.build_ontology(oced)
         builder.save_onto(out_path)
 

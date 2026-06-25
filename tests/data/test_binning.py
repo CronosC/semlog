@@ -3,17 +3,17 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from semanticlog.data.misc import (
-    _distribution_quantize,
-    expon_quantize,
-    gamma_quantize,
-    gaussian_quantize,
+from semanticlog.data.binning import (
+    _dist_bin_series,
+    bin_attributes,
+    bin_series,
+    equal_bin_series,
+    expon_bin_series,
+    gamma_bin_series,
+    gaussian_bin_series,
     get_best_fit_distribution,
     get_weighted_variant_mapping,
-    lognorm_quantize,
-    quantize,
-    quantize_series,
-    simple_quantize,
+    lognorm_bin_series,
 )
 from semanticlog.data.oced import OCEDStore
 
@@ -81,46 +81,46 @@ def test_get_weighted_variant_mapping_empty_log_returns_empty_dict():
 
 
 # ---------------------------------------------------------------------------
-# simple_quantize
+# equal_bin_series
 # ---------------------------------------------------------------------------
 
 
-def test_simple_quantize_bins_into_expected_labels():
+def test_equal_bin_series_bins_into_expected_labels():
     series = pd.Series(range(20))
     labels = ["Low", "Average", "High"]
-    result = simple_quantize(series, bins=3, labels=labels)
+    result = equal_bin_series(series, bins=3, labels=labels)
     valid = set(result.dropna().astype(str))
     assert valid.issubset(set(labels))
     # All three labels should appear for 20 well-spread values
     assert valid == set(labels)
 
 
-def test_simple_quantize_works_when_bins_equals_unique_value_count():
+def test_equal_bin_series_works_when_bins_equals_unique_value_count():
     # Exactly 2 unique values and 2 bins with 2 labels — no error, all values binned
     series = pd.Series([1, 1, 2, 2])
-    result = simple_quantize(series, bins=2, labels=["Low", "High"])
+    result = equal_bin_series(series, bins=2, labels=["Low", "High"])
     assert result.notna().any()
     assert set(result.dropna().astype(str)).issubset({"Low", "High"})
 
 
 # ---------------------------------------------------------------------------
-# quantize_series — low-cardinality fallback
+# bin_series — low-cardinality fallback
 # ---------------------------------------------------------------------------
 
 
-def test_quantize_series_low_cardinality_returns_string_dtype():
+def test_bin_series_low_cardinality_returns_string_dtype():
     # 3 unique values <= max(5, 10) → string fallback
     series = pd.Series([1, 2, 3, 1, 2, 3])
-    result = quantize_series(series, bins=5, min_values=10)
+    result = bin_series(series, bins=5, min_values=10)
     assert pd.api.types.is_object_dtype(result) or pd.api.types.is_string_dtype(result)
     assert result.tolist() == ["1", "2", "3", "1", "2", "3"]
 
 
-def test_quantize_series_high_cardinality_returns_categorical_labels():
+def test_bin_series_high_cardinality_returns_categorical_labels():
     rng = np.random.default_rng(0)
     series = pd.Series(rng.normal(0, 1, 200))
     labels = ["very_low", "low", "average", "high", "very_high"]
-    result = quantize_series(series, bins=5, labels=labels)
+    result = bin_series(series, bins=5, labels=labels)
     valid = set(result.dropna().astype(str))
     assert valid.issubset(set(labels))
 
@@ -151,58 +151,58 @@ def test_get_best_fit_distribution_returns_none_when_pvalue_threshold_not_met():
 
 
 # ---------------------------------------------------------------------------
-# Distribution-specific quantize wrappers
+# Distribution-specific bin wrappers
 # ---------------------------------------------------------------------------
 
 
-def test_gaussian_quantize_output_contains_only_expected_labels():
+def test_gaussian_bin_series_output_contains_only_expected_labels():
     rng = np.random.default_rng(0)
     series = pd.Series(rng.normal(0, 1, 300))
     labels = ["Low", "Average", "High"]
-    result = gaussian_quantize(series, bins=3, labels=labels)
+    result = gaussian_bin_series(series, bins=3, labels=labels)
     valid = set(result.dropna().astype(str))
     assert valid.issubset(set(labels))
     assert valid == set(labels)
 
 
-def test_lognorm_quantize_output_contains_only_expected_labels():
+def test_lognorm_bin_series_output_contains_only_expected_labels():
     rng = np.random.default_rng(1)
     series = pd.Series(rng.lognormal(0, 1, 300))
     labels = ["Low", "Average", "High"]
-    result = lognorm_quantize(series, bins=3, labels=labels)
+    result = lognorm_bin_series(series, bins=3, labels=labels)
     valid = set(result.dropna().astype(str))
     assert valid.issubset(set(labels))
 
 
-def test_expon_quantize_output_contains_only_expected_labels():
+def test_expon_bin_series_output_contains_only_expected_labels():
     rng = np.random.default_rng(2)
     series = pd.Series(rng.exponential(1, 300))
     labels = ["Low", "Average", "High"]
-    result = expon_quantize(series, bins=3, labels=labels)
+    result = expon_bin_series(series, bins=3, labels=labels)
     valid = set(result.dropna().astype(str))
     assert valid.issubset(set(labels))
 
 
-def test_gamma_quantize_output_contains_only_expected_labels():
+def test_gamma_bin_series_output_contains_only_expected_labels():
     rng = np.random.default_rng(3)
     series = pd.Series(rng.gamma(2, 2, 300))
     labels = ["Low", "Average", "High"]
-    result = gamma_quantize(series, bins=3, labels=labels)
+    result = gamma_bin_series(series, bins=3, labels=labels)
     valid = set(result.dropna().astype(str))
     assert valid.issubset(set(labels))
 
 
-def test_distribution_quantize_returns_all_nan_for_empty_series():
-    result = _distribution_quantize(pd.Series([], dtype=float), "norm", bins=3)
+def test_dist_bin_series_returns_all_nan_for_empty_series():
+    result = _dist_bin_series(pd.Series([], dtype=float), "norm", bins=3)
     assert result.isna().all()
 
 
 # ---------------------------------------------------------------------------
-# quantize (full OCEDStore)
+# bin_attributes (full OCEDStore)
 # ---------------------------------------------------------------------------
 
 
-def test_quantize_applies_to_numeric_object_attributes():
+def test_bin_attributes_applies_to_numeric_object_attributes():
     oced = OCEDStore()
     rng = np.random.default_rng(42)
     df = pd.DataFrame(
@@ -213,13 +213,13 @@ def test_quantize_applies_to_numeric_object_attributes():
     )
     oced.add_object("item", "oid", df)
 
-    result = quantize(oced)
+    result = bin_attributes(oced)
 
     obj_df = result.get_object("item")["data"]
     assert not pd.api.types.is_numeric_dtype(obj_df["score"])
 
 
-def test_quantize_applies_to_numeric_event_attributes():
+def test_bin_attributes_applies_to_numeric_event_attributes():
     oced = OCEDStore()
     rng = np.random.default_rng(42)
     df = pd.DataFrame(
@@ -231,13 +231,13 @@ def test_quantize_applies_to_numeric_event_attributes():
     )
     oced.add_event("act", "eid", "ts", df)
 
-    result = quantize(oced)
+    result = bin_attributes(oced)
 
     ev_df = result.get_event("act")["data"]
     assert not pd.api.types.is_numeric_dtype(ev_df["value"])
 
 
-def test_quantize_skips_id_and_time_columns():
+def test_bin_attributes_skips_id_and_time_columns():
     oced = OCEDStore()
     rng = np.random.default_rng(0)
     df = pd.DataFrame(
@@ -249,7 +249,7 @@ def test_quantize_skips_id_and_time_columns():
     )
     oced.add_event("act", "eid", "ts", df)
 
-    result = quantize(oced)
+    result = bin_attributes(oced)
 
     ev_df = result.get_event("act")["data"]
     # id column must stay numeric

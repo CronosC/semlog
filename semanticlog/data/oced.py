@@ -1,8 +1,37 @@
 import copy
+import json
+import logging
+import pickle
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import pm4py as pm
+
+_DEFAULT_IRI: str = "https://oced#"
+
+
+def _try_datetime(
+    series: pd.Series, non_null: int, min_ratio: float
+) -> pd.Series | None:
+    dt = pd.to_datetime(series, errors="coerce", utc=True, format="ISO8601")
+    dt = dt.dt.floor("s")
+    return dt if (dt.notna().sum() / non_null) >= min_ratio else None
+
+
+def _try_numeric(
+    series: pd.Series, non_null: int, min_ratio: float
+) -> pd.Series | None:
+    num = pd.to_numeric(series, errors="coerce")
+    if (num.notna().sum() / non_null) < min_ratio:
+        return None
+    vals = set(num.dropna().unique())
+    if vals <= {0, 1}:
+        return num.astype("boolean")
+    if (num.dropna() % 1 == 0).all():
+        return num.astype("Int64")
+    return num.astype("float64")
 
 
 class OCEDStore:
@@ -26,13 +55,105 @@ class OCEDStore:
                 object attribute change history. Required before calling
                 ``add_object_changes`` or ``get_object_changes``.
         """
-        self._events = {}
-        self._objects = {}
-        self._relations = {"event_to_object": {}, "object_to_object": {}}
-        self._used_ids = []
+        self._events: dict[str, Any] = {}
+        self._objects: dict[str, Any] = {}
+        self._relations: dict[str, Any] = {
+            "event_to_object": {},
+            "object_to_object": {},
+        }
+        self._used_ids: set = set()
         self._ocel_mode = ocel_mode
+        self._backmap: dict[str, str] = {}
         if ocel_mode:
             self._object_changes: dict[str, pd.DataFrame] = {}
+
+    # BACKMAP
+
+    @property
+    def backmap(self) -> dict[str, str]:
+        """Mapping from post-clean IRI local name to original pre-clean name (IDs and schema names)."""
+        return self._backmap
+
+    def get_original(
+        self, iri_or_local_name: str, base_iri: str = _DEFAULT_IRI
+    ) -> str | None:
+        """
+        Return the original pre-cleaning name for an IRI or local name.
+
+        Covers both entity IDs and schema names (activities, object types, attributes).
+
+        Args:
+            iri_or_local_name: A full IRI (e.g. ``https://oced#order__123``) or
+                the local name alone (e.g. ``order__123``).
+            base_iri: IRI prefix to strip before lookup. Defaults to
+                ``"https://oced#"``.
+
+        Returns:
+            The original name as it appeared before cleaning, or ``None``
+            if the local name is not in the backmap.
+        """
+        local_name = iri_or_local_name.removeprefix(base_iri)
+        return self._backmap.get(local_name)
+
+    def get_originals(
+        self, iri_or_local_names: list[str], base_iri: str = _DEFAULT_IRI
+    ) -> list[str | None]:
+        """
+        Return original pre-cleaning names for a list of IRIs or local names.
+
+        Args:
+            iri_or_local_names: List of full IRIs or local names.
+            base_iri: IRI prefix to strip before lookup.
+
+        Returns:
+            List of original names in the same order, with ``None`` for entries
+            not found in the backmap.
+        """
+        return [self.get_original(name, base_iri) for name in iri_or_local_names]
+
+    def save(self, path: str | Path) -> None:
+        """
+        Persist the full OCEDStore to a pickle file.
+
+        Args:
+            path: Destination file path (e.g. ``store.pkl``).
+        """
+        with open(path, "wb") as f:
+            pickle.dump(self, f)
+
+    @classmethod
+    def load(cls, path: str | Path) -> "OCEDStore":
+        """
+        Load an OCEDStore from a pickle file produced by :meth:`save`.
+
+        Args:
+            path: Path to the pickle file.
+
+        Returns:
+            Restored ``OCEDStore`` instance, including ``_backmap``.
+        """
+        with open(path, "rb") as f:
+            return pickle.load(f)  # noqa: S301
+
+    def save_backmap(self, path: str | Path) -> None:
+        """
+        Save the backmap as a JSON file.
+
+        Args:
+            path: Destination file path (e.g. ``backmap.json``).
+        """
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self._backmap, f, ensure_ascii=False, indent=2)
+
+    def load_backmap(self, path: str | Path) -> None:
+        """
+        Load backmap from a JSON file, replacing any existing backmap.
+
+        Args:
+            path: Path to a JSON file produced by :meth:`save_backmap`.
+        """
+        with open(path, encoding="utf-8") as f:
+            self._backmap = json.load(f)
 
     # MISCELLANEOUS
 
@@ -43,12 +164,12 @@ class OCEDStore:
         if isinstance(ids, list):
             ids = pd.Series(ids)
         types = []
-        for object_type in self._objects.keys():
+        for object_type in self._objects:
             object_df = self._objects[object_type]["data"]
             object_id = self._objects[object_type]["id"]
             if ids.isin(object_df[object_id]).any():
                 types.append(object_type)
-        for activity in self._events.keys():
+        for activity in self._events:
             event_df = self._events[activity]["data"]
             event_id = self._events[activity]["id"]
             if ids.isin(event_df[event_id]).any():
@@ -75,7 +196,7 @@ class OCEDStore:
 
         # get all relevant e2o relations
         data_list = []
-        for relation in self._relations["event_to_object"].keys():
+        for relation in self._relations["event_to_object"]:
             relation_dict = self._relations["event_to_object"][relation]
             to_id = relation_dict["to_id"]
             from_id = relation_dict["from_id"]
@@ -101,16 +222,14 @@ class OCEDStore:
                 all_object_ids.update(entry["data"][entry["id"]].unique())
             genuinely_missing = dropped_ids - all_object_ids
             if genuinely_missing:
-                import logging as _logging
-
-                _logging.warning(
+                logging.warning(
                     f"get_log: {len(genuinely_missing)} object IDs not found in any object store "
                     f"for case concept '{case_concept}' "
                     f"(sample: {sorted(str(x) for x in genuinely_missing)[:5]})"
                 )
 
         events_data_list = []
-        for event_type in self._events.keys():
+        for event_type in self._events:
             id_col = self._events[event_type]["id"]
             time_col = self._events[event_type]["time"]
             event_data = self._events[event_type]["data"][[id_col, time_col]].copy()
@@ -207,7 +326,7 @@ class OCEDStore:
                 "get_object_change_types requires ocel_mode=True. "
                 "Create the OCEDStore with OCEDStore(ocel_mode=True)."
             )
-        return list(self._object_changes.keys())
+        return list(self._object_changes)
 
     # EVENTS
     def add_event(
@@ -232,7 +351,7 @@ class OCEDStore:
         Raises:
             ValueError: If the required columns are missing or if events already exist and overwrite is False.
         """
-        if not set([id_col, time_col]).issubset(set(data.columns)):
+        if not {id_col, time_col}.issubset(data.columns):
             raise ValueError(
                 "The given event column headers are not all included in the data."
             )
@@ -252,11 +371,11 @@ class OCEDStore:
         return self._events[event_type]
 
     def get_activities(self) -> list[str]:
-        return list(self._events.keys())
+        return list(self._events)
 
     def get_event(self, event_type) -> dict[str, str | pd.DataFrame]:
         """Returns the event dict for event_type. Equivalent to get_events()."""
-        return self._events[event_type]
+        return self.get_events(event_type)
 
     # OBJECTS
     def add_object(
@@ -279,7 +398,7 @@ class OCEDStore:
             raise ValueError(
                 f"The given object column header ({id_col}) is not included in the data."
             )
-        if not overwrite and obj_type in self._objects.keys():
+        if not overwrite and obj_type in self._objects:
             raise ValueError(
                 f"Object ({obj_type}) already exists! Set overwrite to True if you want to disregard this."
             )
@@ -295,15 +414,16 @@ class OCEDStore:
         return self._objects
 
     def get_object_types(self) -> list[str]:
-        return list(self._objects.keys())
+        return list(self._objects)
 
     def get_object(self, obj_type) -> dict[str, str | pd.DataFrame]:
         return self._objects[obj_type]
 
     def get_most_common_objects(self, n: int = 1) -> list[str]:
+        objects = self.get_objects()
         return sorted(
-            self.get_objects(),
-            key=lambda k: len(self.get_objects()[k]["data"]),
+            objects,
+            key=lambda k: len(objects[k]["data"]),
             reverse=True,
         )[:n]
 
@@ -331,11 +451,11 @@ class OCEDStore:
         Raises:
             ValueError: If the relation already exists and overwrite is False.
         """
-        if relation in self._relations["object_to_object"].keys():
+        if relation in self._relations["object_to_object"]:
             raise ValueError(
                 f"The relation ({relation}) already exists as a object_to_object relation!"
             )
-        if not overwrite and relation in self._relations["event_to_object"].keys():
+        if not overwrite and relation in self._relations["event_to_object"]:
             raise ValueError(
                 f"Relation ({relation}) already exists! Set overwrite to True if you want to disregard this."
             )
@@ -386,11 +506,11 @@ class OCEDStore:
         Raises:
             ValueError: If the relation already exists and overwrite is False.
         """
-        if relation in self._relations["event_to_object"].keys():
+        if relation in self._relations["event_to_object"]:
             raise ValueError(
                 f"The relation ({relation}) already exists as a event_to_object relation!"
             )
-        if not overwrite and relation in self._relations["object_to_object"].keys():
+        if not overwrite and relation in self._relations["object_to_object"]:
             raise ValueError(
                 f"Relation ({relation}) already exists! Set overwrite to True if you want to disregard this."
             )
@@ -436,9 +556,9 @@ class OCEDStore:
         """
         Returns a single relation from the data.
         """
-        if relation in self._relations["event_to_object"].keys():
+        if relation in self._relations["event_to_object"]:
             return self._relations["event_to_object"][relation]
-        elif relation in self._relations["object_to_object"].keys():
+        elif relation in self._relations["object_to_object"]:
             return self._relations["object_to_object"][relation]
         else:
             raise ValueError(f"Relation {relation} does not exist!")
@@ -453,27 +573,28 @@ class OCEDStore:
             )
         relations: list[str] = []
         if relation_type == "e2o" or relation_type == "all":
-            relations = relations + list(self._relations["event_to_object"].keys())
+            relations = relations + list(self._relations["event_to_object"])
         if relation_type == "o2o" or relation_type == "all":
-            relations = relations + list(self._relations["object_to_object"].keys())
+            relations = relations + list(self._relations["object_to_object"])
         return relations
 
     def rename_relation(self, old_name: str, new_name: str) -> None:
         """
         Renames an relation that exists in the data.
         """
-        all_relation_names = set(self._relations["event_to_object"].keys()) | set(
-            self._relations["object_to_object"].keys()
+        all_relation_names = (
+            self._relations["event_to_object"].keys()
+            | self._relations["object_to_object"].keys()
         )
         if new_name in all_relation_names:
             raise ValueError(
                 f"Cannot rename relation: '{new_name}' already exists as a relation."
             )
-        if old_name in self._relations["event_to_object"].keys():
+        if old_name in self._relations["event_to_object"]:
             self._relations["event_to_object"][new_name] = self._relations[
                 "event_to_object"
             ].pop(old_name)
-        elif old_name in self._relations["object_to_object"].keys():
+        elif old_name in self._relations["object_to_object"]:
             self._relations["object_to_object"][new_name] = self._relations[
                 "object_to_object"
             ].pop(old_name)
@@ -484,7 +605,7 @@ class OCEDStore:
         """
         Renames an object that exists in the data, while ensuring that its relations stay consistent.
         """
-        if old_name in self._objects.keys():
+        if old_name in self._objects:
             self._objects[new_name] = self._objects.pop(old_name)
             for relation in self._relations["event_to_object"]:
                 self._relations["event_to_object"][relation]["to_type"] = [
@@ -500,6 +621,8 @@ class OCEDStore:
                     new_name if x == old_name else x
                     for x in self._relations["object_to_object"][relation]["to_type"]
                 ]
+            if self._ocel_mode and old_name in self._object_changes:
+                self._object_changes[new_name] = self._object_changes.pop(old_name)
         else:
             raise ValueError("Cannot rename object that does not exist!")
 
@@ -507,7 +630,7 @@ class OCEDStore:
         """
         Renames an activity that exists in the data, while ensuring that its relations stay consistent.
         """
-        if old_name in self._events.keys():
+        if old_name in self._events:
             self._events[new_name] = self._events.pop(old_name)
         else:
             raise ValueError("Cannot rename activity that does not exist!")
@@ -545,10 +668,12 @@ class OCEDStore:
                 if object_type in from_type:
                     mask = df[from_id].isin(unique_ids)
                     if mask.any():
+                        df[from_id] = df[from_id].astype(object)
                         df.loc[mask, from_id] = change_function(df.loc[mask, from_id])
                 if object_type in to_type:
                     mask = df[to_id].isin(unique_ids)
                     if mask.any():
+                        df[to_id] = df[to_id].astype(object)
                         df.loc[mask, to_id] = change_function(df.loc[mask, to_id])
                 self._relations["object_to_object"][o2o_rel]["data"] = df
 
@@ -560,6 +685,7 @@ class OCEDStore:
                 if object_type in to_type:
                     mask = df[to_id].isin(unique_ids)
                     if mask.any():
+                        df[to_id] = df[to_id].astype(object)
                         df.loc[mask, to_id] = change_function(df.loc[mask, to_id])
                 self._relations["event_to_object"][e2o_rel]["data"] = df
 
@@ -620,11 +746,13 @@ class OCEDStore:
         for object_type in self._objects:
             ids.extend(self.get_ids("object", object_type))
         unique_ids = set(ids)
-        if not len(unique_ids) == len(ids):
+        if len(unique_ids) != len(ids):
             raise ValueError("Duplicated ids!")
         self._used_ids = unique_ids
 
-    def data_check(self, df, ignore_cols=[], min_parse_ratio=0.95):
+    def data_check(self, df, ignore_cols=None, min_parse_ratio=0.95):
+        if ignore_cols is None:
+            ignore_cols = []
         df = df.copy()  # ensure we write to the real frame, not a view
         df = df.dropna(how="all").dropna(axis=1, how="all")
         # normalize empties for object-like cols
@@ -645,26 +773,15 @@ class OCEDStore:
             ):
                 continue
 
-            # try datetime
-            dt = pd.to_datetime(df[col], errors="coerce", utc=True, format="ISO8601")
-            dt = dt.dt.floor("s")
-            if (dt.notna().sum() / non_null) >= min_parse_ratio:
+            dt = _try_datetime(df[col], non_null, min_parse_ratio)
+            if dt is not None:
                 df[col] = dt
                 continue
 
-            # try numeric
-            num = pd.to_numeric(df[col], errors="coerce")
-            if (num.notna().sum() / non_null) >= min_parse_ratio:
-                vals = set(num.dropna().unique())
-                if vals <= {0, 1}:
-                    df[col] = num.astype("boolean")  # nullable boolean
-                elif (num.dropna() % 1 == 0).all():
-                    df[col] = num.astype("Int64")  # nullable integer
-                else:
-                    df[col] = num.astype("float64")  # float
+            num = _try_numeric(df[col], non_null, min_parse_ratio)
+            if num is not None:
+                df[col] = num
         return df
 
-    def ids_not_used(self, ids):
-        if set(ids).intersection(self._used_ids):
-            return False
-        return True
+    def ids_not_used(self, ids) -> bool:
+        return self._used_ids.isdisjoint(ids)

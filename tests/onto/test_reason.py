@@ -8,7 +8,6 @@ from semanticlog.onto.settings import DEFAULT_IRI, OntoBuildSettings, OwlProfile
 
 
 class TestReasoner(unittest.TestCase):
-
     def setUp(self):
         self.settings = OntoBuildSettings()
         self.settings.profile = OwlProfile.OWL2EL

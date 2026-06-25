@@ -13,23 +13,22 @@ build/
 # Virtual environments
 venv/
 .venv/
+.venv_declare/
 
 # Testing & coverage
 .coverage
 htmlcov/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Build logs
 logs/
 
 # Generated / temporary data
 data/*
-data/tmp/
-data/logs/
-data/xes/
-data/ontos/
-data/ONTO/*.owl
 simulated.csv
+*.semlog
 
 # Project-specific
 cache/
@@ -42,3 +41,7 @@ components/RDFox/RDFox.lic
 
 # IDE
 .idea/
+.vscode/
+
+# Local build scripts (dataset-specific, not shared)
+scripts/build_*.sh

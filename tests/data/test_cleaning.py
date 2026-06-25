@@ -2,9 +2,12 @@ import pandas as pd
 import pytest
 
 from semanticlog.data.cleaning import (
+    _build_backmap,
+    _collect_schema_names,
     apply_function_to_value,
     clean_column_values,
     clean_dataframe,
+    clean_object_changes_df,
     clean_oced_data,
     clean_string,
     clean_value,
@@ -319,6 +322,68 @@ def test_fix_duplicate_names_renames_attribute_value_colliding_with_reserved():
 # ---------------------------------------------------------------------------
 
 
+def test_clean_oced_data_raises_on_colliding_activity_names():
+    oced = OCEDStore()
+    ev1 = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    ev2 = pd.DataFrame(
+        {"eid": ["e2"], "ts": pd.date_range("2022-01-02", periods=1, tz="UTC")}
+    )
+    oced.add_event("Place Order", "eid", "ts", ev1)
+    oced.add_event("Place_Order", "eid", "ts", ev2)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
+    with pytest.raises(ValueError, match="activities"):
+        clean_oced_data(oced)
+
+
+def test_clean_oced_data_raises_on_colliding_object_type_names():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_object("Order Item", "oid", pd.DataFrame({"oid": ["o1"]}))
+    oced.add_object("Order_Item", "oid2", pd.DataFrame({"oid2": ["o2"]}))
+    with pytest.raises(ValueError, match="object types"):
+        clean_oced_data(oced)
+
+
+def test_clean_oced_data_raises_on_colliding_relation_names():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1", "e2"], "ts": pd.date_range("2022-01-01", periods=2, tz="UTC")}
+    )
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
+    oced.add_event_to_object_relation(
+        "places order",
+        "eid",
+        "oid",
+        ["obj"],
+        pd.DataFrame({"eid": ["e1"], "oid": ["o1"]}),
+    )
+    oced.add_event_to_object_relation(
+        "places_order",
+        "eid",
+        "oid",
+        ["obj"],
+        pd.DataFrame({"eid": ["e2"], "oid": ["o1"]}),
+    )
+    with pytest.raises(ValueError, match="e2o relations"):
+        clean_oced_data(oced)
+
+
+def test_clean_oced_data_no_raise_when_names_are_distinct_after_cleaning():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("Place Order", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
+    clean_oced_data(oced)  # must not raise
+
+
 def test_clean_oced_data_sanitizes_special_chars_in_all_strings():
     oced = OCEDStore()
     ev = pd.DataFrame(
@@ -362,3 +427,277 @@ def test_clean_oced_data_applies_fix_duplicate_names():
 
     assert "df_" in result.get_activities()
     assert "df" not in result.get_activities()
+
+
+# ---------------------------------------------------------------------------
+# clean_oced_data — id_backmap population
+# ---------------------------------------------------------------------------
+
+
+def test_clean_oced_data_backmap_maps_special_chars_to_original():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["Order #123"]}))
+
+    result = clean_oced_data(oced)
+
+    assert result.backmap["Order__123"] == "Order #123"
+
+
+def test_clean_oced_data_backmap_omits_already_clean_ids():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1", "e2"], "ts": pd.date_range("2022-01-01", periods=2, tz="UTC")}
+    )
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
+
+    result = clean_oced_data(oced)
+
+    assert "e1" not in result.backmap
+    assert "e2" not in result.backmap
+
+
+def test_clean_oced_data_backmap_respects_casefold():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["E1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
+
+    result = clean_oced_data(oced, casefold=True)
+
+    assert result.backmap["e1"] == "E1"
+
+
+def test_clean_oced_data_backmap_maps_attr_value_to_original():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_object(
+        "obj",
+        "oid",
+        pd.DataFrame({"oid": ["o1"], "notes": ["Hello World!"]}),
+    )
+
+    result = clean_oced_data(oced)
+
+    # Keyed by the value-individual local name: {cleaned_column}_{cleaned_value}.
+    assert result.backmap["notes_Hello_World_"] == "Hello World!"
+
+
+def test_clean_oced_data_backmap_omits_already_clean_attr_value():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_object(
+        "obj",
+        "oid",
+        pd.DataFrame({"oid": ["o1"], "status": ["open"]}),
+    )
+
+    result = clean_oced_data(oced)
+
+    assert "status_open" not in result.backmap
+
+
+def test_clean_oced_data_backmap_catches_reserved_name_collision():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["is_a"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
+
+    result = clean_oced_data(oced)
+
+    assert result.backmap.get("is_a_attr_val") == "is_a"
+
+
+# ---------------------------------------------------------------------------
+# clean_oced_data — name_backmap population
+# ---------------------------------------------------------------------------
+
+
+def test_collect_schema_names_returns_activity_and_object_type():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("Order Execution", "eid", "ts", ev)
+    oced.add_object("Purchase Item", "oid", pd.DataFrame({"oid": ["o1"]}))
+    names = _collect_schema_names(oced)
+    assert "Order Execution" in names
+    assert "Purchase Item" in names
+
+
+def test_collect_schema_names_includes_attribute_columns():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {
+            "eid": ["e1"],
+            "ts": pd.date_range("2022-01-01", periods=1, tz="UTC"),
+            "total cost": ["100"],
+        }
+    )
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"], "item type": ["A"]}))
+    names = _collect_schema_names(oced)
+    assert "total cost" in names
+    assert "item type" in names
+    assert "eid" not in names
+    assert "ts" not in names
+    assert "oid" not in names
+
+
+def test_build_name_backmap_maps_changed_names():
+    pre = {"Order Execution", "Purchase Item"}
+    post = {"Order_Execution", "Purchase_Item"}
+    backmap = _build_backmap(pre, post, casefold=False)
+    assert backmap["Order_Execution"] == "Order Execution"
+    assert backmap["Purchase_Item"] == "Purchase Item"
+
+
+def test_build_name_backmap_omits_unchanged_names():
+    pre = {"act", "obj"}
+    post = {"act", "obj"}
+    backmap = _build_backmap(pre, post, casefold=False)
+    assert backmap == {}
+
+
+def test_build_name_backmap_reserved_collision_attr_suffix():
+    pre = {"observed_at"}
+    post = {"observed_at_attr"}
+    backmap = _build_backmap(pre, post, casefold=False)
+    assert backmap["observed_at_attr"] == "observed_at"
+
+
+def test_build_name_backmap_reserved_collision_underscore_suffix():
+    pre = {"df"}
+    post = {"df_"}
+    backmap = _build_backmap(pre, post, casefold=False)
+    assert backmap["df_"] == "df"
+
+
+def test_clean_oced_data_name_backmap_maps_activity_and_object_type():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("Order Execution", "eid", "ts", ev)
+    oced.add_object("Purchase Item", "oid", pd.DataFrame({"oid": ["o1"]}))
+    result = clean_oced_data(oced)
+    assert result.backmap["Order_Execution"] == "Order Execution"
+    assert result.backmap["Purchase_Item"] == "Purchase Item"
+
+
+def test_clean_oced_data_name_backmap_omits_already_clean_names():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
+    result = clean_oced_data(oced)
+    assert "act" not in result.backmap
+    assert "obj" not in result.backmap
+
+
+def test_clean_oced_data_name_backmap_maps_attribute_columns():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {
+            "eid": ["e1"],
+            "ts": pd.date_range("2022-01-01", periods=1, tz="UTC"),
+            "total cost": ["100"],
+        }
+    )
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
+    result = clean_oced_data(oced)
+    assert result.backmap["total_cost"] == "total cost"
+
+
+# ---------------------------------------------------------------------------
+# clean_object_changes_df
+# ---------------------------------------------------------------------------
+
+
+def test_clean_object_changes_df_cleans_ocel_type():
+    df = pd.DataFrame(
+        {
+            "ocel:oid": ["o1"],
+            "ocel:type": ["order item"],
+            "ocel:timestamp": pd.to_datetime(["2022-01-01"], utc=True),
+            "ocel:field": ["status"],
+            "status": ["pending"],
+        }
+    )
+    result = clean_object_changes_df(df)
+    assert result["ocel:type"].iloc[0] == "order_item"
+
+
+def test_clean_object_changes_df_preserves_ocel_columns():
+    df = pd.DataFrame(
+        {
+            "ocel:oid": ["o1"],
+            "ocel:type": ["order"],
+            "ocel:timestamp": pd.to_datetime(["2022-01-01"], utc=True),
+            "ocel:field": ["status"],
+            "status": ["pending"],
+        }
+    )
+    result = clean_object_changes_df(df)
+    # ocel:* column names are never renamed
+    assert "ocel:oid" in result.columns
+    assert "ocel:type" in result.columns
+    assert "ocel:field" in result.columns
+    assert "ocel:timestamp" in result.columns
+
+
+# ---------------------------------------------------------------------------
+# clean_oced_data — _object_changes dict key cleaning
+# ---------------------------------------------------------------------------
+
+
+def _make_oced_with_changes(obj_type: str) -> OCEDStore:
+    oced = OCEDStore(ocel_mode=True)
+    oced.add_object(obj_type, "oid", pd.DataFrame({"oid": ["o1"]}))
+    ev = pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2022-01-01"], utc=True)})
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_event_to_object_relation(
+        "rel", "eid", "oid", [obj_type], pd.DataFrame({"eid": ["e1"], "oid": ["o1"]})
+    )
+    changes = pd.DataFrame(
+        {
+            "ocel:oid": ["o1"],
+            "ocel:type": [obj_type],
+            "ocel:timestamp": pd.to_datetime(["2022-01-02"], utc=True),
+            "ocel:field": ["status"],
+            "status": ["pending"],
+        }
+    )
+    oced.add_object_changes(obj_type, changes)
+    return oced
+
+
+def test_clean_oced_data_cleans_object_changes_dict_key():
+    oced = _make_oced_with_changes("order item")
+    result = clean_oced_data(oced)
+    assert "order_item" in result.get_object_change_types()
+    assert "order item" not in result.get_object_change_types()
+
+
+def test_clean_oced_data_cleans_ocel_type_in_object_changes():
+    oced = _make_oced_with_changes("order item")
+    result = clean_oced_data(oced)
+    changes = result.get_object_changes("order_item")
+    assert (changes["ocel:type"] == "order_item").all()

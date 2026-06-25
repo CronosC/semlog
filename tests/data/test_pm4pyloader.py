@@ -11,7 +11,7 @@ import pm4py
 import pytest
 from pm4py.objects.ocel.obj import OCEL
 
-from semanticlog.data.pm4pyloader import PM4PYLoader
+from semanticlog.data.loading.pm4pyloader import PM4PYLoader
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -324,7 +324,7 @@ def test_o2o_original_qualifier_not_stored_without_suffix(o2o_ocel):
 
 def test_o2o_null_values_raises(simple_ocel, monkeypatch):
     """get_oced() must raise ValueError when the o2o table returned by pm4py contains nulls."""
-    import semanticlog.data.pm4pyloader as loader_module
+    import semanticlog.data.loading.pm4pyloader as loader_module
 
     # Construct an OCEL whose o2o table has a null, then mock the pm4py reader to return it
     events = pd.DataFrame(
@@ -437,7 +437,7 @@ def object_changes_ocel(tmp_path, monkeypatch):
     Uses monkeypatching to bypass the pm4py writer (which has a bug when objects
     carry object_changes but no static attributes) and inject the OCEL directly.
     """
-    import semanticlog.data.pm4pyloader as loader_module
+    import semanticlog.data.loading.pm4pyloader as loader_module
 
     events = pd.DataFrame(
         {
@@ -511,25 +511,9 @@ def test_attribute_history_not_loaded_without_extension(object_changes_ocel):
     assert oced.has_ocel_mode() is False
 
 
-def test_relation_timestamps_kept_in_e2o_data(simple_ocel):
-    from semanticlog.onto.settings import OcelExtension
-
-    oced = PM4PYLoader(
-        simple_ocel, {}, ocel_extensions=[OcelExtension.RELATION_TIMESTAMPS]
-    ).get_oced()
-    rel = oced.get_relation("modifies")
-    assert "ocel:timestamp" in rel["data"].columns
-
-
-def test_relation_timestamps_not_in_e2o_by_default(simple_ocel):
-    oced = PM4PYLoader(simple_ocel, {}).get_oced()
-    rel = oced.get_relation("modifies")
-    assert "ocel:timestamp" not in rel["data"].columns
-
-
 def test_attribute_history_numeric_ids_prefixed_in_changes(tmp_path, monkeypatch):
     """object_changes ocel:oid values are updated when objects have numeric IDs."""
-    import semanticlog.data.pm4pyloader as loader_module
+    import semanticlog.data.loading.pm4pyloader as loader_module
     from semanticlog.onto.settings import OcelExtension
 
     events = pd.DataFrame(

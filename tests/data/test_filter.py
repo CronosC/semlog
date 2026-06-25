@@ -3,9 +3,9 @@ import pm4py
 
 from semanticlog.data.filtering import (
     filter_remove_months,
-    filter_to_timeintervall,
+    filter_to_time_interval,
     filter_variants_by_maximum_repetition,
-    filter_variants_by_minimum_occurence,
+    filter_variants_by_minimum_occurrence,
 )
 
 # ---------------------------------------------------------------------------
@@ -25,11 +25,11 @@ def _make_pm4py_log(records: list[dict]) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# filter_to_timeintervall
+# filter_to_time_interval
 # ---------------------------------------------------------------------------
 
 
-def test_filter_to_timeintervall_timezone_aware_keeps_only_events_in_window():
+def test_filter_to_time_interval_timezone_aware_keeps_only_events_in_window():
     base = pd.Timestamp("2023-03-15 12:00:00", tz="UTC")
     log = pd.DataFrame(
         {
@@ -47,13 +47,13 @@ def test_filter_to_timeintervall_timezone_aware_keeps_only_events_in_window():
     mintime = int((base - pd.Timedelta(minutes=15)).timestamp())
     maxtime = int((base + pd.Timedelta(minutes=45)).timestamp())
 
-    result = filter_to_timeintervall(log, mintime, maxtime)
+    result = filter_to_time_interval(log, mintime, maxtime)
 
     assert len(result) == 1
     assert result.iloc[0]["case:concept:name"] == "case2"
 
 
-def test_filter_to_timeintervall_timezone_naive_keeps_only_events_in_window():
+def test_filter_to_time_interval_timezone_naive_keeps_only_events_in_window():
     base = pd.Timestamp("2023-03-15 12:00:00")
     log = pd.DataFrame(
         {
@@ -70,13 +70,13 @@ def test_filter_to_timeintervall_timezone_naive_keeps_only_events_in_window():
     mintime = int((base - pd.Timedelta(minutes=15)).timestamp())
     maxtime = int((base + pd.Timedelta(minutes=45)).timestamp())
 
-    result = filter_to_timeintervall(log, mintime, maxtime)
+    result = filter_to_time_interval(log, mintime, maxtime)
 
     assert len(result) == 1
     assert result.iloc[0]["case:concept:name"] == "case2"
 
 
-def test_filter_to_timeintervall_returns_empty_when_nothing_in_range():
+def test_filter_to_time_interval_returns_empty_when_nothing_in_range():
     base = pd.Timestamp("2023-03-15 12:00:00", tz="UTC")
     log = pd.DataFrame(
         {
@@ -91,12 +91,12 @@ def test_filter_to_timeintervall_returns_empty_when_nothing_in_range():
     mintime = int((base - pd.Timedelta(minutes=15)).timestamp())
     maxtime = int((base + pd.Timedelta(minutes=15)).timestamp())
 
-    result = filter_to_timeintervall(log, mintime, maxtime)
+    result = filter_to_time_interval(log, mintime, maxtime)
 
     assert len(result) == 0
 
 
-def test_filter_to_timeintervall_keeps_all_when_all_in_range():
+def test_filter_to_time_interval_keeps_all_when_all_in_range():
     base = pd.Timestamp("2023-03-15 12:00:00", tz="UTC")
     log = pd.DataFrame(
         {
@@ -114,7 +114,7 @@ def test_filter_to_timeintervall_keeps_all_when_all_in_range():
     mintime = int((base - pd.Timedelta(hours=1)).timestamp())
     maxtime = int((base + pd.Timedelta(hours=1)).timestamp())
 
-    result = filter_to_timeintervall(log, mintime, maxtime)
+    result = filter_to_time_interval(log, mintime, maxtime)
 
     assert len(result) == 3
 
@@ -169,11 +169,11 @@ def test_filter_remove_months_removes_all_when_all_cases_touch_listed_months():
 
 
 # ---------------------------------------------------------------------------
-# filter_variants_by_minimum_occurence
+# filter_variants_by_minimum_occurrence
 # ---------------------------------------------------------------------------
 
 
-def test_filter_variants_by_minimum_occurence_removes_rare_variants():
+def test_filter_variants_by_minimum_occurrence_removes_rare_variants():
     # Variant A→B: 3 cases; Variant C: 1 case
     records = [
         {
@@ -214,7 +214,7 @@ def test_filter_variants_by_minimum_occurence_removes_rare_variants():
     ]
     log = _make_pm4py_log(records)
 
-    result = filter_variants_by_minimum_occurence(log, minimum_occurences=2)
+    result = filter_variants_by_minimum_occurrence(log, minimum_occurrences=2)
 
     # c4 (variant C, 1 occurrence) removed; c1, c2, c3 kept
     assert "c4" not in result["case:concept:name"].values
@@ -223,7 +223,7 @@ def test_filter_variants_by_minimum_occurence_removes_rare_variants():
     assert "c3" in result["case:concept:name"].values
 
 
-def test_filter_variants_by_minimum_occurence_keeps_all_when_all_meet_threshold():
+def test_filter_variants_by_minimum_occurrence_keeps_all_when_all_meet_threshold():
     records = [
         {
             "case:concept:name": "c1",
@@ -238,7 +238,7 @@ def test_filter_variants_by_minimum_occurence_keeps_all_when_all_meet_threshold(
     ]
     log = _make_pm4py_log(records)
 
-    result = filter_variants_by_minimum_occurence(log, minimum_occurences=1)
+    result = filter_variants_by_minimum_occurrence(log, minimum_occurrences=1)
 
     assert set(result["case:concept:name"].unique()) == {"c1", "c2"}
 
@@ -295,7 +295,7 @@ def test_filter_variants_by_maximum_repetition_reproducible_with_seed():
         {
             "case:concept:name": f"c{i}",
             "concept:name": "A",
-            "time:timestamp": pd.Timestamp(f"2022-01-{i+1:02d}"),
+            "time:timestamp": pd.Timestamp(f"2022-01-{i + 1:02d}"),
         }
         for i in range(5)
     ]

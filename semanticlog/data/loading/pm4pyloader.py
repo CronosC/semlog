@@ -5,11 +5,15 @@ import numpy as np
 import pandas as pd
 import pm4py as pm
 
-from semanticlog.data.abstractloader import AbstractLoader
+from semanticlog.data.loading.abstractloader import AbstractLoader
 from semanticlog.data.oced import OCEDStore
 
 if TYPE_CHECKING:
     from semanticlog.onto.settings import OcelExtension
+
+
+def _type_prefix(ids: pd.Series, object_type: str) -> pd.Series:
+    return object_type + "_" + ids.astype(str)
 
 
 class PM4PYLoader(AbstractLoader):
@@ -34,7 +38,7 @@ class PM4PYLoader(AbstractLoader):
         """
         super().__init__(path, config)
         self._ocel_extensions: list[OcelExtension] = ocel_extensions or []
-        if "file_format" not in config.keys():
+        if "file_format" not in config:
             if path.endswith(".xml") or path.endswith(".xmlocel"):
                 config["file_format"] = "xml"
             elif path.endswith(".json") or path.endswith(".jsonocel"):
@@ -42,14 +46,13 @@ class PM4PYLoader(AbstractLoader):
             elif path.endswith(".sqlite"):
                 config["file_format"] = "sqlite"
             else:
-                raise Exception("Unknown file type.")
+                raise ValueError("Unknown file type.")
 
     def get_oced(self) -> OCEDStore:
         """Returns the data as a OCEDStore object"""
         from semanticlog.onto.settings import OcelExtension
 
         load_attr_history = OcelExtension.ATTRIBUTE_HISTORY in self._ocel_extensions
-        load_rel_timestamps = OcelExtension.RELATION_TIMESTAMPS in self._ocel_extensions
 
         logging.info(f"Loading ocel data from file {self.path}..")
         if self.config["file_format"] == "xml":
@@ -66,7 +69,7 @@ class PM4PYLoader(AbstractLoader):
             object_type: df for object_type, df in log.objects.groupby("ocel:type")
         }
         reindex_objects = []
-        for object_type in object_dfs.keys():
+        for object_type in object_dfs:
             object_dfs[object_type] = object_dfs[object_type].dropna(axis=1, how="all")
             df = object_dfs[object_type]
             df = df.drop(["ocel:type"], axis=1)
@@ -93,7 +96,7 @@ class PM4PYLoader(AbstractLoader):
         o2o_relation_dfs = {
             relation_type: df for relation_type, df in log.o2o.groupby("ocel:qualifier")
         }
-        for relation_type in o2o_relation_dfs.keys():
+        for relation_type in o2o_relation_dfs:
             df = o2o_relation_dfs[relation_type]
             relation_type = relation_type + "_o2o"
 
@@ -111,9 +114,6 @@ class PM4PYLoader(AbstractLoader):
 
         # E2O Relations
         relations = log.relations
-        """ NOTE:
-        We assume all relations without qualifier are a generic "modifies" relation.
-        """
         n_e2o_null = (
             relations["ocel:qualifier"].isna().sum()
             + relations["ocel:qualifier"].isin(["None", "none", "NA", "N/A", ""]).sum()
@@ -130,18 +130,10 @@ class PM4PYLoader(AbstractLoader):
             relation_type: df
             for relation_type, df in relations.groupby("ocel:qualifier")
         }
-        for relation_type in e2o_relation_dfs.keys():
+        for relation_type in e2o_relation_dfs:
             df = e2o_relation_dfs[relation_type]
             object_types = e2o_relation_dfs[relation_type]["ocel:type"].unique()
-            # When RELATION_TIMESTAMPS is active, retain ocel:timestamp so the
-            # ontology builder can reify each observation as a RelationObservation
-            # individual. Without the extension, the timestamp is dropped (original
-            # behaviour) because OCEDStore has no representation for it and the
-            # upper ontology has no RelationObservation class.
-            if load_rel_timestamps and "ocel:timestamp" in df.columns:
-                e2o_cols = ["ocel:eid", "ocel:oid", "ocel:timestamp"]
-            else:
-                e2o_cols = ["ocel:eid", "ocel:oid"]
+            e2o_cols = ["ocel:eid", "ocel:oid"]
             oced.add_event_to_object_relation(
                 relation_type,
                 "ocel:eid",
@@ -150,14 +142,13 @@ class PM4PYLoader(AbstractLoader):
                 df[e2o_cols],
             )
 
-        # add prefix of its type to all things indexed by purely numerical ids
-        # this prevents potential collisions between numerical indexed objects and activites
-        # and makes the ids clearer. Done before adding events to not rename them too
+        # Prefix purely numerical object IDs with their type name to avoid
+        # collisions with numerically indexed events.
         for object_type in reindex_objects:
             oced.change_ids(
                 "object",
                 object_type,
-                lambda x, ot=object_type: ot + "_" + x.astype(str),
+                lambda x, ot=object_type: _type_prefix(x, ot),
             )
 
         # Load object attribute change history when ATTRIBUTE_HISTORY is active.
@@ -170,8 +161,8 @@ class PM4PYLoader(AbstractLoader):
                 oc = oc.copy()
                 for object_type in reindex_objects:
                     mask = oc["ocel:type"] == object_type
-                    oc.loc[mask, "ocel:oid"] = (
-                        object_type + "_" + oc.loc[mask, "ocel:oid"].astype(str)
+                    oc.loc[mask, "ocel:oid"] = _type_prefix(
+                        oc.loc[mask, "ocel:oid"], object_type
                     )
                 for obj_type, grp in oc.groupby("ocel:type"):
                     oced.add_object_changes(str(obj_type), grp.reset_index(drop=True))
@@ -183,13 +174,13 @@ class PM4PYLoader(AbstractLoader):
         reindex_events = []
 
         ids = []
-        for activity in event_dfs.keys():
+        for activity in event_dfs:
             ids.extend(event_dfs[activity]["ocel:eid"].unique())
 
         if len(ids) != len(set(ids)):
             raise ValueError("Event IDs are not unique across activities.")
 
-        for activity in event_dfs.keys():
+        for activity in event_dfs:
             df = event_dfs[activity]
             df = df.drop(["ocel:activity"], axis=1)
             is_numeric_str = (
@@ -202,9 +193,7 @@ class PM4PYLoader(AbstractLoader):
             else:
                 raise ValueError("IDs are not unique!")
 
-        # add prefix of its type to all things indexed by purely numerical ids
-        # this prevents potential collisions between numerical indexed objects and activities
-        # and makes the ids clearer.
+        # Prefix purely numerical event IDs with their activity name.
         for activity in reindex_events:
             oced.change_ids(
                 "event", activity, lambda x, a=activity: a + "_" + x.astype(str)

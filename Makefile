@@ -5,7 +5,7 @@ ONTO_FOLDER   ?=
 ONTO_FILES    ?=
 BUILD_PROFILE ?= OWL2DL
 BUILD_ORDER   ?= DF
-BUILD_EXTRA   ?= --quantize --materialize
+BUILD_EXTRA   ?= --data-representation equal_bins --materialize
 
 build-onto:
 	python scripts/build_onto.py \
@@ -15,6 +15,7 @@ build-onto:
 		$(if $(BUILD_ORDER),--order $(BUILD_ORDER),--order) \
 		$(BUILD_EXTRA)
 
+# if empty then all ocel files are build!
 OCEL_FILES ?=
 
 build-ocel:
@@ -23,10 +24,10 @@ build-ocel:
 		ONTO_FILES="$(OCEL_FILES)" \
 		BUILD_PROFILE=OWL2DL \
 		BUILD_ORDER=DF \
-		BUILD_EXTRA="--quantize --materialize"
+		BUILD_EXTRA="--data-representation equal_bins --materialize --ocel-extensions ATTRIBUTE_HISTORY --size-limit 100"
 
 install:
-	pip install -e .
+	uv sync
 	pre-commit install
 
 test:
@@ -36,10 +37,11 @@ coverage:
 	pytest --cov=semanticlog --cov-report=html --cov-report=term-missing tests/
 
 format:
-	pre-commit run --all-files
+	ruff format semanticlog/ scripts/ tests/
+	ruff check --fix semanticlog/ scripts/ tests/
 
 lint:
-	flake8 semanticlog/ scripts/ tests/
+	ruff check semanticlog/ scripts/ tests/
 
 typecheck:
 	mypy semanticlog/

@@ -8,7 +8,6 @@ from semanticlog.onto.settings import OntoBuildSettings, OwlProfile
 
 
 class TestBuilder(unittest.TestCase):
-
     def setUp(self):
         self.settings = OntoBuildSettings()
         self.settings.profile = OwlProfile.OWL2DL
@@ -57,7 +56,7 @@ class TestBuilder(unittest.TestCase):
         t0 = time.time()
         builder.assert_individuals(individuals, "Letter")
         t1 = time.time()
-        print(f"\nAdding {len(individuals)} individuals took: {str(t1-t0)}s")
+        print(f"\nAdding {len(individuals)} individuals took: {str(t1 - t0)}s")
         self.assertEqual(len(list(builder.onto.classes_in_signature())), 1)
         self.assertEqual(
             len(list(builder.onto.individuals_in_signature())), len(individuals)
@@ -147,7 +146,7 @@ class TestBuilder(unittest.TestCase):
         t0 = time.time()
         builder.assert_individuals(individuals, "Letter")
         t1 = time.time()
-        print(f"\nAdding {len(individuals)} individuals took: {str(t1-t0)}s")
+        print(f"\nAdding {len(individuals)} individuals took: {str(t1 - t0)}s")
 
         builder.add_property(
             "identity",
@@ -160,7 +159,7 @@ class TestBuilder(unittest.TestCase):
             relation_data, from_key="from", to_key="to", prop="identity"
         )
         t1 = time.time()
-        print(f"\nAdding {len(individuals)} relations took: {str(t1-t0)}s")
+        print(f"\nAdding {len(individuals)} relations took: {str(t1 - t0)}s")
 
         builder.add_property(
             "hasValue", domain_class="Number", range_class="integer", data_prop=True
@@ -175,7 +174,7 @@ class TestBuilder(unittest.TestCase):
             data_prop=True,
         )
         t1 = time.time()
-        print(f"\nAdding {len(individuals)} data relations took: {str(t1-t0)}s")
+        print(f"\nAdding {len(individuals)} data relations took: {str(t1 - t0)}s")
 
         builder.save_onto("data/temp/temp.owl")
 

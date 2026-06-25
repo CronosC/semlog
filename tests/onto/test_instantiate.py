@@ -1,9 +1,11 @@
 import os
-import random
+import shutil
+import tempfile
 import unittest
 from datetime import datetime, timedelta
 
 import pandas as pd
+import pytest
 from owlapy.class_expression import OWLClass
 from owlapy.iri import IRI
 from owlapy.owl_individual import OWLNamedIndividual
@@ -17,26 +19,21 @@ from semanticlog.onto.settings import (
     DEFAULT_IRI,
     DataRepresentation,
     EventOrderRepresentation,
+    InverseRepresentation,
     OntoBuildSettings,
     OwlProfile,
 )
-from semanticlog.onto.upper import OCEDUpperOntoBuilder
 
 NS = DEFAULT_IRI
 
 
 class TestOntoBuilder(unittest.TestCase):
-
     def setUp(self):
         self.settings = OntoBuildSettings()
         self.settings.profile = OwlProfile.OWL2EL
+        self.settings.inverse_representation = [InverseRepresentation.IMPLICIT]
         self.settings.order_representation = []
         self.settings.case_concepts = []
-
-        if os.path.exists("data/temp/tmp.owl"):
-            os.remove("data/temp/tmp.owl")
-        builder = OCEDUpperOntoBuilder(DEFAULT_IRI, self.settings)
-        builder.construct_upper_ontology("data/temp/tmp.owl")
 
         self.data = OCEDStore()
         self.data._events = {
@@ -119,12 +116,8 @@ class TestOntoBuilder(unittest.TestCase):
                     "to_type": ["thing1"],
                     "data": pd.DataFrame(
                         {
-                            "event_id": [
-                                "e" + str(random.randint(1, 10)) for _ in range(10)
-                            ],
-                            "object_id": [
-                                "o" + str(random.randint(1, 10)) for _ in range(10)
-                            ],
+                            "event_id": [f"e{i}" for i in range(10)],
+                            "object_id": [f"o{i}" for i in range(10)],
                         }
                     ),
                 }
@@ -137,26 +130,27 @@ class TestOntoBuilder(unittest.TestCase):
                     "to_type": ["thing1"],
                     "data": pd.DataFrame(
                         {
-                            "object_id1": [
-                                "o" + str(random.randint(1, 10)) for _ in range(10)
-                            ],
-                            "object_id2": [
-                                "o" + str(random.randint(1, 10)) for _ in range(10)
-                            ],
+                            "object_id1": [f"o{i}" for i in range(10)],
+                            "object_id2": [f"o{(i + 1) % 10}" for i in range(10)],
                         }
                     ),
                 }
             },
         }
+        self.tmp_dir = tempfile.mkdtemp()
+        self.owl_path = os.path.join(self.tmp_dir, "tmp.owl")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def _load_reasoner(self):
-        onto = Ontology(IRI.create("file://data/temp/tmp.owl"))
+        onto = Ontology(IRI.create(f"file://{self.owl_path}"))
         return onto, StructuralReasoner(onto)
 
     def test_events_basic(self):
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_event_data(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
 
@@ -173,9 +167,9 @@ class TestOntoBuilder(unittest.TestCase):
             )
 
     def test_objects_basic(self):
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_object_data(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
 
@@ -192,11 +186,11 @@ class TestOntoBuilder(unittest.TestCase):
             )
 
     def test_e2o_relations(self):
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_event_data(self.data)
         builder.instantiate_object_data(self.data)
         builder.instantiate_event_object_relation_data(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
 
@@ -221,11 +215,11 @@ class TestOntoBuilder(unittest.TestCase):
                 )
 
     def test_o2o_relations(self):
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_event_data(self.data)
         builder.instantiate_object_data(self.data)
         builder.instantiate_object_to_object_relation_data(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
 
@@ -250,9 +244,9 @@ class TestOntoBuilder(unittest.TestCase):
                 )
 
     def test_time_basic(self):
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_time_data(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
 
@@ -275,9 +269,9 @@ class TestOntoBuilder(unittest.TestCase):
             self.assertIn(observed_at, list(onto.object_properties_in_signature()))
 
     def test_build_all(self):
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.build_ontology(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
 
@@ -299,7 +293,7 @@ class TestOntoBuilder(unittest.TestCase):
             self.assertTrue(list(reasoner.instances(time_cls)), "No instances for Time")
 
     def test_declare_requires_file(self):
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         self.settings.order_representation = [EventOrderRepresentation.DECLARE]
         self.settings.declare_file = None
 
@@ -316,15 +310,16 @@ class TestOntoBuilder(unittest.TestCase):
                 "constraintB": [False, True, False],
             }
         )
-        declare_path = "tests/fixtures/df_declare_testing.csv"
+        declare_path = os.path.join(self.tmp_dir, "df_declare_testing.csv")
         df.to_csv(declare_path, index=False)
 
         self.settings.order_representation = [EventOrderRepresentation.DECLARE]
         self.settings.declare_file = declare_path
+        self.settings.load_declare_file()
 
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_event_order(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
         ns = DEFAULT_IRI
@@ -352,7 +347,7 @@ class TestOntoBuilder(unittest.TestCase):
             self.assertNotIn(ind1, list(reasoner.instances(constraintB)))
             self.assertNotIn(ind3, list(reasoner.instances(constraintB)))
 
-    def test_declare_multi_case_raises(self):
+    def test_declare_multi_case(self):
         df = pd.DataFrame(
             {
                 "case_concept": ["thing1", "thing2", "thing1", "thing2"],
@@ -361,23 +356,51 @@ class TestOntoBuilder(unittest.TestCase):
                 "constraintB": [False, True, False, True],
             }
         )
-        declare_path = "tests/fixtures/df_declare_multi_case.csv"
+        declare_path = os.path.join(self.tmp_dir, "df_declare_multi_case.csv")
         df.to_csv(declare_path, index=False)
 
         self.settings.order_representation = [EventOrderRepresentation.DECLARE]
         self.settings.declare_file = declare_path
+        self.settings.load_declare_file()
 
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
+        builder.instantiate_event_order(self.data)
+        builder.save_onto(self.owl_path)
 
-        with self.subTest("raises for multi-case"):
-            with self.assertRaises(NotImplementedError):
-                builder.instantiate_event_order(self.data)
+        onto, reasoner = self._load_reasoner()
+        ns = DEFAULT_IRI
+
+        declare_constraint = OWLClass(IRI(ns, "DeclareConstraint"))
+        constraintA = OWLClass(IRI(ns, "constraintA"))
+        constraintB = OWLClass(IRI(ns, "constraintB"))
+
+        with self.subTest("classes exist"):
+            self.assertIn(declare_constraint, list(onto.classes_in_signature()))
+            self.assertIn(constraintA, list(onto.classes_in_signature()))
+            self.assertIn(constraintB, list(onto.classes_in_signature()))
+
+        ind_o1 = OWLNamedIndividual(IRI(ns, "o1"))
+        ind_o2 = OWLNamedIndividual(IRI(ns, "o2"))
+        ind_o3 = OWLNamedIndividual(IRI(ns, "o3"))
+        ind_o4 = OWLNamedIndividual(IRI(ns, "o4"))
+
+        with self.subTest("constraintA instances (thing1 traces)"):
+            self.assertIn(ind_o1, list(reasoner.instances(constraintA)))
+            self.assertIn(ind_o3, list(reasoner.instances(constraintA)))
+            self.assertNotIn(ind_o2, list(reasoner.instances(constraintA)))
+            self.assertNotIn(ind_o4, list(reasoner.instances(constraintA)))
+
+        with self.subTest("constraintB instances (thing2 traces)"):
+            self.assertIn(ind_o2, list(reasoner.instances(constraintB)))
+            self.assertIn(ind_o4, list(reasoner.instances(constraintB)))
+            self.assertNotIn(ind_o1, list(reasoner.instances(constraintB)))
+            self.assertNotIn(ind_o3, list(reasoner.instances(constraintB)))
 
     def test_class_hierarchy(self):
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_event_data(self.data)
         builder.instantiate_object_data(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
 
@@ -399,9 +422,9 @@ class TestOntoBuilder(unittest.TestCase):
             self.assertIn(object_cls, super_of_thing1)
 
     def test_numeric_attrs_value_nodes(self):
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_object_data(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
 
@@ -486,9 +509,9 @@ class TestOntoBuilder(unittest.TestCase):
         df = self.data._events["activity1"]["data"].copy()
         self.data._events["activity1"]["data"] = df
 
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_event_data(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
 
@@ -552,15 +575,15 @@ class TestOntoBuilder(unittest.TestCase):
     # Tests — DataRepresentation
     # ---------------------------------------------------------------------------
 
-    def test_quantize_labels_mismatch_raises(self):
+    def test_bin_labels_mismatch_raises(self):
         with self.assertRaises(ValueError):
-            OntoBuildSettings(quantize_bins=3, quantize_labels=["low", "high"])
+            OntoBuildSettings(bins=3, bin_labels=["low", "high"])
 
     def test_data_representation_none_skips_numeric(self):
-        self.settings.data_representation = DataRepresentation.NONE
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        self.settings.data_representation = []
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_object_data(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, _ = self._load_reasoner()
 
@@ -588,10 +611,10 @@ class TestOntoBuilder(unittest.TestCase):
             self.assertIn(type_cls, classes)
 
     def test_data_representation_values_has_data_value(self):
-        self.settings.data_representation = DataRepresentation.VALUES
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        self.settings.data_representation = [DataRepresentation.VALUES]
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_object_data(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
 
@@ -611,47 +634,60 @@ class TestOntoBuilder(unittest.TestCase):
             )
             self.assertIn("605.4", str(literals[0]), "Literal does not contain 605.4")
 
-    def test_data_representation_quantize_simple_produces_labels(self):
-        self.settings.data_representation = DataRepresentation.QUANTIZE_SIMPLE
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+    def test_data_representation_equal_bins_produces_labels(self):
+        self.settings.data_representation = [DataRepresentation.EQUAL_BINS]
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_object_data(self.data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
-
         inds = set(onto.individuals_in_signature())
-        labels = self.settings.quantize_labels
+        labels = self.settings.bin_labels
+        value_cls = OWLClass(IRI(NS, "value"))
 
-        found_labels = {
-            lbl for lbl in labels if OWLNamedIndividual(IRI(NS, f"value_{lbl}")) in inds
-        }
-        with self.subTest("all label individuals exist"):
-            # 9 non-null values across 5 quantile bins — every bin should be occupied
+        with self.subTest("bin classes exist as subclasses of attribute class"):
+            # 9 non-null values across 5 quantile bins — every bin should be occupied.
+            # Guard: only query classes that exist in the signature; calling
+            # super_classes() on a non-existent class crashes StructuralReasoner.
+            class_names = {c.iri.remainder for c in onto.classes_in_signature()}
+            found = [lbl for lbl in labels if f"value_{lbl}" in class_names]
             self.assertEqual(
-                found_labels,
+                set(found),
                 set(labels),
-                f"Missing label individuals: {set(labels) - found_labels}",
+                f"Missing bin classes: {set(labels) - set(found)}",
             )
+            for lbl in found:
+                supers = set(
+                    reasoner.super_classes(
+                        OWLClass(IRI(NS, f"value_{lbl}")), direct=True
+                    )
+                )
+                self.assertIn(
+                    value_cls, supers, f"value_{lbl} not a subclass of 'value'"
+                )
+
+        with self.subTest("object individuals typed as bin classes"):
+            class_names = {c.iri.remainder for c in onto.classes_in_signature()}
+            existing = [lbl for lbl in labels if f"value_{lbl}" in class_names]
+            typed = set()
+            for lbl in existing:
+                for inst in reasoner.instances(OWLClass(IRI(NS, f"value_{lbl}"))):
+                    typed.add(inst.iri.remainder)
+            self.assertGreater(
+                len(typed), 0, "No object individuals typed as any bin class"
+            )
+
+        with self.subTest("no bin-label individuals"):
+            for lbl in labels:
+                self.assertNotIn(OWLNamedIndividual(IRI(NS, f"value_{lbl}")), inds)
 
         with self.subTest("no raw numeric individuals"):
             for name in ["value_120.0", "value_605.4", "value_243.2"]:
                 self.assertNotIn(OWLNamedIndividual(IRI(NS, name)), inds)
 
-        with self.subTest("no has_data_value literals on label individuals"):
-            has_data_value = OWLDataProperty(IRI(NS, "has_data_value"))
-            for lbl in labels:
-                ind = OWLNamedIndividual(IRI(NS, f"value_{lbl}"))
-                if ind in inds:
-                    literals = list(
-                        reasoner.data_property_values(ind, has_data_value, direct=False)
-                    )
-                    self.assertEqual(
-                        len(literals), 0, f"Unexpected has_data_value on {ind}"
-                    )
-
-    def test_data_representation_quantize_dist_no_literals(self):
-        # Build a store with enough unique values to exercise quantize_series binning.
-        # (quantize_series has a low-cardinality guard at min_values=10; use 15 distinct.)
+    def test_data_representation_dist_bins_no_literals(self):
+        # Build a store with enough unique values to exercise bin_series binning.
+        # (bin_series has a low-cardinality guard at min_values=10; use 20 distinct.)
         import numpy as np
 
         data = OCEDStore()
@@ -669,35 +705,235 @@ class TestOntoBuilder(unittest.TestCase):
         data._events = {}
         data._relations = {"event_to_object": {}, "object_to_object": {}}
 
-        self.settings.data_representation = DataRepresentation.QUANTIZE_DIST
-        builder = OCEDOntoBuilder("data/temp/tmp.owl", self.settings)
+        self.settings.data_representation = [DataRepresentation.DIST_BINS]
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_object_data(data)
-        builder.save_onto("data/temp/tmp.owl")
+        builder.save_onto(self.owl_path)
 
         onto, reasoner = self._load_reasoner()
         inds = set(onto.individuals_in_signature())
-        labels = self.settings.quantize_labels
+        labels = self.settings.bin_labels
+        value_cls = OWLClass(IRI(NS, "value"))
 
-        found_labels = {
-            lbl for lbl in labels if OWLNamedIndividual(IRI(NS, f"value_{lbl}")) in inds
-        }
-        with self.subTest("label individuals exist and are valid"):
-            # Distribution-fitted bins may not populate every label; check at least one
-            # is present and every found label is from the allowed set (no raw numerics).
-            self.assertGreater(len(found_labels), 0, "No label individuals found")
+        with self.subTest("bin classes exist as subclasses of attribute class"):
+            # Distribution-fitted bins may not populate every label; check at least one.
+            # Guard: only query classes present in the signature; StructuralReasoner
+            # crashes on a class IRI that doesn't exist in the ontology.
+            class_names = {c.iri.remainder for c in onto.classes_in_signature()}
+            found = [lbl for lbl in labels if f"value_{lbl}" in class_names]
+            self.assertGreater(
+                len(found), 0, "No bin classes found as subclasses of 'value'"
+            )
             self.assertTrue(
-                found_labels.issubset(set(labels)),
-                f"Unexpected label individuals outside configured labels: {found_labels - set(labels)}",
+                set(found).issubset(set(labels)),
+                f"Unexpected bin classes outside configured labels: {set(found) - set(labels)}",
+            )
+            for lbl in found:
+                supers = set(
+                    reasoner.super_classes(
+                        OWLClass(IRI(NS, f"value_{lbl}")), direct=True
+                    )
+                )
+                self.assertIn(
+                    value_cls, supers, f"value_{lbl} not a subclass of 'value'"
+                )
+
+        with self.subTest("object individuals typed as bin classes"):
+            class_names = {c.iri.remainder for c in onto.classes_in_signature()}
+            existing = [lbl for lbl in labels if f"value_{lbl}" in class_names]
+            typed = set()
+            for lbl in existing:
+                for inst in reasoner.instances(OWLClass(IRI(NS, f"value_{lbl}"))):
+                    typed.add(inst.iri.remainder)
+            self.assertGreater(
+                len(typed), 0, "No object individuals typed as any bin class"
             )
 
-        with self.subTest("no has_data_value literals on any value individual"):
-            has_data_value = OWLDataProperty(IRI(NS, "has_data_value"))
+        with self.subTest("no bin-label individuals"):
             for lbl in labels:
-                ind = OWLNamedIndividual(IRI(NS, f"value_{lbl}"))
-                if ind in inds:
-                    literals = list(
-                        reasoner.data_property_values(ind, has_data_value, direct=False)
-                    )
-                    self.assertEqual(
-                        len(literals), 0, f"Unexpected has_data_value on {ind}"
-                    )
+                self.assertNotIn(OWLNamedIndividual(IRI(NS, f"value_{lbl}")), inds)
+
+    def test_data_representation_values_equal_bins_types_value_ind_as_bin_class(self):
+        self.settings.data_representation = [
+            DataRepresentation.VALUES,
+            DataRepresentation.EQUAL_BINS,
+        ]
+        builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
+        builder.instantiate_object_data(self.data)
+        builder.save_onto(self.owl_path)
+
+        onto, reasoner = self._load_reasoner()
+        inds = set(onto.individuals_in_signature())
+        labels = self.settings.bin_labels
+
+        with self.subTest("raw value individuals exist"):
+            self.assertIn(OWLNamedIndividual(IRI(NS, "value_120.0")), inds)
+            self.assertIn(OWLNamedIndividual(IRI(NS, "value_605.4")), inds)
+
+        with self.subTest("value individual is typed as a bin class"):
+            ind = OWLNamedIndividual(IRI(NS, "value_120.0"))
+            types = set(reasoner.types(ind, direct=False))
+            bin_classes = {OWLClass(IRI(NS, f"value_{lbl}")) for lbl in labels}
+            self.assertTrue(
+                types & bin_classes,
+                "value_120.0 is not typed as any bin class",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Tests — make_inverses_explicit ABox assertions
+# ---------------------------------------------------------------------------
+
+
+def test_make_inverses_explicit_emits_observes_assertions(tmp_path):
+    """With make_inverses_explicit=True, instantiate_time_data must emit observes(time, event)
+    alongside every observed_at(event, time) assertion."""
+    s = OntoBuildSettings()
+    s.profile = OwlProfile.OWL2DL  # OWL2DL required for OWLInverseObjectPropertiesAxiom
+    # inverse_representation defaults to [AXIOMATIC, IMPLICIT]
+    s.order_representation = []
+    s.case_concepts = []
+
+    data = OCEDStore()
+    data._events = {
+        "act1": {
+            "id": "id",
+            "time": "time",
+            "data": pd.DataFrame(
+                {
+                    "id": ["e0", "e1"],
+                    "time": [datetime(2023, 1, 1), datetime(2023, 1, 2)],
+                }
+            ),
+        }
+    }
+    data._objects = {}
+    data._relations = {"event_to_object": {}, "object_to_object": {}}
+
+    abox_path = str(tmp_path / "abox.owl")
+    builder = OCEDOntoBuilder(DEFAULT_IRI, s)
+    builder.instantiate_time_data(data)
+    builder.save_onto(abox_path)
+
+    onto = Ontology(IRI.create(f"file://{abox_path}"))
+    reasoner = StructuralReasoner(onto)
+
+    time_ind = OWLNamedIndividual(IRI(NS, "20230101T000000_000000"))
+    event_ind = OWLNamedIndividual(IRI(NS, "e0"))
+    observes_prop = OWLObjectProperty(IRI(NS, "observes"))
+
+    assert observes_prop in list(onto.object_properties_in_signature()), (
+        "observes property missing from ABox signature — inverse not declared"
+    )
+    values = set(reasoner.object_property_values(time_ind, observes_prop, direct=False))
+    assert event_ind in values, (
+        f"Expected observes({time_ind.str}, {event_ind.str}) in ABox — "
+        "make_inverses_explicit did not emit inverse assertion"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests — Bug 1: inv_has_<attr> declared when inverse_properties=True
+# ---------------------------------------------------------------------------
+
+
+def test_attr_prop_inverse_declared(tmp_path):
+    """inv_has_resource must be declared in the TBox when inverse_properties=True."""
+    s = OntoBuildSettings()
+    s.profile = OwlProfile.OWL2DL
+    # inverse_representation defaults to [AXIOMATIC, IMPLICIT]
+    s.order_representation = []
+    s.case_concepts = []
+
+    data = OCEDStore()
+    data._events = {
+        "act1": {
+            "id": "id",
+            "time": "time",
+            "data": pd.DataFrame(
+                {
+                    "id": ["e0", "e1"],
+                    "time": [datetime(2023, 1, 1), datetime(2023, 1, 2)],
+                    "resource": ["Alice", "Bob"],
+                }
+            ),
+        }
+    }
+    data._objects = {}
+    data._relations = {"event_to_object": {}, "object_to_object": {}}
+
+    builder = OCEDOntoBuilder(DEFAULT_IRI, s)
+    builder.instantiate_event_data(data)
+
+    props = {p.iri.remainder for p in builder.onto.object_properties_in_signature()}
+    assert "has_resource" in props, "has_resource must be declared"
+    assert "inv_has_resource" in props, (
+        "inv_has_resource must be declared when inverse_properties=True"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests — Bug 2: inv_df_<case> sub-property of inv_df
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("profile", [OwlProfile.OWL2DL, OwlProfile.OWL2EL])
+def test_inv_df_subproperty_of_inv_df(tmp_path, profile):
+    """inv_df_<case> must be declared as SubPropertyOf inv_df in both OWL2DL and OWL2EL."""
+    s = OntoBuildSettings()
+    s.profile = profile
+    s.inverse_representation = [InverseRepresentation.IMPLICIT]
+    s.order_representation = [EventOrderRepresentation.DF]
+    s.case_concepts = ["order"]
+
+    data = OCEDStore()
+    data._events = {
+        "act1": {
+            "id": "id",
+            "time": "time",
+            "data": pd.DataFrame(
+                {
+                    "id": ["e0", "e1", "e2"],
+                    "time": [
+                        datetime(2023, 1, 1),
+                        datetime(2023, 1, 2),
+                        datetime(2023, 1, 3),
+                    ],
+                }
+            ),
+        }
+    }
+    data._objects = {
+        "order": {
+            "id": "id",
+            "data": pd.DataFrame({"id": ["o1"]}),
+        }
+    }
+    data._relations = {
+        "event_to_object": {
+            "modifies": {
+                "from_id": "from_id",
+                "to_id": "to_id",
+                "to_type": ["order"],
+                "data": pd.DataFrame(
+                    {"from_id": ["e0", "e1", "e2"], "to_id": ["o1", "o1", "o1"]}
+                ),
+            }
+        },
+        "object_to_object": {},
+    }
+
+    builder = OCEDOntoBuilder(DEFAULT_IRI, s)
+    builder.build_ontology(data)
+
+    props = {p.iri.remainder for p in builder.onto.object_properties_in_signature()}
+    assert "inv_df" in props, "inv_df must be declared"
+    assert "inv_df_order" in props, "inv_df_order must be declared"
+
+    onto_owlready = builder.onto._onto
+    ns = DEFAULT_IRI
+    inv_df_order = onto_owlready.search_one(iri=f"{ns}inv_df_order")
+    inv_df = onto_owlready.search_one(iri=f"{ns}inv_df")
+    assert inv_df_order is not None, "inv_df_order not found via owlready2"
+    assert inv_df is not None, "inv_df not found via owlready2"
+    assert inv_df in inv_df_order.is_a, "inv_df_order must be a sub-property of inv_df"

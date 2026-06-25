@@ -4,44 +4,39 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "semlog"
-version = "0.3.0"
-description = "Semantic Event Log - Instantiate process mining data as OWL 2 ontologies"
+version = "0.4.0"
+description = "Convert OCEL process mining event logs to OWL 2 ontologies. The [declare] extra requires the Lydia solver (not on PyPI) — see README."
 authors = [{ name = "Christian Dormagen", email = "christian.dormagen@oth-regensburg.de" }]
 readme = "README.md"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
 dependencies = [
     "pm4py>=2.7",
-    "owlapy",
-    "scipy",
+    "owlapy>=1.6,<2",
+    "scipy<2",
     "pandas>=2.2",
 ]
 
+[project.scripts]
+semlog-build = "semanticlog.cli:main"
+
 [project.optional-dependencies]
+# Note: [declare] also requires the Lydia LTLf/LDLf solver (not on PyPI).
+# Install it separately with: sudo bash scripts/install_lydia.sh
 declare = [
     "declare4py",
 ]
 dev = [
     "pytest",
     "pytest-cov",
-    "black",
-    "isort",
-    "autoflake",
-    "flake8",
+    "ruff",
     "mypy",
     "pre-commit",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-
-[tool.black]
-line-length = 88
-target-version = ["py312"]
-
-[tool.isort]
-profile = "black"
-line_length = 88
+exclude = ["tests*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -51,6 +46,17 @@ source = ["semanticlog"]
 
 [tool.coverage.report]
 show_missing = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "N"]
+ignore = ["E501", "N802", "N803", "N806", "UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -16,39 +16,66 @@ import pm4py as pm
 from pm4py.algo.filtering.log.variants import variants_filter
 
 
-def filter_to_timeintervall(log, mintime, maxtime, time_col="time:timestamp"):
-    """takes a log, time intervall defined via a mintime and maxtime in unixtime seconds and returns the log filltered to this interval"""
-    if log[time_col].dtype == "datetime64[ns, UTC]":
-        maxtime = pd.to_datetime(maxtime, unit="s", utc=True)
-        mintime = pd.to_datetime(mintime, unit="s", utc=True)
-    else:
-        maxtime = pd.to_datetime(maxtime, unit="s", utc=False)
-        mintime = pd.to_datetime(mintime, unit="s", utc=False)
+def filter_to_time_interval(log, mintime, maxtime, time_col="time:timestamp"):
+    """Filter a log to events whose timestamp falls within [mintime, maxtime].
 
-    traces_outside_intervall = log[
-        ((log["time:timestamp"] > maxtime) | (log["time:timestamp"] < mintime))
+    Args:
+        log: pm4py-format DataFrame.
+        mintime: Lower bound as Unix seconds (inclusive).
+        maxtime: Upper bound as Unix seconds (inclusive).
+        time_col: Name of the timestamp column.
+
+    Returns:
+        Filtered DataFrame with out-of-window events removed.
+    """
+    is_tz_aware = (
+        hasattr(log[time_col].dtype, "tz") and log[time_col].dtype.tz is not None
+    )
+    maxtime = pd.to_datetime(maxtime, unit="s", utc=is_tz_aware)
+    mintime = pd.to_datetime(mintime, unit="s", utc=is_tz_aware)
+
+    traces_outside_interval = log[
+        ((log[time_col] > maxtime) | (log[time_col] < mintime))
     ]
-    log = log.drop(traces_outside_intervall.index)
+    log = log.drop(traces_outside_interval.index)
     return log
 
 
 def filter_remove_months(
     log, months, time_col="time:timestamp", case_col="case:concept:name"
 ):
-    """given a log and list of ints representing a month, filters the by removing any cases which have events in the given months"""
+    """Remove all cases that contain any event in the specified months.
+
+    Args:
+        log: pm4py-format DataFrame.
+        months: List of integer month numbers (1–12) to exclude.
+        time_col: Name of the timestamp column.
+        case_col: Name of the case-ID column.
+
+    Returns:
+        Filtered DataFrame with affected cases removed entirely.
+    """
     events_in_months_to_remove = log[log[time_col].dt.month.isin(months)]
     case_ids_to_remove = events_in_months_to_remove[case_col].unique()
     log = log[~log[case_col].isin(case_ids_to_remove)]
     return log
 
 
-def filter_variants_by_minimum_occurence(log, minimum_occurences):
-    """given a log and minimum number of occurences that variants should have, filter all variants with less occurences"""
+def filter_variants_by_minimum_occurrence(log, minimum_occurrences):
+    """Keep only cases whose variant appears at least ``minimum_occurrences`` times.
+
+    Args:
+        log: pm4py-format DataFrame.
+        minimum_occurrences: Minimum number of cases a variant must have to be kept.
+
+    Returns:
+        Filtered DataFrame as a pm4py DataFrame.
+    """
     variants = variants_filter.get_variants(log)
     filtered_variants = {
         variant: cases
         for variant, cases in variants.items()
-        if len(cases) >= minimum_occurences
+        if len(cases) >= minimum_occurrences
     }
     log = variants_filter.apply(log, filtered_variants)
     return pm.convert_to_dataframe(log)
@@ -57,18 +84,30 @@ def filter_variants_by_minimum_occurence(log, minimum_occurences):
 def filter_variants_by_maximum_repetition(
     log, maximum_repetition, case_col="case:concept:name", seed=None
 ):
-    """given a log and maximum number of allowed repetitions for a variant, filters out traces for each variant s.t. it is
-    within the maximum number of allowed repetitions"""
+    """Downsample over-represented variants to at most ``maximum_repetition`` cases each.
+
+    For each variant with more cases than ``maximum_repetition``, a random
+    subset of the allowed size is kept; all others are removed.
+
+    Args:
+        log: pm4py-format DataFrame.
+        maximum_repetition: Maximum number of cases allowed per variant.
+        case_col: Name of the case-ID column.
+        seed: Optional random seed for reproducible sampling.
+
+    Returns:
+        Filtered DataFrame as a pm4py DataFrame.
+    """
     variants = variants_filter.get_variants(log)
 
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # noqa: S311
     cases_to_keep = []
     for variant, cases in variants.items():
         if len(cases) > maximum_repetition:
             variant_cases_to_keep = rng.sample(cases, maximum_repetition)
         else:
             variant_cases_to_keep = cases
-        cases_to_keep = cases_to_keep + variant_cases_to_keep
+        cases_to_keep.extend(variant_cases_to_keep)
 
     case_col_dict_structure = case_col.removeprefix("case:")
 

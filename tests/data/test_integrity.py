@@ -17,8 +17,8 @@ import pandas as pd
 import pytest
 
 from semanticlog.data.cleaning import clean_oced_data
+from semanticlog.data.loading.pm4pyloader import PM4PYLoader
 from semanticlog.data.oced import OCEDStore
-from semanticlog.data.pm4pyloader import PM4PYLoader
 
 CLEAN_RE = re.compile(r"^[A-Za-z0-9_]+$")
 

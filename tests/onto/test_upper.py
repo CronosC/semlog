@@ -3,7 +3,7 @@ from owlapy.iri import IRI
 from owlapy.owl_ontology import OWLClass
 from owlapy.owl_property import OWLDataProperty, OWLObjectProperty
 
-from semanticlog.onto.settings import OntoBuildSettings
+from semanticlog.onto.settings import InverseRepresentation, OntoBuildSettings
 from semanticlog.onto.upper import OCEDUpperOntoBuilder
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,10 @@ def _data_prop(name: str) -> OWLDataProperty:
 @pytest.fixture
 def oced_with_inverses(tmp_path):
     s = OntoBuildSettings()
-    s.inverse_properties = True
+    s.inverse_representation = [
+        InverseRepresentation.AXIOMATIC,
+        InverseRepresentation.IMPLICIT,
+    ]
     b = OCEDUpperOntoBuilder(TEST_IRI, s)
     b.construct_upper_ontology(str(tmp_path / "upper.owl"))
     return b
@@ -54,7 +57,7 @@ def oced_with_inverses(tmp_path):
 @pytest.fixture
 def oced_without_inverses(tmp_path):
     s = OntoBuildSettings()
-    s.inverse_properties = False
+    s.inverse_representation = []
     b = OCEDUpperOntoBuilder(TEST_IRI, s)
     b.construct_upper_ontology(str(tmp_path / "upper.owl"))
     return b
@@ -179,17 +182,6 @@ def test_iri_ends_with_hash(oced_with_inverses):
     assert oced_with_inverses.iri.endswith("#")
 
 
-def test_inverse_dict_populated_when_inverses_enabled(oced_with_inverses):
-    """inverse_dict tracks only auto-named inverses (not explicitly-named ones like observes/attribute_of)."""
-    d = oced_with_inverses.inverse_dict
-    assert d.get("event_object_relation") == "inv_event_object_relation"
-    assert d.get("object_object_relation") == "inv_object_object_relation"
-
-
-def test_inverse_dict_empty_when_inverses_disabled(oced_without_inverses):
-    assert oced_without_inverses.inverse_dict == {}
-
-
 # ---------------------------------------------------------------------------
 # Tests — OcelExtension: ATTRIBUTE_HISTORY
 # ---------------------------------------------------------------------------
@@ -200,7 +192,7 @@ def oced_with_attribute_history(tmp_path):
     from semanticlog.onto.settings import OcelExtension
 
     s = OntoBuildSettings(ocel_extensions=[OcelExtension.ATTRIBUTE_HISTORY])
-    s.inverse_properties = False
+    s.inverse_representation = []
     b = OCEDUpperOntoBuilder(TEST_IRI, s)
     b.construct_upper_ontology(str(tmp_path / "upper_ah.owl"))
     return b
@@ -230,49 +222,3 @@ def test_attribute_history_adds_changed_at_property(oced_with_attribute_history)
 def test_no_extension_does_not_add_attribute_change_class(oced_with_inverses):
     classes = list(oced_with_inverses.onto.classes_in_signature())
     assert _owl_class("AttributeChange") not in classes
-
-
-# ---------------------------------------------------------------------------
-# Tests — OcelExtension: RELATION_TIMESTAMPS
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def oced_with_relation_timestamps(tmp_path):
-    from semanticlog.onto.settings import OcelExtension
-
-    s = OntoBuildSettings(ocel_extensions=[OcelExtension.RELATION_TIMESTAMPS])
-    s.inverse_properties = False
-    b = OCEDUpperOntoBuilder(TEST_IRI, s)
-    b.construct_upper_ontology(str(tmp_path / "upper_rt.owl"))
-    return b
-
-
-def test_relation_timestamps_adds_relation_observation_class(
-    oced_with_relation_timestamps,
-):
-    classes = list(oced_with_relation_timestamps.onto.classes_in_signature())
-    assert _owl_class("RelationObservation") in classes
-
-
-def test_relation_timestamps_adds_has_relation_observation_property(
-    oced_with_relation_timestamps,
-):
-    assert "has_relation_observation" in obj_prop_names(oced_with_relation_timestamps)
-
-
-def test_relation_timestamps_adds_relation_involves_object_property(
-    oced_with_relation_timestamps,
-):
-    assert "relation_involves_object" in obj_prop_names(oced_with_relation_timestamps)
-
-
-def test_relation_timestamps_adds_relation_observed_at_property(
-    oced_with_relation_timestamps,
-):
-    assert "relation_observed_at" in obj_prop_names(oced_with_relation_timestamps)
-
-
-def test_no_extension_does_not_add_relation_observation_class(oced_with_inverses):
-    classes = list(oced_with_inverses.onto.classes_in_signature())
-    assert _owl_class("RelationObservation") not in classes

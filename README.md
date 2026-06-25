@@ -7,136 +7,95 @@
 ## Installation
 
 ```bash
+# With uv (recommended)
+uv sync                     # core + dev tools
+uv sync --extra declare     # add DECLARE constraint support
+
+# With pip
 pip install -e .
-pip install -e ".[dev]"      # with dev tools
-pip install -e ".[declare]"  # with DECLARE constraint support
+pip install -e ".[dev]"
+pip install -e ".[declare]"
 ```
 
 Requires Python >= 3.12.
+
+### DECLARE support
+
+The `[declare]` extra installs `declare4py` but also requires the **Lydia** LTLf/LDLf solver, which cannot be installed via pip. Use the provided install script:
+
+```bash
+sudo bash scripts/install_lydia.sh
+```
+
+The script builds and installs from source: CUDD 3.0.0, MONA 1.4, Syft 0.1.1, and Lydia. Requires `cmake`, `build-essential`, `bison`, `flex`, `libboost-dev`, and `graphviz-dev` (installed automatically on Debian/Ubuntu). The rest of the library works without Lydia.
 
 ---
 
 ## Quick Start
 
 ```python
-from semanticlog.data.classicalloader import ClassicalLoader
+from semanticlog.data.loading.pm4pyloader import PM4PYLoader
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.onto.instantiate import OCEDOntoBuilder
-from semanticlog.onto.settings import OntoBuildSettings, OwlProfile, EventOrderRepresentation
+from semanticlog.onto.settings import (
+    DEFAULT_IRI, OntoBuildSettings, OwlProfile, EventOrderRepresentation
+)
 
-cl = ClassicalLoader("data/log.csv", {
-    "case_col": "case_id",
-    "act_col": "activity",
-    "time_col": "timestamp",
-})
-oced = cl.get_oced()
+oced = PM4PYLoader("log.json", {}).get_oced()
 oced = clean_oced_data(oced)
 
 settings = OntoBuildSettings()
 settings.profile = OwlProfile.OWL2DL
-settings.case_concepts = ["case_id"]   # must be set for event order
+settings.case_concepts = ["order"]   # must be set for event order
 settings.order_representation = [EventOrderRepresentation.DF]
 
-builder = OCEDOntoBuilder("https://example.org/myonto#", settings)
-builder.build_ontology(oced)
-builder.save_onto("output.owl")
+semlog = OCEDOntoBuilder(DEFAULT_IRI, settings).build_ontology(oced)
+semlog.write_ontology("output.owl")
 ```
 
-The upper ontology (TBox schema) is built separately:
-
-```python
-from semanticlog.onto.upper import OCEDUpperOntoBuilder
-
-upper = OCEDUpperOntoBuilder("https://example.org/upper#", settings)
-upper.construct_upper_ontology("upper.owl")
-```
+The `SemanticLog` object returned by `build_ontology` carries the built ontology together with the settings used to produce it. Use `semlog.write_ontology(path)` to save the OWL file, or `semlog.write(path)` / `SemanticLog.read(path)` for a full pickle round-trip (`.semlog` files).
 
 ---
 
 ## Architecture
 
-The core pipeline: load event data → clean/normalise → configure build settings → instantiate OWL ontology → save `.owl` file.
+Core pipeline: load event data → clean/normalise → configure build settings → `OCEDOntoBuilder.build_ontology()` → `SemanticLog` → save `.owl`.
 
 | Module | Role |
 |---|---|
 | `data/oced.py` | `OCEDStore` — central in-memory data model |
-| `data/classicalloader.py` | Load flat CSV/XES event logs |
-| `data/ocelloader.py` | Load OCEL 2.0 SQLite directly |
-| `data/pm4pyloader.py` | Load OCEL 2.0 XML / JSON / SQLite via pm4py |
+| `data/loading/classicalloader.py` | Load flat CSV/XES event logs |
+| `data/loading/pm4pyloader.py` | Load OCEL 2.0 XML / JSON / SQLite via pm4py |
 | `data/cleaning.py` | String cleaning, deduplication, collision-fixing |
-| `data/filtering.py` | Filter by activity / object type |
-| `data/misc.py` | Variant weighting, numeric quantization |
-| `onto/settings.py` | `OntoBuildSettings`, `OwlProfile`, `EventOrderRepresentation` |
-| `onto/upper.py` | Upper ontology (schema) builder |
-| `onto/instantiate.py` | ABox population pipeline |
+| `data/filtering.py` | Filter by activity / object type (operates on flat DataFrames) |
+| `data/binning.py` | Variant weighting, numeric binning helpers |
+| `onto/settings.py` | `OntoBuildSettings`, all enums, `validate_settings` |
+| `onto/semlog.py` | `SemanticLog` — pipeline output; write/read OWL + pickle |
+| `onto/upper.py` | Upper ontology (TBox schema) builder; called internally by `OCEDOntoBuilder` |
+| `onto/instantiate.py` | Full pipeline entry point: `OCEDOntoBuilder.build_ontology()` |
 | `onto/builder.py` | Low-level OWL axiom construction (owlapy) |
 | `onto/transform.py` | String ↔ OWL expression parsing |
 | `onto/reason.py` | Reasoner integration |
-| `enrich/declare.py` | DECLARE constraint mining (requires Lydia backend) |
+| `enrich/declare.py` | `DeclareResult` + `DeclareEnricher` — DECLARE constraint mining (requires Lydia) |
 
 ---
 
 ## Data Loading
 
-### Loaders and config keys
-
-**`ClassicalLoader`** — flat CSV or XES, one event per row.
-
-| Key | Default | Description |
-|---|---|---|
-| `case_col` | `case:concept:name` | Column identifying the case/trace |
-| `act_col` | `concept:name` | Column identifying the activity |
-| `time_col` | `time:timestamp` | Column with event timestamps |
-| `object_cols` | `[]` | Additional object-type columns |
-
-Event attributes beyond the timestamp are not loaded by `ClassicalLoader` — only the case object and optional extra object columns are carried through.
-
-**`OCELLoader`** — OCEL 2.0 SQLite, reads tables directly (no pm4py dependency).
-
-| Key | Required | Description |
-|---|---|---|
-| `file_format` | yes | Must be `"sqlite"` (JSON and XML not yet implemented) |
-
-**`PM4PYLoader`** — OCEL 2.0 XML, JSON, or SQLite via pm4py. Format is inferred from file extension if `file_format` is not given.
-
-| Key | Default | Description |
-|---|---|---|
-| `file_format` | inferred | `"xml"`, `"json"`, or `"sqlite"` |
-
-All loaders return an `OCEDStore`. Run `clean_oced_data(oced)` on the result before building the ontology.
-
-### Known information losses
-
-Both OCEL loaders make the following simplifications relative to the OCEL 2.0 standard:
-
-- **Object attribute change history**: OCEL 2.0 stores time-varying object attributes as a sequence of change records, each with its own independent timestamp. Both `OCELLoader` and `PM4PYLoader` keep only the latest attribute value per object. The temporal evolution is discarded. (`OCELLoader` takes `idxmax` per object; `PM4PYLoader` inherits pm4py's flattened view.)
-- **E2O relation timestamps** (`PM4PYLoader` only): OCEL 2.0 records when each event-object relation was observed, independently from the event timestamp. `PM4PYLoader` discards this. Representing it in OWL would require reifying each E2O relation as its own individual (n-ary relation pattern).
-
----
-
-## Data Preprocessing
-
-### Cleaning
-
-`clean_oced_data(oced)` must be called before `build_ontology()`. It sanitises all names to `[A-Za-z0-9_]`, resolves collisions with reserved OWL property names, and deduplicates IDs. Skipping it will produce malformed IRIs or axiom collisions.
-
-### Quantization
-
-Numeric attributes produce a large number of distinct attribute individuals in the ontology (one per value). `quantize(oced)` replaces all numeric columns in events and objects with categorical bin labels before the ontology is built, collapsing the value space.
+**`PM4PYLoader`** is the preferred loader. It reads OCEL 2.0 XML, JSON, or SQLite via pm4py; format is inferred from file extension.
 
 ```python
-from semanticlog.data.misc import quantize
+from semanticlog.data.loading.pm4pyloader import PM4PYLoader
+from semanticlog.onto.settings import OcelExtension
 
-oced = quantize(oced)   # call after clean_oced_data, before build_ontology
+oced = PM4PYLoader("log.sqlite", {}, ocel_extensions=[OcelExtension.ATTRIBUTE_HISTORY]).get_oced()
 ```
 
-Binning strategy per column:
-1. Fits candidate distributions (normal, log-normal, exponential, gamma) using AIC + KS test
-2. If a known distribution fits, bins using normal-equivalent deviates
-3. Falls back to equal-frequency quantile binning otherwise
-4. Columns with low cardinality (≤ max(bins, 10) unique values) are converted to string labels directly
+Always call `clean_oced_data(oced)` before building the ontology — it sanitises all names to `[A-Za-z0-9_]`, resolves collisions with reserved OWL property names, and deduplicates IDs. Skipping it produces malformed IRIs.
 
-Default: 5 bins labelled `very_low`, `low`, `average`, `high`, `very_high`.
+**`ClassicalLoader`** loads flat CSV/XES logs. It prefixes event IDs with `e` and case IDs with `t`.
+
+The `ATTRIBUTE_HISTORY` extension loads per-object attribute change history from pm4py's `log.object_changes`. Without it, only the latest attribute value per object is loaded.
 
 ---
 
@@ -146,169 +105,97 @@ Default: 5 bins labelled `very_low`, `low`, `average`, `high`, `very_high`.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `profile` | `OwlProfile` | `OWL2DL` | OWL 2 profile |
-| `order_representation` | `list[EventOrderRepresentation]` | `[]` | Event ordering strategy/strategies |
+| `profile` | `OwlProfile` | `OWL2DL` | `OWL2DL` (full) or `OWL2EL` (lightweight, no TBox inverse/transitive axioms) |
+| `order_representation` | `list[EventOrderRepresentation]` | `[]` | Event ordering strategies; combinable |
 | `case_concepts` | `list[str]` | `[]` | Object types used as cases — required for any event order |
-| `declare_file` | `str \| None` | `None` | Path to DECLARE constraint CSV |
-| `inverse_properties` | `bool` | `True` | Declare inverse object properties in TBox |
-| `make_inverses_explicit` | `bool` | `True` | Materialise inverse assertions in ABox |
+| `inverse_representation` | `list[InverseRepresentation]` | `[AXIOMATIC, IMPLICIT]` | `AXIOMATIC`: TBox axiom (OWL2DL only); `IMPLICIT`: ABox materialisation (both profiles) |
+| `ocel_extensions` | `list[OcelExtension]` | `[]` | Optional OCEL 2.0 features (e.g. `ATTRIBUTE_HISTORY`) |
+| `data_representation` | `list[DataRepresentation]` | `[VALUES]` | How numeric attributes are represented |
+| `bins` | `int` | `5` | Bin count for `EQUAL_BINS` / `DIST_BINS` |
+| `bin_labels` | `list[str]` | `["very_low", …, "very_high"]` | Labels for each bin; must have exactly `bins` elements |
+| `annotation_document` | `str \| None` | `None` | Path to JSON mapping entity names to `{label, comment}` dicts |
+| `annotation_data` | `dict \| None` | `None` | Loaded annotation JSON; call `load_annotation_document()` to populate |
+| `declare_file` | `str \| None` | `None` | Path to a DECLARE results CSV; call `load_declare_file()` to load |
+| `declare_result` | `DeclareResult \| None` | `None` | Loaded DECLARE constraints; required when `DECLARE` is in `order_representation` |
+| `derive_annotations` | `bool` | `False` | Emit `rdfs:label` on event, Time, object, and attribute individuals |
 
-`OwlProfile`:
-- `OWL2DL` — full OWL 2 DL: inverse axioms, reflexive/transitive closures, full reasoning
-- `OWL2EL` — lightweight: no inverse axioms in TBox, no reflexive/transitive closures
+`DataRepresentation` modes:
+- `VALUES` — one named individual per distinct value; literal stored via `has_data_value`
+- `EQUAL_BINS` — equal-frequency binning (`pd.qcut`); bin labels become OWL subclasses of the attribute class
+- `DIST_BINS` — distribution-fitted binning (normal, log-normal, exponential, gamma via AIC); falls back to `EQUAL_BINS` when no distribution fits
 
-`EventOrderRepresentation` values are combinable in a list: `DF`, `EF`, `EF_explicit`, `DECLARE`.
-
----
-
-## Ontology Data Model
-
-### Core class hierarchy
-
-Always present, regardless of settings:
-
-```
-owl:Thing
-├── Object          # one subclass per OCED object type
-├── Event           # one subclass per activity name
-├── Attribute
-│   ├── ObjectAttribute   # one subclass per object attribute name
-│   └── EventAttribute    # one subclass per event attribute name
-└── Time
-```
-
-### Core properties
-
-Object properties:
-
-| Property | Domain | Range | Notes |
-|---|---|---|---|
-| `observed_at` | `Event` | `Time` | When the event occurred |
-| `observes` | `Time` | `Event` | Inverse of `observed_at` |
-| `event_object_relation` | `Event` | `Object` | Super-property for all E2O relations |
-| `{qualifier}` | `Event` | `Object` | Sub-property per OCEL e2o qualifier name |
-| `object_object_relation` | `Object` | `Object` | Super-property for all O2O relations |
-| `{qualifier}_o2o` | `Object` | `Object` | Sub-property per OCEL o2o qualifier name |
-| `has_attribute` | `Object or Event` | `Attribute` | Super-property for all attribute properties |
-| `has_{attr}` | `Object or Event` | `{attr}` | Sub-property per attribute name |
-| `attribute_of` | `Attribute` | `Object or Event` | Inverse of `has_attribute` |
-
-Data properties:
-
-| Property | Domain | Range | Notes |
-|---|---|---|---|
-| `has_data_value` | `Attribute or Time` | xsd literal | Typed literal for numeric/datetime attributes and Time individuals |
-
-### ABox individual naming
-
-| Individual type | Naming pattern | Example |
-|---|---|---|
-| Event | `{event_id}` | `e0`, `e1` |
-| Object | `{object_id}` | `t42` |
-| Attribute | `{attr_name}_{value}` | `price_100`, `status_open` |
-| Time | `{YYYYMMDDTHHmmSS_microseconds}` | `20240101T090000_000000` |
-
-Notes:
-- `ClassicalLoader` prefixes event IDs with `e` and case IDs with `t`.
-- `PM4PYLoader` prefixes purely numeric IDs with their type name (e.g., object `42` of type `Order` → `Order_42`) to avoid IRI collisions.
-- Attribute individuals are **value-centric**: all entities with the same attribute value share one individual (`price_100` is shared by every object/event with `price=100`).
-- `has_data_value` is only asserted for numeric and datetime attributes. String/boolean attribute individuals carry their value in their name only.
+`VALUES` and one binning mode can coexist in the same list. `EQUAL_BINS` and `DIST_BINS` are mutually exclusive. Columns with ≤ max(`bins`, 10) unique values are converted to strings directly without binning.
 
 ---
 
 ## Event Order Representations
 
-Event order is only instantiated when `settings.case_concepts` is non-empty. All order representations start by adding:
+Event order is only instantiated when `settings.case_concepts` is non-empty.
 
-```
-Trace
-└── Trace_{case_concept}    # one per entry in settings.case_concepts
-
-part_of: Event → Trace
-```
-
-Each event individual is linked to its trace via `part_of`.
-
-### Directly-follows (`EventOrderRepresentation.DF`)
-
-Adds:
-- `StartEvent ⊑ Event`, `EndEvent ⊑ Event`
-- `df`: Event → Event (super-property)
-- `df_{case}`: Event → Event (sub-property, one per case concept)
-
-Adjacent event pairs within each trace are asserted via `df_{case}`. First/last events per trace are typed as `StartEvent` / `EndEvent`.
-
-### Eventually-follows (`EventOrderRepresentation.EF`)
-
-Adds `ef` and `ef_{case}` (DF must also be included).
-
-In **OWL2DL**, `ef_{case}` is the reflexive, transitive closure of `df_{case}` — defined via TBox axioms, inferred by a reasoner; no ABox assertions added.
-
-In **OWL2EL**, reflexive/transitive closure is not supported. Use `EF_explicit` instead.
-
-### Eventually-follows explicit (`EventOrderRepresentation.EF_explicit`)
-
-Same as EF but all `ef_{case}` pairs are materialised as ABox assertions (upper-triangular enumeration per trace). Works in both OWL2DL and OWL2EL. Significantly increases ontology size for long traces.
-
-### DECLARE constraints (`EventOrderRepresentation.DECLARE`)
-
-Requires `settings.declare_file` pointing to a CSV with columns:
-`case_concept`, `trace_id`, `{constraint_name_1}`, `{constraint_name_2}`, ...
-
-Each boolean column encodes whether a trace satisfies that DECLARE constraint. Constraints are instantiated separately per `case_concept` value in the file.
-
-Adds:
-
-```
-Trace
-└── DeclareConstraint
-    ├── Response_A_B     # one subclass per constraint column
-    ├── Precedence_C_D
-    └── ...
-```
-
-A trace individual is additionally typed as each constraint class it satisfies:
-
-```
-trace_42  :  Trace_order_type    # from part_of
-trace_42  :  Response_A_B        # this trace satisfies Response(A, B)
-```
-
-Satisfaction is encoded purely via class membership — no extra properties. Instances of `Response_A_B` are exactly the traces satisfying that constraint.
-
-> Note: multi-case-concept DECLARE in a single CSV is not yet implemented.
+- **`DF`** — directly-follows: adjacent event pairs within each trace asserted via `df_{case}` sub-property
+- **`EF`** — eventually-follows via TBox transitivity axioms; OWL2DL only (a reasoner derives all pairs); requires `DF` to also be included
+- **`EF_explicit`** — same as EF but all pairs are materialised as ABox assertions; works in both profiles; increases ontology size for long traces
+- **`DECLARE`** — DECLARE constraint membership: each trace is typed as the `DeclareConstraint` subclass for each constraint it satisfies; requires `settings.declare_result`
 
 ---
 
-## OWL Profile Differences
+## DECLARE Constraint Mining
 
-| Feature | OWL2DL | OWL2EL |
-|---|---|---|
-| Inverse property TBox axioms | Declared | Not declared |
-| Inverse assertions in ABox (`make_inverses_explicit`) | Supported | Supported |
-| `ef` as reflexive+transitive closure | Yes (TBox axioms) | Not supported — use `EF_explicit` |
-
----
-
-## Reasoning and Materialization
-
-After saving a `.owl` file, `Reasoner` can run an OWL reasoner over it to check consistency and materialise all inferred axioms back into the ontology.
+Requires the `[declare]` extra and Lydia (see [Installation](#installation)).
 
 ```python
-from semanticlog.onto.reason import Reasoner
+from semanticlog.enrich.declare import DeclareEnricher
 
-r = Reasoner("output.owl", backend="HermiT")
-r.check()           # check ontology consistency
-r.materialize()     # infer and add all axioms, overwrite file in place
+enricher = DeclareEnricher(oced)
+declare_result = enricher.get_constraints_via_discovery(
+    case_concepts=["order"],
+    constraint_set=["Response", "Precedence", "Coexistence", "Init", "End"],
+    constraint_support_threshold=0.5,
+    itemset_support_threshold=0.5,
+)
+declare_result.write("constraints.csv")
 
-# or save to a new file
-r.materialize(overwrite_old=False)
-r.save_onto("output_materialized.owl")
+settings.declare_file = "constraints.csv"
+settings.load_declare_file()            # populates settings.declare_result
 ```
 
-Supported backends: `"HermiT"` (default), `"Pellet"`, `"ELK"`. ELK is the fastest and suited for OWL2EL ontologies. HermiT and Pellet support full OWL2DL but are slower on large ABoxes.
+`get_constraints_via_discovery` mines constraints meeting the support thresholds. `get_constraints_via_enumeration` checks a fixed constraint set exhaustively. The `DeclareResult` object can be serialised to CSV (`write`/`read`) or embedded in settings (`to_dict`/`from_dict`).
 
-Inference types applied during materialization include class assertions, sub-class axioms, property assertions, inverse properties, and sub-property axioms. Property characteristic axioms (transitivity, reflexivity, etc.) are additionally included for OWL2DL ontologies.
+---
+
+## CLI — `build_onto.py`
+
+Batch-builds ontologies from a folder of OCEL files:
+
+```bash
+python scripts/build_onto.py --folder data/ocel --files log.json \
+    --profile OWL2EL --order DF \
+    --case-concepts order item \
+    --data-representation values \
+    --output data/onto
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `--folder` | required | Folder containing OCEL input files |
+| `--files` | all files | Filenames within `--folder` to process |
+| `--output` | `data/onto` | Output directory for `.owl` files |
+| `--profile` | `OWL2DL` | `OWL2DL` or `OWL2EL` |
+| `--order` | `DF` | Space-separated: `DF EF EF_explicit DECLARE` |
+| `--case-concepts` | auto (top 3) | Object type names to use as case concepts |
+| `--inverse-representation` | `AXIOMATIC IMPLICIT` | Space-separated; pass none to omit inverses |
+| `--data-representation` | `values` | Space-separated: `values equal_bins dist_bins` |
+| `--bins` | `5` | Bin count for `equal_bins` / `dist_bins` |
+| `--bin-labels` | `very_low … very_high` | Bin label names (must match `--bins`) |
+| `--ocel-extensions` | none | `ATTRIBUTE_HISTORY` |
+| `--materialize` / `--no-materialize` | on | Run reasoner after build |
+| `--annotation-document` | none | JSON file mapping entity names to label/comment |
+| `--derive-annotations` | off | Emit `rdfs:label` on individuals |
+| `--declare-constraints` | none | DECLARE constraint types to mine (requires `DECLARE` in `--order`) |
+| `--declare-constraint-support` | `0.5` | Per-constraint support threshold |
+| `--declare-itemset-support` | `0.5` | Itemset support threshold |
+| `--log-dir` | none | Directory for per-file log files |
+| `--size-limit` | 0 (no limit) | Skip files larger than N MB |
 
 ---
 
@@ -327,7 +214,5 @@ pytest tests/
 | `pm4py` | `>=2.7` | Process mining utilities, OCEL loading |
 | `owlapy` | latest | OWL 2 ontology construction |
 | `pandas` | `>=2.2` | All tabular data |
-| `scipy` | latest | Distribution fitting for quantization |
-| `declare4py` | optional | DECLARE constraint mining (`pip install -e ".[declare]"`) |
-
-`declare4py` additionally requires the **Lydia** LTLf/LDLf solver to be installed separately — it cannot be installed via pip alone. The rest of the library works without it.
+| `scipy` | latest | Distribution fitting for numeric binning |
+| `declare4py` | optional | DECLARE constraint mining (`[declare]` extra; also needs Lydia) |

@@ -1,6 +1,6 @@
 import pytest
 
-from semanticlog.data.classicalloader import ClassicalLoader
+from semanticlog.data.loading.classicalloader import ClassicalLoader
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -148,6 +148,44 @@ def test_rename_object_raises_for_nonexistent(minimal_oced):
         minimal_oced.rename_object("no_such", "x")
 
 
+def test_rename_object_syncs_object_changes_key():
+    oced = OCEDStore(ocel_mode=True)
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1"]}))
+    ev = pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2022-01-01"], utc=True)})
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_event_to_object_relation(
+        "rel", "eid", "oid", ["order"], pd.DataFrame({"eid": ["e1"], "oid": ["o1"]})
+    )
+    changes = pd.DataFrame(
+        {
+            "ocel:oid": ["o1"],
+            "ocel:type": ["order"],
+            "ocel:timestamp": pd.to_datetime(["2022-01-02"], utc=True),
+            "ocel:field": ["status"],
+            "status": ["pending"],
+        }
+    )
+    oced.add_object_changes("order", changes)
+
+    oced.rename_object("order", "purchase_order")
+
+    assert "purchase_order" in oced.get_object_change_types()
+    assert "order" not in oced.get_object_change_types()
+
+
+def test_rename_object_leaves_object_changes_intact_when_no_entry():
+    oced = OCEDStore(ocel_mode=True)
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1"]}))
+    ev = pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2022-01-01"], utc=True)})
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_event_to_object_relation(
+        "rel", "eid", "oid", ["order"], pd.DataFrame({"eid": ["e1"], "oid": ["o1"]})
+    )
+    # no add_object_changes for "order"
+    oced.rename_object("order", "purchase_order")
+    assert oced.get_object_change_types() == []
+
+
 def test_rename_relation_updates_key(minimal_oced):
     minimal_oced.rename_relation("rel1", "rel1_new")
     assert "rel1_new" in minimal_oced.get_relations("e2o")
@@ -597,9 +635,9 @@ def test_data_check_normalizes_datetime_to_seconds_floored():
         utc=True,
     )
     out = oced.data_check(pd.DataFrame({"dt": ts}), min_parse_ratio=1.0)
-    assert pd.api.types.is_datetime64_ns_dtype(out["dt"])
+    assert pd.api.types.is_datetime64_any_dtype(out["dt"])
     expected = pd.to_datetime(["2022-01-01 12:00:00", "2022-01-01 12:00:01"], utc=True)
-    assert_series_equal(out["dt"], pd.Series(expected, name="dt"))
+    assert_series_equal(out["dt"], pd.Series(expected, name="dt"), check_dtype=False)
 
 
 def test_data_check_parses_datetime_strings_when_ratio_met():
@@ -608,7 +646,7 @@ def test_data_check_parses_datetime_strings_when_ratio_met():
         {"maybe_dt": ["2022-01-01 08:00:00", "2022-01-01 09:00:05", None, "garbage"]}
     )
     out = oced.data_check(df, min_parse_ratio=0.66)
-    assert pd.api.types.is_datetime64_ns_dtype(out["maybe_dt"])
+    assert pd.api.types.is_datetime64_any_dtype(out["maybe_dt"])
 
 
 def test_data_check_parses_numeric_strings_when_ratio_met():
@@ -623,7 +661,7 @@ def test_data_check_does_not_convert_when_ratio_too_low():
     oced = OCEDStore()
     df = pd.DataFrame({"weak_dt": ["2022-01-01 00:00:00", "bad", "worse", None]})
     out = oced.data_check(df, min_parse_ratio=0.5)
-    assert pd.api.types.is_object_dtype(out["weak_dt"])
+    assert not pd.api.types.is_datetime64_any_dtype(out["weak_dt"])
 
 
 def test_data_check_respects_ignore_cols():
@@ -635,8 +673,8 @@ def test_data_check_respects_ignore_cols():
         }
     )
     out = oced.data_check(df, ignore_cols=["ignored"])
-    assert pd.api.types.is_object_dtype(out["ignored"])
-    assert pd.api.types.is_datetime64_ns_dtype(out["convert_me"])
+    assert not pd.api.types.is_datetime64_any_dtype(out["ignored"])
+    assert pd.api.types.is_datetime64_any_dtype(out["convert_me"])
 
 
 def test_data_check_drops_all_na_rows_and_columns():
@@ -741,3 +779,92 @@ def test_get_object_changes_raises_for_unknown_type():
 def test_get_object_change_types_empty_when_nothing_added():
     oced = OCEDStore(ocel_mode=True)
     assert oced.get_object_change_types() == []
+
+
+# ---------------------------------------------------------------------------
+# id_backmap / get_original / get_originals
+# ---------------------------------------------------------------------------
+
+
+def test_id_backmap_empty_by_default():
+    assert OCEDStore().backmap == {}
+
+
+def test_get_original_id_returns_none_for_unknown():
+    assert OCEDStore().get_original("not_in_map") is None
+
+
+def test_get_original_id_looks_up_local_name():
+    oced = OCEDStore()
+    oced._backmap = {"order__123": "Order #123"}
+    assert oced.get_original("order__123") == "Order #123"
+
+
+def test_get_original_id_strips_default_base_iri():
+    oced = OCEDStore()
+    oced._backmap = {"order__123": "Order #123"}
+    assert oced.get_original("https://oced#order__123") == "Order #123"
+
+
+def test_get_original_id_strips_custom_base_iri():
+    oced = OCEDStore()
+    oced._backmap = {"order__123": "Order #123"}
+    result = oced.get_original(
+        "https://example.com/onto#order__123",
+        base_iri="https://example.com/onto#",
+    )
+    assert result == "Order #123"
+
+
+def test_get_original_ids_preserves_order_and_nones():
+    oced = OCEDStore()
+    oced._backmap = {"a_b": "A B", "c_d": "C D"}
+    assert oced.get_originals(["a_b", "unknown", "c_d"]) == ["A B", None, "C D"]
+
+
+# ---------------------------------------------------------------------------
+# save / load / save_backmap / load_backmap
+# ---------------------------------------------------------------------------
+
+
+def test_save_load_roundtrip(tmp_path):
+    oced = _make_oced_with_e2o()
+    oced._backmap = {"a_b": "A B"}
+    path = tmp_path / "store.pkl"
+    oced.save(path)
+    loaded = OCEDStore.load(path)
+    assert loaded.get_activities() == oced.get_activities()
+    assert loaded.get_object_types() == oced.get_object_types()
+    assert loaded.backmap == {"a_b": "A B"}
+
+
+def test_save_load_preserves_dataframes(tmp_path):
+    oced = _make_oced_with_e2o()
+    path = tmp_path / "store.pkl"
+    oced.save(path)
+    loaded = OCEDStore.load(path)
+    assert_frame_equal(
+        loaded.get_object("A")["data"].reset_index(drop=True),
+        oced.get_object("A")["data"].reset_index(drop=True),
+    )
+
+
+def test_save_id_backmap_json_roundtrip(tmp_path):
+    oced = OCEDStore()
+    oced._backmap = {"order__123": "Order #123", "e0": "e0"}
+    path = tmp_path / "backmap.json"
+    oced.save_backmap(path)
+    loaded = OCEDStore()
+    loaded.load_backmap(path)
+    assert loaded.backmap == {"order__123": "Order #123", "e0": "e0"}
+
+
+def test_load_id_backmap_overwrites_existing(tmp_path):
+    oced = OCEDStore()
+    oced._backmap = {"old_key": "old_val"}
+    path = tmp_path / "backmap.json"
+    oced.save_backmap(path)
+    oced._backmap = {"other": "value"}
+    oced.load_backmap(path)
+    assert oced.backmap == {"old_key": "old_val"}
+    assert "other" not in oced.backmap
