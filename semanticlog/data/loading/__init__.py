@@ -1,3 +1,5 @@
-from semanticlog.data.loading.abstractloader import AbstractLoader as AbstractLoader
-from semanticlog.data.loading.classicalloader import ClassicalLoader as ClassicalLoader
-from semanticlog.data.loading.pm4pyloader import PM4PYLoader as PM4PYLoader
+from semanticlog.data.loading.abstractloader import AbstractLoader
+from semanticlog.data.loading.classicalloader import ClassicalLoader
+from semanticlog.data.loading.pm4pyloader import PM4PYLoader
+
+__all__ = ["AbstractLoader", "ClassicalLoader", "PM4PYLoader"]

@@ -6,7 +6,14 @@ from typing import Any, cast
 import numpy as np
 import pandas as pd
 
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.oced import (
+    EventTable,
+    ObjectTable,
+    OCEDStore,
+    RelationKind,
+    Relations,
+    RelationTable,
+)
 
 _ISO8601_RE = re.compile(
     r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
@@ -15,19 +22,21 @@ _ISO8601_RE = re.compile(
     r"(?:Z|[+-]\d{2}:?\d{2})?)?$"
 )
 
-_RESERVED_OWL_NAMES = [
-    "is_a",
-    "observes",
-    "observed_at",
-    "df",
-    "ef",
-    "has_attribute",
-    "attribute_of",
-    "event_object_relation",
-    "object_object_relation",
-    "Starts",
-    "Ends",
-]
+_RESERVED_OWL_NAMES: frozenset[str] = frozenset(
+    {
+        "is_a",
+        "observes",
+        "observed_at",
+        "df",
+        "ef",
+        "has_attribute",
+        "attribute_of",
+        "event_object_relation",
+        "object_object_relation",
+        "Starts",
+        "Ends",
+    }
+)
 
 
 def is_timestamp(string: str) -> bool:
@@ -192,22 +201,20 @@ def _log_null_counts(label: str, df: pd.DataFrame) -> None:
 
 def null_check(data: OCEDStore) -> None:
     for activity in data.get_activities():
-        _log_null_counts(activity, cast(pd.DataFrame, data.get_event(activity)["data"]))
+        _log_null_counts(activity, data.get_events(activity).data)
     for object_type in data.get_object_types():
-        _log_null_counts(
-            object_type, cast(pd.DataFrame, data.get_object(object_type)["data"])
-        )
+        _log_null_counts(object_type, data.get_object(object_type).data)
 
 
 def _collect_entity_ids(data: OCEDStore) -> set[str]:
     """Return all current event and object ID values as strings."""
     ids: set[str] = set()
     for activity in data.get_activities():
-        id_col = data._events[activity]["id"]
-        ids.update(str(v) for v in data._events[activity]["data"][id_col].unique())
+        table = data.get_events(activity)
+        ids.update(str(v) for v in table.data[table.id].unique())
     for obj_type in data.get_object_types():
-        id_col = data._objects[obj_type]["id"]
-        ids.update(str(v) for v in data._objects[obj_type]["data"][id_col].unique())
+        obj = data.get_object(obj_type)
+        ids.update(str(v) for v in obj.data[obj.id].unique())
     return ids
 
 
@@ -218,16 +225,11 @@ def _collect_schema_names(data: OCEDStore) -> set[str]:
     names.update(data.get_object_types())
     names.update(data.get_relation_types())
     for activity in data.get_activities():
-        activity_data = data.get_event(activity)
-        id_col = activity_data["id"]
-        time_col = activity_data["time"]
-        df_cols = set(cast(pd.DataFrame, activity_data["data"]).columns)
-        names.update(df_cols - {id_col, time_col})
+        table = data.get_events(activity)
+        names.update(set(table.data.columns) - {table.id, table.time})
     for obj_type in data.get_object_types():
-        object_data = data.get_object(obj_type)
-        id_col = object_data["id"]
-        df_cols = set(cast(pd.DataFrame, object_data["data"]).columns)
-        names.update(df_cols - {id_col})
+        obj = data.get_object(obj_type)
+        names.update(set(obj.data.columns) - {obj.id})
     return names
 
 
@@ -239,8 +241,8 @@ def _check_schema_name_collisions(data: OCEDStore, casefold: bool) -> None:
     groups: dict[str, list[str]] = {
         "activities": data.get_activities(),
         "object types": data.get_object_types(),
-        "e2o relations": list(data.get_relations("e2o").keys()),
-        "o2o relations": list(data.get_relations("o2o").keys()),
+        "e2o relations": data.get_relation_types(RelationKind.E2O),
+        "o2o relations": data.get_relation_types(RelationKind.O2O),
     }
     errors: list[str] = []
     for group_name, names in groups.items():
@@ -316,11 +318,11 @@ def _collect_attr_value_backmap(
                 backmap[f"{cleaned_col}_{cleaned_val}"] = value
 
     for activity in data.get_activities():
-        ev = data.get_event(activity)
-        _collect(cast(pd.DataFrame, ev["data"]), {ev["id"], ev["time"]})
+        table = data.get_events(activity)
+        _collect(table.data, {table.id, table.time})
     for obj_type in data.get_object_types():
-        ob = data.get_object(obj_type)
-        _collect(cast(pd.DataFrame, ob["data"]), {ob["id"]})
+        obj = data.get_object(obj_type)
+        _collect(obj.data, {obj.id})
 
     return backmap
 
@@ -339,32 +341,32 @@ def fix_duplicate_names(data: OCEDStore) -> OCEDStore:
     Returns:
         The same OCEDStore with collisions resolved.
     """
-    names = list(_RESERVED_OWL_NAMES)
-    attribute_names: list[str] = []
+    names: set[str] = set(_RESERVED_OWL_NAMES)
+    attribute_names: set[str] = set()
 
     for relation_type in data.get_relation_types():
         if relation_type in names:
             logging.info(f"  renaming relation {relation_type} to avoid collision..")
             data.rename_relation(relation_type, relation_type + "_")
-            names.append(relation_type + "_")
+            names.add(relation_type + "_")
         else:
-            names.append(relation_type)
+            names.add(relation_type)
 
     for activity in data.get_activities():
         if activity in names:
             logging.info(f"  renaming activity {activity} to avoid collision..")
             data.rename_activity(activity, activity + "_")
-            names.append(activity + "_")
+            names.add(activity + "_")
         else:
-            names.append(activity)
+            names.add(activity)
 
     for object_type in data.get_object_types():
         if object_type in names:
             logging.info(f"  renaming object {object_type} to avoid collision..")
             data.rename_object(object_type, object_type + "_")
-            names.append(object_type + "_")
+            names.add(object_type + "_")
         else:
-            names.append(object_type)
+            names.add(object_type)
 
     # Re-fetch after rename so subsequent passes use current (possibly suffixed) names.
     current_activities = list(data.get_activities())
@@ -372,50 +374,42 @@ def fix_duplicate_names(data: OCEDStore) -> OCEDStore:
 
     # Collect attribute names from events
     for activity in current_activities:
-        activity_data = data.get_event(activity)
-        id_col = activity_data["id"]
-        time_col = activity_data["time"]
-        attributes = list(cast(pd.DataFrame, activity_data["data"]).columns.values)
-        attributes.remove(id_col)
-        attributes.remove(time_col)
-        attribute_names.extend(attributes)
+        table = data.get_events(activity)
+        attribute_names |= set(table.data.columns) - {table.id, table.time}
 
     # Collect attribute names from objects
     for object_type in current_object_types:
-        object_data = data.get_object(object_type)
-        id_col = object_data["id"]
-        attributes = list(cast(pd.DataFrame, object_data["data"]).columns.values)
-        attributes.remove(id_col)
-        attribute_names.extend(attributes)
+        obj = data.get_object(object_type)
+        attribute_names |= set(obj.data.columns) - {obj.id}
 
     # Rename attribute columns that clash with OWL property/class names
-    names_casefolded = [n.casefold() for n in names]
+    names_casefolded = {n.casefold() for n in names}
     attributes_names_overlap = [
         a for a in attribute_names if a.casefold() in names_casefolded
     ]
     for attribute in attributes_names_overlap:
+        renaming = {attribute: attribute + "_attr"}
         for activity in current_activities:
-            df = data._events[activity]["data"]
+            df = data.get_events(activity).data
             if attribute in df.columns:
-                data._events[activity]["data"] = df.rename(
-                    columns={attribute: attribute + "_attr"}
-                )
+                data.set_event_data(activity, df.rename(columns=renaming))
         for object_type in current_object_types:
-            df = data._objects[object_type]["data"]
+            df = data.get_object(object_type).data
             if attribute in df.columns:
-                data._objects[object_type]["data"] = df.rename(
-                    columns={attribute: attribute + "_attr"}
-                )
+                data.set_object_data(object_type, df.rename(columns=renaming))
 
-    # Rename attribute values that clash with any known OWL name
-    all_names = names + attribute_names
+    # Rename attribute values that clash with any known OWL name.
+    # frozenset, not a list: this is membership-tested once per DataFrame cell.
+    all_names = frozenset(names | attribute_names)
+
+    def rename_values(df: pd.DataFrame) -> pd.DataFrame:
+        return df.map(lambda v: _rename_attr_val(v, all_names))
+
     for activity in current_activities:
-        data._events[activity]["data"] = data._events[activity]["data"].map(
-            lambda v: _rename_attr_val(v, all_names)
-        )
+        data.set_event_data(activity, rename_values(data.get_events(activity).data))
     for object_type in current_object_types:
-        data._objects[object_type]["data"] = data._objects[object_type]["data"].map(
-            lambda v: _rename_attr_val(v, all_names)
+        data.set_object_data(
+            object_type, rename_values(data.get_object(object_type).data)
         )
 
     return data
@@ -445,19 +439,70 @@ def clean_oced_data(data: OCEDStore, casefold: bool = False) -> OCEDStore:
     pre_ids = _collect_entity_ids(data)
     pre_names = _collect_schema_names(data)
     value_backmap = _collect_attr_value_backmap(data, casefold=casefold)
-    data._events = clean_value(data._events, casefold=casefold)  # type: ignore[assignment]
-    data._objects = clean_value(data._objects, casefold=casefold)  # type: ignore[assignment]
-    data._relations = clean_value(data._relations, casefold=casefold)  # type: ignore[assignment]
-    if data._ocel_mode:
-        data._object_changes = {
-            clean_string(obj_type, casefold=casefold): clean_object_changes_df(
-                df, casefold=casefold
-            )
-            for obj_type, df in data._object_changes.items()
-        }
+    data.replace_tables(
+        events=_clean_events(data, casefold),
+        objects=_clean_objects(data, casefold),
+        relations=_clean_relations(data, casefold),
+    )
+    if data.has_ocel_mode():
+        data.replace_object_changes(
+            {
+                clean_string(obj_type, casefold=casefold): clean_object_changes_df(
+                    data.get_object_changes(obj_type), casefold=casefold
+                )
+                for obj_type in data.get_object_change_types()
+            }
+        )
     data = fix_duplicate_names(data)
     data.update_used_ids()
     post = _collect_entity_ids(data) | _collect_schema_names(data)
-    data._backmap = _build_backmap(pre_ids | pre_names, post, casefold=casefold)
-    data._backmap.update(value_backmap)
+    backmap = _build_backmap(pre_ids | pre_names, post, casefold=casefold)
+    backmap.update(value_backmap)
+    data.backmap = backmap
     return data
+
+
+def _clean_events(data: OCEDStore, casefold: bool) -> dict[str, EventTable]:
+    return {
+        clean_string(activity, casefold=casefold): EventTable(
+            id=clean_string(table.id, casefold=casefold),
+            time=clean_string(table.time, casefold=casefold),
+            data=clean_dataframe(table.data, casefold=casefold),
+        )
+        for activity, table in ((a, data.get_events(a)) for a in data.get_activities())
+    }
+
+
+def _clean_objects(data: OCEDStore, casefold: bool) -> dict[str, ObjectTable]:
+    return {
+        clean_string(obj_type, casefold=casefold): ObjectTable(
+            id=clean_string(obj.id, casefold=casefold),
+            data=clean_dataframe(obj.data, casefold=casefold),
+        )
+        for obj_type, obj in ((o, data.get_object(o)) for o in data.get_object_types())
+    }
+
+
+def _clean_relations(data: OCEDStore, casefold: bool) -> Relations:
+    def clean_types(types: list[str] | None) -> list[str] | None:
+        if types is None:
+            return None
+        return [clean_string(str(t), casefold=casefold) for t in types]
+
+    def clean_family(kind: RelationKind) -> dict[str, RelationTable]:
+        family = cast(dict[str, RelationTable], data.get_relations(kind))
+        return {
+            clean_string(name, casefold=casefold): RelationTable(
+                from_id=clean_string(rel.from_id, casefold=casefold),
+                from_type=clean_types(rel.from_type),
+                to_id=clean_string(rel.to_id, casefold=casefold),
+                to_type=cast(list, clean_types(rel.to_type)),
+                data=clean_dataframe(rel.data, casefold=casefold),
+            )
+            for name, rel in family.items()
+        }
+
+    return Relations(
+        event_to_object=clean_family(RelationKind.E2O),
+        object_to_object=clean_family(RelationKind.O2O),
+    )

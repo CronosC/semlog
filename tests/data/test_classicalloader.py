@@ -97,7 +97,7 @@ def test_get_oced_creates_modifies_e2o_relation(csv_path_no_resource):
 def test_get_oced_modifies_relation_links_events_to_case_type(csv_path_no_resource):
     oced = ClassicalLoader(csv_path_no_resource, {}).get_oced()
     rel = oced.get_relation("modifies")
-    assert "case:concept:name" in rel["to_type"]
+    assert "case:concept:name" in rel.to_type
 
 
 # ---------------------------------------------------------------------------

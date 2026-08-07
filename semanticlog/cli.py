@@ -25,7 +25,6 @@ from semanticlog.onto.settings import (
 LOG_KEEP = 10
 _LOG_FORMAT = "%(name)s | %(asctime)s | %(message)s"
 _LOG_DATEFMT = "%H:%M:%S"
-_file_handler: logging.FileHandler | None = None
 
 logger = logging.getLogger("oced.pipeline")
 
@@ -39,25 +38,48 @@ def _setup_console_logging() -> None:
     logging.root.setLevel(logging.INFO)
 
 
-def _set_file_log(stem: str, log_dir: str) -> str:
-    global _file_handler
-    os.makedirs(log_dir, exist_ok=True)
+class FileLog:
+    """Owns the per-input file log handler, so that a run holds no module state.
 
-    if _file_handler is not None:
-        logging.root.removeHandler(_file_handler)
-        _file_handler.close()
+    Args:
+        log_dir: Directory to write logs into. Empty string disables file logging.
+        keep: How many previous logs to retain per input stem.
+    """
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = os.path.join(log_dir, f"{ts}_{stem}.log")
-    _file_handler = logging.FileHandler(log_path)
-    _file_handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT))
-    logging.root.addHandler(_file_handler)
+    def __init__(self, log_dir: str, keep: int = LOG_KEEP) -> None:
+        self.log_dir = log_dir
+        self.keep = keep
+        self._handler: logging.FileHandler | None = None
 
-    existing = sorted(glob.glob(os.path.join(log_dir, f"*_{stem}.log")))
-    for old in existing[:-LOG_KEEP]:
-        os.remove(old)
+    def switch_to(self, stem: str) -> str | None:
+        """Route logging to a fresh file for ``stem`` and prune old ones.
 
-    return log_path
+        Returns:
+            The new log file path, or ``None`` when file logging is disabled.
+        """
+        if not self.log_dir:
+            return None
+        os.makedirs(self.log_dir, exist_ok=True)
+        self.close()
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = os.path.join(self.log_dir, f"{ts}_{stem}.log")
+        self._handler = logging.FileHandler(log_path)
+        self._handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT))
+        logging.root.addHandler(self._handler)
+
+        existing = sorted(glob.glob(os.path.join(self.log_dir, f"*_{stem}.log")))
+        for old in existing[: -self.keep]:
+            os.remove(old)
+
+        return log_path
+
+    def close(self) -> None:
+        """Detach and close the current handler, if any."""
+        if self._handler is not None:
+            logging.root.removeHandler(self._handler)
+            self._handler.close()
+            self._handler = None
 
 
 class _OutputPaths(NamedTuple):
@@ -132,13 +154,7 @@ def _process_file(file_path: str, stem: str, args: argparse.Namespace) -> None:
 
     settings = _build_settings(args, case_concepts, ocel_extensions)
 
-    if settings.annotation_document is not None:
-        settings.load_annotation_document()
-
-    if (
-        EventOrderRepresentation.DECLARE in settings.order_representation
-        and args.declare_constraints is not None
-    ):
+    if settings.instantiate_declare and args.declare_constraints is not None:
         from semanticlog.enrich.declare import DeclareEnricher
 
         logger.info("Mining DECLARE constraints via discovery..")
@@ -180,7 +196,7 @@ def _process_file(file_path: str, stem: str, args: argparse.Namespace) -> None:
         logger.info("Materialization complete.")
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build OWL ontologies from OCEL event log files (OCEL 2.0: .xml, .json, .sqlite).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -363,13 +379,28 @@ def parse_args() -> argparse.Namespace:
             "Requires --declare-constraints."
         ),
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    _setup_console_logging()
-    args = parse_args()
+def select_input_files(args: argparse.Namespace) -> list[str]:
+    """Return the filenames in ``args.folder`` this run should process."""
+    all_files = [
+        f
+        for f in os.listdir(args.folder)
+        if os.path.isfile(os.path.join(args.folder, f))
+    ]
+    return [f for f in all_files if f in args.files] if args.files else all_files
 
+
+def validate_args(args: argparse.Namespace) -> None:
+    """Check the flag combination before any input file is read.
+
+    Configuration conflicts are delegated to ``OntoBuildSettings.validate()`` so the
+    rules live in one place; only argparse-level constraints are checked here.
+
+    Raises:
+        SystemExit: If the arguments are inconsistent.
+    """
     declare_args_given = (
         args.declare_constraints is not None
         or args.declare_constraint_support is not None
@@ -381,9 +412,15 @@ def main() -> None:
             "--declare-itemset-support require DECLARE in --order."
         )
 
+    try:
+        probe = _build_settings(
+            args, [], [OcelExtension[e] for e in args.ocel_extensions]
+        )
+        probe.validate(require_inputs=False)
+    except ValueError as e:
+        raise SystemExit(f"error: {e}") from e
+
     dr = set(args.data_representation)
-    if "equal_bins" in dr and "dist_bins" in dr:
-        raise SystemExit("error: equal_bins and dist_bins are mutually exclusive.")
     has_bins = bool(dr & {"equal_bins", "dist_bins"})
     if not has_bins and (args.bins != 5 or args.bin_labels is not None):
         logger.warning(
@@ -391,19 +428,20 @@ def main() -> None:
             f"--data-representation={args.data_representation}"
         )
 
+
+def main(argv: list[str] | None = None) -> None:
+    _setup_console_logging()
+    args = parse_args(argv)
+    validate_args(args)
+
     size_limit_bytes = args.size_limit * 1024 * 1024 if args.size_limit > 0 else 0
-    all_files = [
-        f
-        for f in os.listdir(args.folder)
-        if os.path.isfile(os.path.join(args.folder, f))
-    ]
-    target_files = (
-        [f for f in all_files if f in args.files] if args.files else all_files
-    )
+    target_files = select_input_files(args)
 
     for output_dir in (args.output, args.id_map_output, args.oced_output):
         os.makedirs(output_dir, exist_ok=True)
 
+    file_log = FileLog(args.log_dir)
+    failed: list[str] = []
     for file_name in target_files:
         file_path = os.path.join(args.folder, file_name)
 
@@ -412,7 +450,7 @@ def main() -> None:
             continue
 
         stem = Path(file_name).stem
-        log_path = _set_file_log(stem, args.log_dir) if args.log_dir else None
+        log_path = file_log.switch_to(stem)
 
         logger.info(f"=== Processing {file_name} ===")
         if log_path:
@@ -422,7 +460,16 @@ def main() -> None:
             _process_file(file_path, stem, args)
             logger.info(f"=== Finished {file_name} ===")
         except Exception as e:
+            failed.append(file_name)
             logging.exception(f"Failed while processing {file_name}: {e}")
+
+    file_log.close()
+
+    if failed:
+        raise SystemExit(
+            f"error: {len(failed)} of {len(target_files)} file(s) failed: "
+            + ", ".join(failed)
+        )
 
 
 if __name__ == "__main__":

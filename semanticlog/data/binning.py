@@ -1,5 +1,4 @@
 import logging
-from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -23,23 +22,25 @@ def get_weighted_variant_mapping(
     return variant_weights
 
 
-def _bin_entity_df(entity_dict: dict, exclude_cols: list[str]) -> None:
-    df = cast(pd.DataFrame, entity_dict["data"])
+def _bin_numeric_columns(df: pd.DataFrame, exclude_cols: set[str]) -> pd.DataFrame:
+    df = df.copy()
     for col in df.columns:
         if pd.api.types.is_numeric_dtype(df[col]) and col not in exclude_cols:
             df[col] = bin_series(df[col])
-    entity_dict["data"] = df
+    return df
 
 
 def bin_attributes(data: OCEDStore) -> OCEDStore:
     """Bin all numeric attributes in an OCEDStore using distribution-fitted or equal binning."""
     for object_type in data.get_object_types():
-        od = data.get_object(object_type)
-        _bin_entity_df(od, exclude_cols=[cast(str, od["id"])])
+        obj = data.get_object(object_type)
+        data.set_object_data(object_type, _bin_numeric_columns(obj.data, {obj.id}))
 
     for activity in data.get_activities():
-        ad = data.get_event(activity)
-        _bin_entity_df(ad, exclude_cols=[cast(str, ad["id"]), cast(str, ad["time"])])
+        table = data.get_events(activity)
+        data.set_event_data(
+            activity, _bin_numeric_columns(table.data, {table.id, table.time})
+        )
     return data
 
 
@@ -166,23 +167,3 @@ def _dist_bin_series(series, dist_name, bins=3, labels=_DEFAULT_LABELS_3):
     z_edges = np.linspace(_Z_EDGE_LOW, _Z_EDGE_HIGH, bins + 1)
     z_edges[0], z_edges[-1] = -np.inf, np.inf
     return pd.cut(z, bins=z_edges, labels=labels)
-
-
-def gaussian_bin_series(series, bins=3, labels=_DEFAULT_LABELS_3):
-    """Bin a series assuming a normal distribution. See :func:`_dist_bin_series`."""
-    return _dist_bin_series(series, "norm", bins=bins, labels=labels)
-
-
-def lognorm_bin_series(series, bins=3, labels=_DEFAULT_LABELS_3):
-    """Bin a series assuming a log-normal distribution. See :func:`_dist_bin_series`."""
-    return _dist_bin_series(series, "lognorm", bins=bins, labels=labels)
-
-
-def expon_bin_series(series, bins=3, labels=_DEFAULT_LABELS_3):
-    """Bin a series assuming an exponential distribution. See :func:`_dist_bin_series`."""
-    return _dist_bin_series(series, "expon", bins=bins, labels=labels)
-
-
-def gamma_bin_series(series, bins=3, labels=_DEFAULT_LABELS_3):
-    """Bin a series assuming a gamma distribution. See :func:`_dist_bin_series`."""
-    return _dist_bin_series(series, "gamma", bins=bins, labels=labels)

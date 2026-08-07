@@ -382,17 +382,17 @@ def test_cleaning_sanitizes_store(raw_oced):
     assert set(cleaned.get_object_types()) == {"order", "item"}
 
     # Spot-check that key attribute columns survived
-    po_df = cleaned.get_events("place_order")["data"]
+    po_df = cleaned.get_events("place_order").data
     assert "amount" in po_df.columns
     assert "resource" in po_df.columns
 
-    so_df = cleaned.get_events("ship_order")["data"]
+    so_df = cleaned.get_events("ship_order").data
     assert "carrier" in so_df.columns
 
-    ord_df = cleaned.get_object("order")["data"]
+    ord_df = cleaned.get_object("order").data
     assert "status" in ord_df.columns
 
-    item_df = cleaned.get_object("item")["data"]
+    item_df = cleaned.get_object("item").data
     assert "weight" in item_df.columns
 
 
@@ -523,9 +523,9 @@ def test_e2o_relation_instantiation(cleaned_oced, upper_owl):
 
     # Every modifies row must have a corresponding OWL assertion
     mod_rel = cleaned_oced.get_relation("modifies")
-    from_col = mod_rel["from_id"]
-    to_col = mod_rel["to_id"]
-    for _, row in mod_rel["data"].iterrows():
+    from_col = mod_rel.from_id
+    to_col = mod_rel.to_id
+    for _, row in mod_rel.data.iterrows():
         from_ind = _ind(str(row[from_col]))
         to_ind = _ind(str(row[to_col]))
         targets = set(
@@ -537,9 +537,9 @@ def test_e2o_relation_instantiation(cleaned_oced, upper_owl):
 
     # Every ships row must have a corresponding OWL assertion
     ships_rel = cleaned_oced.get_relation("ships")
-    from_col_s = ships_rel["from_id"]
-    to_col_s = ships_rel["to_id"]
-    for _, row in ships_rel["data"].iterrows():
+    from_col_s = ships_rel.from_id
+    to_col_s = ships_rel.to_id
+    for _, row in ships_rel.data.iterrows():
         from_ind = _ind(str(row[from_col_s]))
         to_ind = _ind(str(row[to_col_s]))
         targets = set(
@@ -582,9 +582,9 @@ def test_o2o_relation_instantiation(cleaned_oced, upper_owl):
 
     # Every o2o row must have a corresponding OWL assertion
     o2o_rel = cleaned_oced.get_relation("contains_o2o")
-    from_col = o2o_rel["from_id"]
-    to_col = o2o_rel["to_id"]
-    for _, row in o2o_rel["data"].iterrows():
+    from_col = o2o_rel.from_id
+    to_col = o2o_rel.to_id
+    for _, row in o2o_rel.data.iterrows():
         from_ind = _ind(str(row[from_col]))
         to_ind = _ind(str(row[to_col]))
         targets = set(

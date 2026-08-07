@@ -13,7 +13,13 @@ from owlapy.owl_ontology import Ontology
 from owlapy.owl_property import OWLDataProperty, OWLObjectProperty
 from owlapy.owl_reasoner import StructuralReasoner
 
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.oced import (
+    EventTable,
+    ObjectTable,
+    OCEDStore,
+    Relations,
+    RelationTable,
+)
 from semanticlog.onto.instantiate import OCEDOntoBuilder
 from semanticlog.onto.settings import (
     DEFAULT_IRI,
@@ -37,10 +43,10 @@ class TestOntoBuilder(unittest.TestCase):
 
         self.data = OCEDStore()
         self.data._events = {
-            "activity1": {
-                "id": "id",
-                "time": "time",
-                "data": pd.DataFrame(
+            "activity1": EventTable(
+                id="id",
+                time="time",
+                data=pd.DataFrame(
                     {
                         "time": [
                             datetime(2023, 1, 1) + timedelta(days=i) for i in range(10)
@@ -72,12 +78,12 @@ class TestOntoBuilder(unittest.TestCase):
                         ],
                     }
                 ),
-            }
+            )
         }
         self.data._objects = {
-            "thing1": {
-                "id": "id",
-                "data": pd.DataFrame(
+            "thing1": ObjectTable(
+                id="id",
+                data=pd.DataFrame(
                     {
                         "id": ["o" + str(i) for i in range(10)],
                         "type": [
@@ -106,37 +112,37 @@ class TestOntoBuilder(unittest.TestCase):
                         ],
                     }
                 ),
-            }
+            )
         }
-        self.data._relations = {
-            "event_to_object": {
-                "does": {
-                    "from_id": "event_id",
-                    "to_id": "object_id",
-                    "to_type": ["thing1"],
-                    "data": pd.DataFrame(
+        self.data._relations = Relations(
+            event_to_object={
+                "does": RelationTable(
+                    from_id="event_id",
+                    to_id="object_id",
+                    to_type=["thing1"],
+                    data=pd.DataFrame(
                         {
                             "event_id": [f"e{i}" for i in range(10)],
                             "object_id": [f"o{i}" for i in range(10)],
                         }
                     ),
-                }
+                )
             },
-            "object_to_object": {
-                "connects": {
-                    "from_id": "object_id1",
-                    "from_type": ["thing1"],
-                    "to_id": "object_id2",
-                    "to_type": ["thing1"],
-                    "data": pd.DataFrame(
+            object_to_object={
+                "connects": RelationTable(
+                    from_id="object_id1",
+                    from_type=["thing1"],
+                    to_id="object_id2",
+                    to_type=["thing1"],
+                    data=pd.DataFrame(
                         {
                             "object_id1": [f"o{i}" for i in range(10)],
                             "object_id2": [f"o{(i + 1) % 10}" for i in range(10)],
                         }
                     ),
-                }
+                )
             },
-        }
+        )
         self.tmp_dir = tempfile.mkdtemp()
         self.owl_path = os.path.join(self.tmp_dir, "tmp.owl")
 
@@ -198,9 +204,9 @@ class TestOntoBuilder(unittest.TestCase):
         with self.subTest("property exists"):
             self.assertIn(does, list(onto.object_properties_in_signature()))
 
-        rel = self.data._relations["event_to_object"]["does"]
-        from_key, to_key = rel["from_id"], rel["to_id"]
-        expected_pairs = rel["data"][[from_key, to_key]].dropna().drop_duplicates()
+        rel = self.data.get_relation("does")
+        from_key, to_key = rel.from_id, rel.to_id
+        expected_pairs = rel.data[[from_key, to_key]].dropna().drop_duplicates()
         with self.subTest("all relation rows asserted"):
             for _, row in expected_pairs.iterrows():
                 from_ind = OWLNamedIndividual(IRI(NS, str(row[from_key])))
@@ -227,9 +233,9 @@ class TestOntoBuilder(unittest.TestCase):
         with self.subTest("property exists"):
             self.assertIn(connects, list(onto.object_properties_in_signature()))
 
-        rel = self.data._relations["object_to_object"]["connects"]
-        from_key, to_key = rel["from_id"], rel["to_id"]
-        expected_pairs = rel["data"][[from_key, to_key]].dropna().drop_duplicates()
+        rel = self.data.get_relation("connects")
+        from_key, to_key = rel.from_id, rel.to_id
+        expected_pairs = rel.data[[from_key, to_key]].dropna().drop_duplicates()
         with self.subTest("all relation rows asserted"):
             for _, row in expected_pairs.iterrows():
                 from_ind = OWLNamedIndividual(IRI(NS, str(row[from_key])))
@@ -315,7 +321,6 @@ class TestOntoBuilder(unittest.TestCase):
 
         self.settings.order_representation = [EventOrderRepresentation.DECLARE]
         self.settings.declare_file = declare_path
-        self.settings.load_declare_file()
 
         builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_event_order(self.data)
@@ -361,7 +366,6 @@ class TestOntoBuilder(unittest.TestCase):
 
         self.settings.order_representation = [EventOrderRepresentation.DECLARE]
         self.settings.declare_file = declare_path
-        self.settings.load_declare_file()
 
         builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_event_order(self.data)
@@ -506,8 +510,8 @@ class TestOntoBuilder(unittest.TestCase):
 
     def test_string_attrs_value_nodes(self):
         # ensure resource column is present in the event df
-        df = self.data._events["activity1"]["data"].copy()
-        self.data._events["activity1"]["data"] = df
+        df = self.data.get_events("activity1").data.copy()
+        self.data.set_event_data("activity1", df)
 
         builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
         builder.instantiate_event_data(self.data)
@@ -695,15 +699,13 @@ class TestOntoBuilder(unittest.TestCase):
         n = 20
         values = rng.uniform(1, 1000, n).tolist()
         data._objects = {
-            "thing1": {
-                "id": "id",
-                "data": pd.DataFrame(
-                    {"id": [f"o{i}" for i in range(n)], "value": values}
-                ),
-            }
+            "thing1": ObjectTable(
+                id="id",
+                data=pd.DataFrame({"id": [f"o{i}" for i in range(n)], "value": values}),
+            )
         }
         data._events = {}
-        data._relations = {"event_to_object": {}, "object_to_object": {}}
+        data._relations = Relations(event_to_object={}, object_to_object={})
 
         self.settings.data_representation = [DataRepresentation.DIST_BINS]
         builder = OCEDOntoBuilder(DEFAULT_IRI, self.settings)
@@ -790,25 +792,28 @@ def test_make_inverses_explicit_emits_observes_assertions(tmp_path):
     alongside every observed_at(event, time) assertion."""
     s = OntoBuildSettings()
     s.profile = OwlProfile.OWL2DL  # OWL2DL required for OWLInverseObjectPropertiesAxiom
-    # inverse_representation defaults to [AXIOMATIC, IMPLICIT]
+    s.inverse_representation = [
+        InverseRepresentation.AXIOMATIC,
+        InverseRepresentation.IMPLICIT,
+    ]
     s.order_representation = []
     s.case_concepts = []
 
     data = OCEDStore()
     data._events = {
-        "act1": {
-            "id": "id",
-            "time": "time",
-            "data": pd.DataFrame(
+        "act1": EventTable(
+            id="id",
+            time="time",
+            data=pd.DataFrame(
                 {
                     "id": ["e0", "e1"],
                     "time": [datetime(2023, 1, 1), datetime(2023, 1, 2)],
                 }
             ),
-        }
+        )
     }
     data._objects = {}
-    data._relations = {"event_to_object": {}, "object_to_object": {}}
+    data._relations = Relations(event_to_object={}, object_to_object={})
 
     abox_path = str(tmp_path / "abox.owl")
     builder = OCEDOntoBuilder(DEFAULT_IRI, s)
@@ -841,26 +846,29 @@ def test_attr_prop_inverse_declared(tmp_path):
     """inv_has_resource must be declared in the TBox when inverse_properties=True."""
     s = OntoBuildSettings()
     s.profile = OwlProfile.OWL2DL
-    # inverse_representation defaults to [AXIOMATIC, IMPLICIT]
+    s.inverse_representation = [
+        InverseRepresentation.AXIOMATIC,
+        InverseRepresentation.IMPLICIT,
+    ]
     s.order_representation = []
     s.case_concepts = []
 
     data = OCEDStore()
     data._events = {
-        "act1": {
-            "id": "id",
-            "time": "time",
-            "data": pd.DataFrame(
+        "act1": EventTable(
+            id="id",
+            time="time",
+            data=pd.DataFrame(
                 {
                     "id": ["e0", "e1"],
                     "time": [datetime(2023, 1, 1), datetime(2023, 1, 2)],
                     "resource": ["Alice", "Bob"],
                 }
             ),
-        }
+        )
     }
     data._objects = {}
-    data._relations = {"event_to_object": {}, "object_to_object": {}}
+    data._relations = Relations(event_to_object={}, object_to_object={})
 
     builder = OCEDOntoBuilder(DEFAULT_IRI, s)
     builder.instantiate_event_data(data)
@@ -888,10 +896,10 @@ def test_inv_df_subproperty_of_inv_df(tmp_path, profile):
 
     data = OCEDStore()
     data._events = {
-        "act1": {
-            "id": "id",
-            "time": "time",
-            "data": pd.DataFrame(
+        "act1": EventTable(
+            id="id",
+            time="time",
+            data=pd.DataFrame(
                 {
                     "id": ["e0", "e1", "e2"],
                     "time": [
@@ -901,27 +909,22 @@ def test_inv_df_subproperty_of_inv_df(tmp_path, profile):
                     ],
                 }
             ),
-        }
+        )
     }
-    data._objects = {
-        "order": {
-            "id": "id",
-            "data": pd.DataFrame({"id": ["o1"]}),
-        }
-    }
-    data._relations = {
-        "event_to_object": {
-            "modifies": {
-                "from_id": "from_id",
-                "to_id": "to_id",
-                "to_type": ["order"],
-                "data": pd.DataFrame(
+    data._objects = {"order": ObjectTable(id="id", data=pd.DataFrame({"id": ["o1"]}))}
+    data._relations = Relations(
+        event_to_object={
+            "modifies": RelationTable(
+                from_id="from_id",
+                to_id="to_id",
+                to_type=["order"],
+                data=pd.DataFrame(
                     {"from_id": ["e0", "e1", "e2"], "to_id": ["o1", "o1", "o1"]}
                 ),
-            }
+            )
         },
-        "object_to_object": {},
-    }
+        object_to_object={},
+    )
 
     builder = OCEDOntoBuilder(DEFAULT_IRI, s)
     builder.build_ontology(data)

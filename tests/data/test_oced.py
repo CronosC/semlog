@@ -1,6 +1,6 @@
 import pandas as pd
 import pytest
-from pandas.testing import assert_frame_equal, assert_series_equal
+from pandas.testing import assert_frame_equal
 
 from semanticlog.data.oced import OCEDStore
 
@@ -35,9 +35,9 @@ def test_add_event_stores_metadata_and_data(event_df_1):
     oced = OCEDStore()
     oced.add_event("type1", "event", "timestamp", event_df_1)
     ev = oced.get_events("type1")
-    assert ev["id"] == "event"
-    assert ev["time"] == "timestamp"
-    assert_frame_equal(ev["data"], event_df_1)
+    assert ev.id == "event"
+    assert ev.time == "timestamp"
+    assert_frame_equal(ev.data, event_df_1)
 
 
 def test_add_event_raises_for_missing_required_columns(event_df_1):
@@ -58,7 +58,7 @@ def test_add_event_overwrites_existing_when_flag_set(event_df_2):
     oced = OCEDStore()
     oced.add_event("type2", "event", "timestamp", event_df_2)
     oced.add_event("type2", "event", "timestamp", event_df_2, overwrite=True)
-    assert_frame_equal(oced.get_events("type2")["data"], event_df_2)
+    assert_frame_equal(oced.get_events("type2").data, event_df_2)
 
 
 # ---------------------------------------------------------------------------
@@ -70,8 +70,8 @@ def test_add_object_stores_metadata_and_data(object_df_a):
     oced = OCEDStore()
     oced.add_object("A", "object", object_df_a)
     obj = oced.get_object("A")
-    assert obj["id"] == "object"
-    assert_frame_equal(obj["data"], object_df_a)
+    assert obj.id == "object"
+    assert_frame_equal(obj.data, object_df_a)
 
 
 def test_add_object_raises_for_missing_id_column(object_df_a):
@@ -92,7 +92,7 @@ def test_add_object_overwrite_replaces_data():
     oced.add_object("A", "oid", pd.DataFrame({"oid": [1, 2]}))
     replacement = pd.DataFrame({"oid": [10, 20]})
     oced.add_object("A", "oid", replacement, overwrite=True)
-    result_ids = list(oced.get_object("A")["data"]["oid"])
+    result_ids = list(oced.get_object("A").data["oid"])
     assert result_ids == [10, 20]
 
 
@@ -136,11 +136,11 @@ def test_rename_object_updates_key(minimal_oced):
 def test_rename_object_propagates_type_in_relations(minimal_oced):
     minimal_oced.rename_object("A", "C")
     for rel in minimal_oced.get_relations("e2o").values():
-        assert "A" not in rel["to_type"]
-        assert "C" in rel["to_type"]
+        assert "A" not in rel.to_type
+        assert "C" in rel.to_type
     for rel in minimal_oced.get_relations("o2o").values():
-        assert "A" not in rel["from_type"]
-        assert "A" not in rel["to_type"]
+        assert "A" not in rel.from_type
+        assert "A" not in rel.to_type
 
 
 def test_rename_object_raises_for_nonexistent(minimal_oced):
@@ -213,10 +213,10 @@ def test_add_e2o_relation_stores_metadata_and_data(object_df_a, e2o_data):
     oced.add_object("A", "object", object_df_a)
     oced.add_event_to_object_relation("rel1", "from_id", "to_id", ["A"], e2o_data)
     rel = oced.get_relation("rel1")
-    assert rel["from_id"] == "from_id"
-    assert rel["to_id"] == "to_id"
-    assert rel["to_type"] == ["A"]
-    assert_frame_equal(rel["data"], e2o_data)
+    assert rel.from_id == "from_id"
+    assert rel.to_id == "to_id"
+    assert rel.to_type == ["A"]
+    assert_frame_equal(rel.data, e2o_data)
 
 
 def test_add_e2o_relation_raises_on_duplicate_without_overwrite(object_df_a, e2o_data):
@@ -268,11 +268,11 @@ def test_add_o2o_relation_stores_metadata_and_data(object_df_a, object_df_b, o2o
         "rel2", "from_id", ["A"], "to_id", ["B"], o2o_data
     )
     rel = oced.get_relation("rel2")
-    assert rel["from_id"] == "from_id"
-    assert rel["from_type"] == ["A"]
-    assert rel["to_id"] == "to_id"
-    assert rel["to_type"] == ["B"]
-    assert_frame_equal(rel["data"], o2o_data)
+    assert rel.from_id == "from_id"
+    assert rel.from_type == ["A"]
+    assert rel.to_id == "to_id"
+    assert rel.to_type == ["B"]
+    assert_frame_equal(rel.data, o2o_data)
 
 
 def test_add_o2o_relation_raises_on_duplicate_without_overwrite(
@@ -491,16 +491,16 @@ def test_change_object_ids_propagates_to_e2o_and_o2o():
 
     oced.change_object_ids("A", change_fn)
 
-    a_table = oced.get_object("A")["data"]
+    a_table = oced.get_object("A").data
     assert set(a_table["object"].tolist()) == {"A-1", "A-2", "A-3"}
 
     rel_e2o = oced.get_relation("rel_e2o")
-    assert set(rel_e2o["data"]["to_id"].tolist()) == {"A-1", "A-2", "A-3"}
+    assert set(rel_e2o.data["to_id"].tolist()) == {"A-1", "A-2", "A-3"}
 
     rel_o2o = oced.get_relation("rel_o2o")
-    assert set(rel_o2o["data"]["from_id"].tolist()) == {"A-1", "A-2", "A-3", "A-1"}
+    assert set(rel_o2o.data["from_id"].tolist()) == {"A-1", "A-2", "A-3", "A-1"}
     # B-side id (10) must be unchanged
-    assert 10 in rel_o2o["data"]["to_id"].tolist()
+    assert 10 in rel_o2o.data["to_id"].tolist()
 
 
 def test_change_object_ids_rolls_back_on_error():
@@ -539,13 +539,13 @@ def test_change_event_ids_propagates_to_e2o_for_target_activity_only():
 
     oced.change_event_ids("Pay", lambda s: s.astype(str).map(lambda x: f"P-{x}"))
 
-    pay_after = oced.get_event("Pay")["data"]
-    ship_after = oced.get_event("Ship")["data"]
+    pay_after = oced.get_events("Pay").data
+    ship_after = oced.get_events("Ship").data
     assert set(pay_after["event"].tolist()) == {"P-e1", "P-e2"}
     assert set(ship_after["event"].tolist()) == {"s1", "s2"}
 
-    rel = oced.get_relation("rel_e2o")["data"]
-    assert set(rel["from_id"].tolist()) == {"P-e1", "P-e2", "s1"}
+    rel = oced.get_relation("rel_e2o").data
+    assert set(rel.from_id.tolist()) == {"P-e1", "P-e2", "s1"}
 
 
 def test_used_ids_updated_after_change_object_ids():
@@ -606,101 +606,6 @@ def test_get_log_row_count_and_activity_column(minimal_oced):
     activity_counts = log["concept:name"].value_counts()
     assert activity_counts["type1"] == 3
     assert activity_counts["type2"] == 2
-
-
-# ---------------------------------------------------------------------------
-# data_check
-# ---------------------------------------------------------------------------
-
-
-def test_data_check_passes_through_numeric_and_bool():
-    oced = OCEDStore()
-    df = pd.DataFrame(
-        {"ints": [1, 2, 3], "floats": [1.1, 2.2, 3.3], "bools": [True, False, True]}
-    )
-    before = df.copy(deep=True)
-    out = oced.data_check(df)
-    assert_series_equal(out["ints"], before["ints"], check_dtype=True)
-    assert_series_equal(out["floats"], before["floats"], check_dtype=True)
-    assert_series_equal(out["bools"], before["bools"], check_dtype=True)
-
-
-def test_data_check_normalizes_datetime_to_seconds_floored():
-    oced = OCEDStore()
-    ts = pd.to_datetime(
-        [
-            "2022-01-01 12:00:00.987654321+00:00",
-            "2022-01-01 12:00:01.123456789+00:00",
-        ],
-        utc=True,
-    )
-    out = oced.data_check(pd.DataFrame({"dt": ts}), min_parse_ratio=1.0)
-    assert pd.api.types.is_datetime64_any_dtype(out["dt"])
-    expected = pd.to_datetime(["2022-01-01 12:00:00", "2022-01-01 12:00:01"], utc=True)
-    assert_series_equal(out["dt"], pd.Series(expected, name="dt"), check_dtype=False)
-
-
-def test_data_check_parses_datetime_strings_when_ratio_met():
-    oced = OCEDStore()
-    df = pd.DataFrame(
-        {"maybe_dt": ["2022-01-01 08:00:00", "2022-01-01 09:00:05", None, "garbage"]}
-    )
-    out = oced.data_check(df, min_parse_ratio=0.66)
-    assert pd.api.types.is_datetime64_any_dtype(out["maybe_dt"])
-
-
-def test_data_check_parses_numeric_strings_when_ratio_met():
-    oced = OCEDStore()
-    df = pd.DataFrame({"maybe_num": ["10.1", "11.7", None, "x"]})
-    out = oced.data_check(df, min_parse_ratio=0.66)
-    assert pd.api.types.is_numeric_dtype(out["maybe_num"])
-    assert out["maybe_num"].dropna().tolist() == pytest.approx([10.1, 11.7])
-
-
-def test_data_check_does_not_convert_when_ratio_too_low():
-    oced = OCEDStore()
-    df = pd.DataFrame({"weak_dt": ["2022-01-01 00:00:00", "bad", "worse", None]})
-    out = oced.data_check(df, min_parse_ratio=0.5)
-    assert not pd.api.types.is_datetime64_any_dtype(out["weak_dt"])
-
-
-def test_data_check_respects_ignore_cols():
-    oced = OCEDStore()
-    df = pd.DataFrame(
-        {
-            "ignored": ["2022-01-01 12:00:00", "2022-01-01 12:00:01"],
-            "convert_me": ["2022-01-01 12:00:00.123", "2022-01-01 12:00:01.999"],
-        }
-    )
-    out = oced.data_check(df, ignore_cols=["ignored"])
-    assert not pd.api.types.is_datetime64_any_dtype(out["ignored"])
-    assert pd.api.types.is_datetime64_any_dtype(out["convert_me"])
-
-
-def test_data_check_drops_all_na_rows_and_columns():
-    oced = OCEDStore()
-    import numpy as np
-
-    df = pd.DataFrame({"all_na_col": [np.nan, np.nan, np.nan], "mix": [1, np.nan, 3]})
-    df.loc[1, "mix"] = np.nan
-    out = oced.data_check(df)
-    assert "all_na_col" not in out.columns
-    assert len(out) == 2
-    assert out["mix"].tolist() == [1, 3]
-
-
-def test_data_check_coerces_zero_one_strings_to_boolean():
-    oced = OCEDStore()
-    df = pd.DataFrame({"flag": ["0", "1", "0", "1"]})
-    out = oced.data_check(df)
-    assert str(out["flag"].dtype) == "boolean"
-
-
-def test_data_check_coerces_whole_number_strings_to_int64():
-    oced = OCEDStore()
-    df = pd.DataFrame({"count": ["1", "2", "3", "10"]})
-    out = oced.data_check(df)
-    assert str(out["count"].dtype) == "Int64"
 
 
 # ---------------------------------------------------------------------------
@@ -796,19 +701,19 @@ def test_get_original_id_returns_none_for_unknown():
 
 def test_get_original_id_looks_up_local_name():
     oced = OCEDStore()
-    oced._backmap = {"order__123": "Order #123"}
+    oced.backmap = {"order__123": "Order #123"}
     assert oced.get_original("order__123") == "Order #123"
 
 
 def test_get_original_id_strips_default_base_iri():
     oced = OCEDStore()
-    oced._backmap = {"order__123": "Order #123"}
+    oced.backmap = {"order__123": "Order #123"}
     assert oced.get_original("https://oced#order__123") == "Order #123"
 
 
 def test_get_original_id_strips_custom_base_iri():
     oced = OCEDStore()
-    oced._backmap = {"order__123": "Order #123"}
+    oced.backmap = {"order__123": "Order #123"}
     result = oced.get_original(
         "https://example.com/onto#order__123",
         base_iri="https://example.com/onto#",
@@ -818,7 +723,7 @@ def test_get_original_id_strips_custom_base_iri():
 
 def test_get_original_ids_preserves_order_and_nones():
     oced = OCEDStore()
-    oced._backmap = {"a_b": "A B", "c_d": "C D"}
+    oced.backmap = {"a_b": "A B", "c_d": "C D"}
     assert oced.get_originals(["a_b", "unknown", "c_d"]) == ["A B", None, "C D"]
 
 
@@ -829,7 +734,7 @@ def test_get_original_ids_preserves_order_and_nones():
 
 def test_save_load_roundtrip(tmp_path):
     oced = _make_oced_with_e2o()
-    oced._backmap = {"a_b": "A B"}
+    oced.backmap = {"a_b": "A B"}
     path = tmp_path / "store.pkl"
     oced.save(path)
     loaded = OCEDStore.load(path)
@@ -844,14 +749,14 @@ def test_save_load_preserves_dataframes(tmp_path):
     oced.save(path)
     loaded = OCEDStore.load(path)
     assert_frame_equal(
-        loaded.get_object("A")["data"].reset_index(drop=True),
-        oced.get_object("A")["data"].reset_index(drop=True),
+        loaded.get_object("A").data.reset_index(drop=True),
+        oced.get_object("A").data.reset_index(drop=True),
     )
 
 
 def test_save_id_backmap_json_roundtrip(tmp_path):
     oced = OCEDStore()
-    oced._backmap = {"order__123": "Order #123", "e0": "e0"}
+    oced.backmap = {"order__123": "Order #123", "e0": "e0"}
     path = tmp_path / "backmap.json"
     oced.save_backmap(path)
     loaded = OCEDStore()
@@ -861,10 +766,10 @@ def test_save_id_backmap_json_roundtrip(tmp_path):
 
 def test_load_id_backmap_overwrites_existing(tmp_path):
     oced = OCEDStore()
-    oced._backmap = {"old_key": "old_val"}
+    oced.backmap = {"old_key": "old_val"}
     path = tmp_path / "backmap.json"
     oced.save_backmap(path)
-    oced._backmap = {"other": "value"}
+    oced.backmap = {"other": "value"}
     oced.load_backmap(path)
     assert oced.backmap == {"old_key": "old_val"}
     assert "other" not in oced.backmap

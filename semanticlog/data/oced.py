@@ -1,37 +1,93 @@
+from __future__ import annotations
+
 import copy
 import json
 import logging
 import pickle
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Any
 
-import numpy as np
 import pandas as pd
 import pm4py as pm
+
+from semanticlog.data.dtypes import infer_dtypes
 
 _DEFAULT_IRI: str = "https://oced#"
 
 
-def _try_datetime(
-    series: pd.Series, non_null: int, min_ratio: float
-) -> pd.Series | None:
-    dt = pd.to_datetime(series, errors="coerce", utc=True, format="ISO8601")
-    dt = dt.dt.floor("s")
-    return dt if (dt.notna().sum() / non_null) >= min_ratio else None
+class EntityKind(str, Enum):
+    """Whether an operation targets events or objects."""
+
+    EVENT = "event"
+    OBJECT = "object"
 
 
-def _try_numeric(
-    series: pd.Series, non_null: int, min_ratio: float
-) -> pd.Series | None:
-    num = pd.to_numeric(series, errors="coerce")
-    if (num.notna().sum() / non_null) < min_ratio:
-        return None
-    vals = set(num.dropna().unique())
-    if vals <= {0, 1}:
-        return num.astype("boolean")
-    if (num.dropna() % 1 == 0).all():
-        return num.astype("Int64")
-    return num.astype("float64")
+class RelationKind(str, Enum):
+    """Which relation family an operation targets."""
+
+    ALL = "all"
+    E2O = "e2o"
+    O2O = "o2o"
+
+
+@dataclass
+class EventTable:
+    """One activity's events.
+
+    Attributes:
+        id: Column holding the unique event identifier.
+        time: Column holding the event timestamp.
+        data: The event rows, including ``id``, ``time`` and any attribute columns.
+    """
+
+    id: str
+    time: str
+    data: pd.DataFrame
+
+
+@dataclass
+class ObjectTable:
+    """One object type's objects.
+
+    Attributes:
+        id: Column holding the unique object identifier.
+        data: The object rows, including ``id`` and any attribute columns.
+    """
+
+    id: str
+    data: pd.DataFrame
+
+
+@dataclass
+class RelationTable:
+    """One named relation between events and objects, or between objects.
+
+    ``from_type`` is ``None`` for event-to-object relations, where the source is
+    always an event rather than a named object type.
+
+    Attributes:
+        from_id: Column holding the source identifier.
+        to_id: Column holding the target identifier.
+        to_type: Object types the target identifier may belong to.
+        data: The relation rows.
+        from_type: Object types the source identifier may belong to (o2o only).
+    """
+
+    from_id: str
+    to_id: str
+    to_type: list[str]
+    data: pd.DataFrame
+    from_type: list[str] | None = None
+
+
+@dataclass
+class Relations:
+    """The two relation families, keyed by relation name within each."""
+
+    event_to_object: dict[str, RelationTable] = field(default_factory=dict)
+    object_to_object: dict[str, RelationTable] = field(default_factory=dict)
 
 
 class OCEDStore:
@@ -39,11 +95,10 @@ class OCEDStore:
     Holds object-centric event data.
 
     The class maintains:
-      - Events: Stored with the event id, type, time, and associated DataFrame.
-      - Objects: Stored as a dictionary mapping object types to their identifier and data.
-      - Relations: Specifies a type of relation. Contains event/object ids and object types.
-          * Event-to-object relations
-          * Object-to-object relations
+      - Events: :class:`EventTable` per activity.
+      - Objects: :class:`ObjectTable` per object type.
+      - Relations: :class:`RelationTable` per named relation, split into
+        event-to-object and object-to-object families.
     """
 
     def __init__(self, ocel_mode: bool = False):
@@ -55,17 +110,13 @@ class OCEDStore:
                 object attribute change history. Required before calling
                 ``add_object_changes`` or ``get_object_changes``.
         """
-        self._events: dict[str, Any] = {}
-        self._objects: dict[str, Any] = {}
-        self._relations: dict[str, Any] = {
-            "event_to_object": {},
-            "object_to_object": {},
-        }
+        self._events: dict[str, EventTable] = {}
+        self._objects: dict[str, ObjectTable] = {}
+        self._relations = Relations()
         self._used_ids: set = set()
         self._ocel_mode = ocel_mode
         self._backmap: dict[str, str] = {}
-        if ocel_mode:
-            self._object_changes: dict[str, pd.DataFrame] = {}
+        self._object_changes: dict[str, pd.DataFrame] = {}
 
     # BACKMAP
 
@@ -73,6 +124,10 @@ class OCEDStore:
     def backmap(self) -> dict[str, str]:
         """Mapping from post-clean IRI local name to original pre-clean name (IDs and schema names)."""
         return self._backmap
+
+    @backmap.setter
+    def backmap(self, mapping: dict[str, str]) -> None:
+        self._backmap = mapping
 
     def get_original(
         self, iri_or_local_name: str, base_iri: str = _DEFAULT_IRI
@@ -122,7 +177,7 @@ class OCEDStore:
             pickle.dump(self, f)
 
     @classmethod
-    def load(cls, path: str | Path) -> "OCEDStore":
+    def load(cls, path: str | Path) -> OCEDStore:
         """
         Load an OCEDStore from a pickle file produced by :meth:`save`.
 
@@ -164,15 +219,11 @@ class OCEDStore:
         if isinstance(ids, list):
             ids = pd.Series(ids)
         types = []
-        for object_type in self._objects:
-            object_df = self._objects[object_type]["data"]
-            object_id = self._objects[object_type]["id"]
-            if ids.isin(object_df[object_id]).any():
+        for object_type, table in self._objects.items():
+            if ids.isin(table.data[table.id]).any():
                 types.append(object_type)
-        for activity in self._events:
-            event_df = self._events[activity]["data"]
-            event_id = self._events[activity]["id"]
-            if ids.isin(event_df[event_id]).any():
+        for activity, event_table in self._events.items():
+            if ids.isin(event_table.data[event_table.id]).any():
                 types.append(activity)
 
         return types
@@ -196,14 +247,14 @@ class OCEDStore:
 
         # get all relevant e2o relations
         data_list = []
-        for relation in self._relations["event_to_object"]:
-            relation_dict = self._relations["event_to_object"][relation]
-            to_id = relation_dict["to_id"]
-            from_id = relation_dict["from_id"]
-            if case_concept in relation_dict["to_type"]:
+        for relation in self._relations.event_to_object.values():
+            if case_concept in relation.to_type:
                 data_list.append(
-                    relation_dict["data"].rename(
-                        columns={to_id: case_concept, from_id: "event_id"}
+                    relation.data.rename(
+                        columns={
+                            relation.to_id: case_concept,
+                            relation.from_id: "event_id",
+                        }
                     )
                 )
 
@@ -212,30 +263,19 @@ class OCEDStore:
                 f"No event-to-object relations reference object type '{case_concept}'."
             )
         rel_data = pd.concat(data_list, ignore_index=True)
-        valid_case_ids = set(self.get_ids("object", case_concept))
+        valid_case_ids = set(self.get_ids(EntityKind.OBJECT, case_concept))
         dropped_ids = set(rel_data[case_concept]) - valid_case_ids
         rel_data = rel_data[rel_data[case_concept].isin(valid_case_ids)]
 
         if dropped_ids:
-            all_object_ids: set = set()
-            for entry in self._objects.values():
-                all_object_ids.update(entry["data"][entry["id"]].unique())
-            genuinely_missing = dropped_ids - all_object_ids
-            if genuinely_missing:
-                logging.warning(
-                    f"get_log: {len(genuinely_missing)} object IDs not found in any object store "
-                    f"for case concept '{case_concept}' "
-                    f"(sample: {sorted(str(x) for x in genuinely_missing)[:5]})"
-                )
+            self._warn_unknown_case_ids(case_concept, dropped_ids)
 
         events_data_list = []
-        for event_type in self._events:
-            id_col = self._events[event_type]["id"]
-            time_col = self._events[event_type]["time"]
-            event_data = self._events[event_type]["data"][[id_col, time_col]].copy()
+        for event_type, event_table in self._events.items():
+            event_data = event_table.data[[event_table.id, event_table.time]].copy()
             event_data["concept:name"] = event_type
             event_data = event_data.rename(
-                columns={id_col: "event_id", time_col: "time:timestamp"}
+                columns={event_table.id: "event_id", event_table.time: "time:timestamp"}
             )
             events_data_list.append(event_data)
 
@@ -258,6 +298,18 @@ class OCEDStore:
 
         return log
 
+    def _warn_unknown_case_ids(self, case_concept: str, dropped_ids: set) -> None:
+        all_object_ids: set = set()
+        for table in self._objects.values():
+            all_object_ids.update(table.data[table.id].unique())
+        genuinely_missing = dropped_ids - all_object_ids
+        if genuinely_missing:
+            logging.warning(
+                f"get_log: {len(genuinely_missing)} object IDs not found in any object store "
+                f"for case concept '{case_concept}' "
+                f"(sample: {sorted(str(x) for x in genuinely_missing)[:5]})"
+            )
+
     # OCEL MODE
 
     def has_ocel_mode(self) -> bool:
@@ -278,11 +330,7 @@ class OCEDStore:
             ValueError: If the store was not created with ``ocel_mode=True``, or
                 if required columns are missing from ``data``.
         """
-        if not self._ocel_mode:
-            raise ValueError(
-                "add_object_changes requires ocel_mode=True. "
-                "Create the OCEDStore with OCEDStore(ocel_mode=True)."
-            )
+        self._require_ocel_mode("add_object_changes")
         required = {"ocel:oid", "ocel:type", "ocel:timestamp", "ocel:field"}
         missing = required - set(data.columns)
         if missing:
@@ -305,11 +353,7 @@ class OCEDStore:
             ValueError: If the store was not created with ``ocel_mode=True``, or
                 if ``obj_type`` has no recorded changes.
         """
-        if not self._ocel_mode:
-            raise ValueError(
-                "get_object_changes requires ocel_mode=True. "
-                "Create the OCEDStore with OCEDStore(ocel_mode=True)."
-            )
+        self._require_ocel_mode("get_object_changes")
         if obj_type not in self._object_changes:
             raise ValueError(f"No object changes recorded for type '{obj_type}'.")
         return self._object_changes[obj_type]
@@ -321,12 +365,28 @@ class OCEDStore:
         Raises:
             ValueError: If the store was not created with ``ocel_mode=True``.
         """
+        self._require_ocel_mode("get_object_change_types")
+        return list(self._object_changes)
+
+    def replace_object_changes(self, changes: dict[str, pd.DataFrame]) -> None:
+        """
+        Replace the whole attribute change history, keyed by object type.
+
+        Intended for pipeline stages that rewrite every table at once, such as
+        :func:`~semanticlog.data.cleaning.clean_oced_data`.
+
+        Raises:
+            ValueError: If the store was not created with ``ocel_mode=True``.
+        """
+        self._require_ocel_mode("replace_object_changes")
+        self._object_changes = dict(changes)
+
+    def _require_ocel_mode(self, method: str) -> None:
         if not self._ocel_mode:
             raise ValueError(
-                "get_object_change_types requires ocel_mode=True. "
+                f"{method} requires ocel_mode=True. "
                 "Create the OCEDStore with OCEDStore(ocel_mode=True)."
             )
-        return list(self._object_changes)
 
     # EVENTS
     def add_event(
@@ -339,7 +399,7 @@ class OCEDStore:
     ) -> None:
         """
         Add event data, storing both metadata and the event DataFrame.
-        The DataFrame must contain the columns specified by `id_col`, `type_col`, and `time_col`.
+        The DataFrame must contain the columns specified by `id_col` and `time_col`.
 
         Parameters:
             event_type: The activity of the event.
@@ -362,20 +422,23 @@ class OCEDStore:
         if not overwrite and not self.ids_not_used(data[id_col].unique()):
             raise ValueError("IDs in this data are already used.")
 
-        data = self.data_check(data, ignore_cols=[id_col])
-        self._events[event_type] = {"id": id_col, "time": time_col, "data": data}
+        data = infer_dtypes(data, ignore_cols=[id_col], label=event_type)
+        self._events[event_type] = EventTable(id=id_col, time=time_col, data=data)
         self.update_used_ids()
 
-    def get_events(self, event_type) -> dict[str, str | pd.DataFrame]:
-        """Alias for get_event — returns the event dict for event_type."""
+    def get_events(self, event_type: str) -> EventTable:
+        """Returns the :class:`EventTable` stored for an activity."""
         return self._events[event_type]
 
     def get_activities(self) -> list[str]:
+        """Returns the names of all event types (activities) in the store."""
         return list(self._events)
 
-    def get_event(self, event_type) -> dict[str, str | pd.DataFrame]:
-        """Returns the event dict for event_type. Equivalent to get_events()."""
-        return self.get_events(event_type)
+    def set_event_data(self, event_type: str, data: pd.DataFrame) -> None:
+        """Replace the rows of an existing activity, keeping its id and time columns."""
+        if event_type not in self._events:
+            raise ValueError(f"Unknown activity {event_type}")
+        self._events[event_type].data = data
 
     # OBJECTS
     def add_object(
@@ -405,27 +468,32 @@ class OCEDStore:
         if not overwrite and not self.ids_not_used(data[id_col].unique()):
             raise ValueError("IDs in this data are already used.")
 
-        data = self.data_check(data, ignore_cols=[id_col])
-        obj = {"id": id_col, "data": data}
-        self._objects[obj_type] = obj
+        data = infer_dtypes(data, ignore_cols=[id_col], label=obj_type)
+        self._objects[obj_type] = ObjectTable(id=id_col, data=data)
         self.update_used_ids()
 
-    def get_objects(self) -> dict[str, dict[str, str | pd.DataFrame]]:
+    def get_objects(self) -> dict[str, ObjectTable]:
+        """Returns every :class:`ObjectTable`, keyed by object type."""
         return self._objects
 
     def get_object_types(self) -> list[str]:
+        """Returns the names of all object types in the store."""
         return list(self._objects)
 
-    def get_object(self, obj_type) -> dict[str, str | pd.DataFrame]:
+    def get_object(self, obj_type: str) -> ObjectTable:
+        """Returns the :class:`ObjectTable` stored for an object type."""
         return self._objects[obj_type]
 
+    def set_object_data(self, obj_type: str, data: pd.DataFrame) -> None:
+        """Replace the rows of an existing object type, keeping its id column."""
+        if obj_type not in self._objects:
+            raise ValueError(f"Unknown object {obj_type}")
+        self._objects[obj_type].data = data
+
     def get_most_common_objects(self, n: int = 1) -> list[str]:
+        """Returns the ``n`` object types with the most rows, largest first."""
         objects = self.get_objects()
-        return sorted(
-            objects,
-            key=lambda k: len(objects[k]["data"]),
-            reverse=True,
-        )[:n]
+        return sorted(objects, key=lambda k: len(objects[k].data), reverse=True)[:n]
 
     # RELATIONS
     def add_event_to_object_relation(
@@ -444,18 +512,18 @@ class OCEDStore:
             relation (str): The name/identifier of the relation.
             from_id_col (str): The column name representing the event identifier in the relation DataFrame.
             to_id_col (str): The column name representing the object identifier in the relation DataFrame.
-            to_type (list[str]): The column names representing the object type in the relation DataFrame.
+            to_type (list[str]): The object types the target identifier may belong to.
             data (pd.DataFrame): The DataFrame containing relation data.
             overwrite (bool, optional): If True, overwrites an existing relation with the same name. Defaults to False.
 
         Raises:
             ValueError: If the relation already exists and overwrite is False.
         """
-        if relation in self._relations["object_to_object"]:
+        if relation in self._relations.object_to_object:
             raise ValueError(
                 f"The relation ({relation}) already exists as a object_to_object relation!"
             )
-        if not overwrite and relation in self._relations["event_to_object"]:
+        if not overwrite and relation in self._relations.event_to_object:
             raise ValueError(
                 f"Relation ({relation}) already exists! Set overwrite to True if you want to disregard this."
             )
@@ -463,23 +531,19 @@ class OCEDStore:
             raise ValueError(
                 f"Can not instantiate relation ({relation}). Unknown object type in ({to_type})!"
             )
-        if from_id_col not in data.columns:
-            raise ValueError(
-                f"from_id_col '{from_id_col}' not found in relation data columns: {list(data.columns)}"
-            )
-        if to_id_col not in data.columns:
-            raise ValueError(
-                f"to_id_col '{to_id_col}' not found in relation data columns: {list(data.columns)}"
-            )
+        for param, col in (("from_id_col", from_id_col), ("to_id_col", to_id_col)):
+            if col not in data.columns:
+                raise ValueError(
+                    f"{param} '{col}' not found in relation data columns: "
+                    f"{list(data.columns)}"
+                )
 
-        rel_value = {
-            "from_id": from_id_col,
-            "to_id": to_id_col,
-            "to_type": to_type,
-            "data": data,
-        }
-
-        self._relations["event_to_object"][relation] = rel_value
+        self._relations.event_to_object[relation] = RelationTable(
+            from_id=from_id_col,
+            to_id=to_id_col,
+            to_type=list(to_type),
+            data=data,
+        )
 
     def add_object_to_object_relation(
         self,
@@ -497,20 +561,20 @@ class OCEDStore:
         Parameters:
             relation (str): The name/identifier of the relation.
             from_id_col (str): The column name for the source object's identifier.
-            from_type (str): The source object's type.
+            from_type (list[str]): The object types the source identifier may belong to.
             to_id_col (str): The column name for the target object's identifier.
-            to_type (str): The target object's type.
+            to_type (list[str]): The object types the target identifier may belong to.
             data (pd.DataFrame): The DataFrame containing the relation mapping details.
             overwrite (bool, optional): If True, overwrites an existing relation with the same name. Defaults to False.
 
         Raises:
             ValueError: If the relation already exists and overwrite is False.
         """
-        if relation in self._relations["event_to_object"]:
+        if relation in self._relations.event_to_object:
             raise ValueError(
                 f"The relation ({relation}) already exists as a event_to_object relation!"
             )
-        if not overwrite and relation in self._relations["object_to_object"]:
+        if not overwrite and relation in self._relations.object_to_object:
             raise ValueError(
                 f"Relation ({relation}) already exists! Set overwrite to True if you want to disregard this."
             )
@@ -522,266 +586,285 @@ class OCEDStore:
                 f"Can not instantiate relation ({relation}). Unknown object type in ({to_type + from_type})!"
             )
 
-        rel_value = {
-            "from_id": from_id_col,
-            "from_type": from_type,
-            "to_id": to_id_col,
-            "to_type": to_type,
-            "data": data,
-        }
-
-        self._relations["object_to_object"][relation] = rel_value
+        self._relations.object_to_object[relation] = RelationTable(
+            from_id=from_id_col,
+            from_type=list(from_type),
+            to_id=to_id_col,
+            to_type=list(to_type),
+            data=data,
+        )
 
     def get_relations(
-        self, relation_type="all"
-    ) -> (
-        dict[str, dict[str, dict[str, str | pd.DataFrame]]]
-        | dict[str, dict[str, str | pd.DataFrame]]
-    ):
+        self, relation_type: RelationKind | str = RelationKind.ALL
+    ) -> dict[str, dict[str, RelationTable]] | dict[str, RelationTable]:
         """
-        Returns a dict of relations in the data. Valid relation types are 'all', 'e2o' or 'o2o'.
-        """
-        if relation_type not in ["all", "e2o", "o2o"]:
-            raise ValueError(
-                f"Valid relation types are all, e2o, o2o, but {relation_type} was given."
-            )
-        if relation_type == "all":
-            return self._relations
-        elif relation_type == "e2o":
-            return self._relations["event_to_object"]
-        else:
-            return self._relations["object_to_object"]
+        Returns the relations in the data.
 
-    def get_relation(self, relation: str) -> dict[str, str | pd.DataFrame]:
-        """
-        Returns a single relation from the data.
-        """
-        if relation in self._relations["event_to_object"]:
-            return self._relations["event_to_object"][relation]
-        elif relation in self._relations["object_to_object"]:
-            return self._relations["object_to_object"][relation]
-        else:
-            raise ValueError(f"Relation {relation} does not exist!")
+        For ``RelationKind.ALL`` the result is keyed by family
+        (``"event_to_object"`` / ``"object_to_object"``); otherwise it maps
+        relation name to :class:`RelationTable` directly.
 
-    def get_relation_types(self, relation_type="all") -> list[str]:
+        Raises:
+            ValueError: If ``relation_type`` is not a valid :class:`RelationKind`.
         """
-        Returns the types of relations in the data. Valid relation types are 'all', 'e2o' or 'o2o'.
+        kind = _as_relation_kind(relation_type)
+        if kind is RelationKind.ALL:
+            return {
+                "event_to_object": self._relations.event_to_object,
+                "object_to_object": self._relations.object_to_object,
+            }
+        if kind is RelationKind.E2O:
+            return self._relations.event_to_object
+        return self._relations.object_to_object
+
+    def get_relation(self, relation: str) -> RelationTable:
         """
-        if relation_type not in ["all", "e2o", "o2o"]:
-            raise ValueError(
-                f"Valid relation types are all, e2o, o2o, but {relation_type} was given."
-            )
+        Returns a single :class:`RelationTable` from either family.
+
+        Raises:
+            ValueError: If no relation with that name exists.
+        """
+        if relation in self._relations.event_to_object:
+            return self._relations.event_to_object[relation]
+        if relation in self._relations.object_to_object:
+            return self._relations.object_to_object[relation]
+        raise ValueError(f"Relation {relation} does not exist!")
+
+    def get_relation_types(
+        self, relation_type: RelationKind | str = RelationKind.ALL
+    ) -> list[str]:
+        """
+        Returns the names of the relations in the data.
+
+        Raises:
+            ValueError: If ``relation_type`` is not a valid :class:`RelationKind`.
+        """
+        kind = _as_relation_kind(relation_type)
         relations: list[str] = []
-        if relation_type == "e2o" or relation_type == "all":
-            relations = relations + list(self._relations["event_to_object"])
-        if relation_type == "o2o" or relation_type == "all":
-            relations = relations + list(self._relations["object_to_object"])
+        if kind in (RelationKind.E2O, RelationKind.ALL):
+            relations += list(self._relations.event_to_object)
+        if kind in (RelationKind.O2O, RelationKind.ALL):
+            relations += list(self._relations.object_to_object)
         return relations
+
+    def replace_tables(
+        self,
+        events: dict[str, EventTable],
+        objects: dict[str, ObjectTable],
+        relations: Relations,
+    ) -> None:
+        """
+        Swap in a fully rebuilt set of events, objects and relations.
+
+        Intended for pipeline stages that rewrite every table at once, such as
+        :func:`~semanticlog.data.cleaning.clean_oced_data`.
+        """
+        self._events = events
+        self._objects = objects
+        self._relations = relations
 
     def rename_relation(self, old_name: str, new_name: str) -> None:
         """
         Renames an relation that exists in the data.
         """
         all_relation_names = (
-            self._relations["event_to_object"].keys()
-            | self._relations["object_to_object"].keys()
+            self._relations.event_to_object.keys()
+            | self._relations.object_to_object.keys()
         )
         if new_name in all_relation_names:
             raise ValueError(
                 f"Cannot rename relation: '{new_name}' already exists as a relation."
             )
-        if old_name in self._relations["event_to_object"]:
-            self._relations["event_to_object"][new_name] = self._relations[
-                "event_to_object"
-            ].pop(old_name)
-        elif old_name in self._relations["object_to_object"]:
-            self._relations["object_to_object"][new_name] = self._relations[
-                "object_to_object"
-            ].pop(old_name)
-        else:
-            raise ValueError("Cannot rename relation that does not exist!")
+        for family in (
+            self._relations.event_to_object,
+            self._relations.object_to_object,
+        ):
+            if old_name in family:
+                family[new_name] = family.pop(old_name)
+                return
+        raise ValueError("Cannot rename relation that does not exist!")
 
     def rename_object(self, old_name: str, new_name: str) -> None:
         """
         Renames an object that exists in the data, while ensuring that its relations stay consistent.
         """
-        if old_name in self._objects:
-            self._objects[new_name] = self._objects.pop(old_name)
-            for relation in self._relations["event_to_object"]:
-                self._relations["event_to_object"][relation]["to_type"] = [
-                    new_name if x == old_name else x
-                    for x in self._relations["event_to_object"][relation]["to_type"]
-                ]
-            for relation in self._relations["object_to_object"]:
-                self._relations["object_to_object"][relation]["from_type"] = [
-                    new_name if x == old_name else x
-                    for x in self._relations["object_to_object"][relation]["from_type"]
-                ]
-                self._relations["object_to_object"][relation]["to_type"] = [
-                    new_name if x == old_name else x
-                    for x in self._relations["object_to_object"][relation]["to_type"]
-                ]
-            if self._ocel_mode and old_name in self._object_changes:
-                self._object_changes[new_name] = self._object_changes.pop(old_name)
-        else:
+        if old_name not in self._objects:
             raise ValueError("Cannot rename object that does not exist!")
+
+        self._objects[new_name] = self._objects.pop(old_name)
+
+        def renamed(types: list[str] | None) -> list[str] | None:
+            if types is None:
+                return None
+            return [new_name if t == old_name else t for t in types]
+
+        for relation in self._relations.event_to_object.values():
+            relation.to_type = renamed(relation.to_type)  # type: ignore[assignment]
+        for relation in self._relations.object_to_object.values():
+            relation.from_type = renamed(relation.from_type)
+            relation.to_type = renamed(relation.to_type)  # type: ignore[assignment]
+
+        if self._ocel_mode and old_name in self._object_changes:
+            self._object_changes[new_name] = self._object_changes.pop(old_name)
 
     def rename_activity(self, old_name: str, new_name: str) -> None:
         """
         Renames an activity that exists in the data, while ensuring that its relations stay consistent.
         """
-        if old_name in self._events:
-            self._events[new_name] = self._events.pop(old_name)
-        else:
+        if old_name not in self._events:
             raise ValueError("Cannot rename activity that does not exist!")
+        self._events[new_name] = self._events.pop(old_name)
 
-    def change_ids(self, of, type_to_change, change_function):
-        if of not in ["event", "object"]:
-            raise ValueError("Can only change the ids of events or objects!")
-        if of == "event":
+    def change_ids(
+        self,
+        of: EntityKind | str,
+        type_to_change: str,
+        change_function: Callable[[pd.Series], pd.Series],
+    ) -> None:
+        """
+        Rewrite the identifiers of one event or object type, keeping relations consistent.
+
+        Raises:
+            ValueError: If ``of`` is not a valid :class:`EntityKind`.
+        """
+        if _as_entity_kind(of) is EntityKind.EVENT:
             self.change_event_ids(type_to_change, change_function)
-        elif of == "object":
+        else:
             self.change_object_ids(type_to_change, change_function)
 
-    def change_object_ids(self, object_type, change_function):
+    def change_object_ids(
+        self, object_type: str, change_function: Callable[[pd.Series], pd.Series]
+    ) -> None:
+        """Rewrite one object type's identifiers, updating every relation that uses them."""
         # snapshot for rollback
         objects_backup = copy.deepcopy(self._objects[object_type])
-        o2o_backup = copy.deepcopy(self._relations["object_to_object"])
-        e2o_backup = copy.deepcopy(self._relations["event_to_object"])
+        relations_backup = copy.deepcopy(self._relations)
         try:
-            object_data = self._objects[object_type]["data"]
-            id_col = self._objects[object_type]["id"]
-            unique_ids = object_data[id_col].unique()
+            table = self._objects[object_type]
+            unique_ids = table.data[table.id].unique()
 
             # change IDs in the object table
-            self._objects[object_type]["data"][id_col] = change_function(
-                object_data[id_col]
-            )
+            table.data[table.id] = change_function(table.data[table.id])
 
-            # change IDs in all o2o relations where this id_col appears
-            for o2o_rel, rel in self._relations.get("object_to_object", {}).items():
-                df = rel["data"]
-                from_id = rel["from_id"]
-                from_type = rel["from_type"]
-                to_id = rel["to_id"]
-                to_type = rel["to_type"]
-                if object_type in from_type:
-                    mask = df[from_id].isin(unique_ids)
-                    if mask.any():
-                        df[from_id] = df[from_id].astype(object)
-                        df.loc[mask, from_id] = change_function(df.loc[mask, from_id])
-                if object_type in to_type:
-                    mask = df[to_id].isin(unique_ids)
-                    if mask.any():
-                        df[to_id] = df[to_id].astype(object)
-                        df.loc[mask, to_id] = change_function(df.loc[mask, to_id])
-                self._relations["object_to_object"][o2o_rel]["data"] = df
+            # change IDs in all o2o relations where this object type appears
+            for relation in self._relations.object_to_object.values():
+                if object_type in (relation.from_type or []):
+                    _remap_column(
+                        relation.data, relation.from_id, unique_ids, change_function
+                    )
+                if object_type in relation.to_type:
+                    _remap_column(
+                        relation.data, relation.to_id, unique_ids, change_function
+                    )
 
-            # change IDs in all e2o relations where this id_col appears
-            for e2o_rel, rel in self._relations.get("event_to_object", {}).items():
-                df = rel["data"]
-                to_id = rel["to_id"]
-                to_type = rel["to_type"]
-                if object_type in to_type:
-                    mask = df[to_id].isin(unique_ids)
-                    if mask.any():
-                        df[to_id] = df[to_id].astype(object)
-                        df.loc[mask, to_id] = change_function(df.loc[mask, to_id])
-                self._relations["event_to_object"][e2o_rel]["data"] = df
+            # change IDs in all e2o relations where this object type appears
+            for relation in self._relations.event_to_object.values():
+                if object_type in relation.to_type:
+                    _remap_column(
+                        relation.data, relation.to_id, unique_ids, change_function
+                    )
 
             self.update_used_ids()
         except Exception:
             self._objects[object_type] = objects_backup
-            self._relations["object_to_object"] = o2o_backup
-            self._relations["event_to_object"] = e2o_backup
+            self._relations = relations_backup
             raise
 
-    def change_event_ids(self, activity, change_function):
+    def change_event_ids(
+        self, activity: str, change_function: Callable[[pd.Series], pd.Series]
+    ) -> None:
+        """Rewrite one activity's event identifiers, updating every e2o relation that uses them."""
         # snapshot for rollback
         events_backup = copy.deepcopy(self._events[activity])
-        e2o_backup = copy.deepcopy(self._relations["event_to_object"])
+        e2o_backup = copy.deepcopy(self._relations.event_to_object)
         try:
-            event_data = self._events[activity]["data"]
-            id_col = self._events[activity]["id"]
-            unique_ids = event_data[id_col].unique()
+            table = self._events[activity]
+            unique_ids = table.data[table.id].unique()
 
             # change IDs in the event table
-            self._events[activity]["data"][id_col] = change_function(event_data[id_col])
+            table.data[table.id] = change_function(table.data[table.id])
 
             # change IDs in all e2o relations where this id_col appears
-            for e2o_rel, rel in self._relations.get("event_to_object", {}).items():
-                df = rel["data"]
-                from_id = rel["from_id"]
-                mask = df[from_id].isin(unique_ids)
+            for relation in self._relations.event_to_object.values():
+                mask = relation.data[relation.from_id].isin(unique_ids)
                 if mask.any():
-                    df.loc[mask, from_id] = change_function(df.loc[mask, from_id])
-                self._relations["event_to_object"][e2o_rel]["data"] = df
+                    relation.data.loc[mask, relation.from_id] = change_function(
+                        relation.data.loc[mask, relation.from_id]
+                    )
 
             self.update_used_ids()
         except Exception:
             self._events[activity] = events_backup
-            self._relations["event_to_object"] = e2o_backup
+            self._relations.event_to_object = e2o_backup
             raise
 
-    def get_ids(self, of, thing_type):
-        ids = []
-        if of not in ["event", "object"]:
-            raise ValueError("get_ids only returns ids of objects or events")
-        elif of == "event":
+    def get_ids(self, of: EntityKind | str, thing_type: str) -> Iterable:
+        """
+        Return the unique identifiers of one event or object type.
+
+        Raises:
+            ValueError: If ``of`` is invalid or ``thing_type`` is unknown.
+        """
+        if _as_entity_kind(of) is EntityKind.EVENT:
             if thing_type not in self.get_activities():
                 raise ValueError(f"Unknown activity {thing_type}")
-            id_col = self._events[thing_type]["id"]
-            ids = self._events[thing_type]["data"][id_col].unique()
+            table: EventTable | ObjectTable = self._events[thing_type]
         else:
             if thing_type not in self.get_object_types():
                 raise ValueError(f"Unknown object {thing_type}")
-            id_col = self._objects[thing_type]["id"]
-            ids = self._objects[thing_type]["data"][id_col].unique()
-        return ids
+            table = self._objects[thing_type]
+        return table.data[table.id].unique()
 
-    def update_used_ids(self):
-        ids = []
+    def update_used_ids(self) -> None:
+        """
+        Recompute the set of identifiers in use across all events and objects.
+
+        Raises:
+            ValueError: If the same identifier appears in more than one table.
+        """
+        ids: list = []
         for activity in self._events:
-            ids.extend(self.get_ids("event", activity))
+            ids.extend(self.get_ids(EntityKind.EVENT, activity))
         for object_type in self._objects:
-            ids.extend(self.get_ids("object", object_type))
+            ids.extend(self.get_ids(EntityKind.OBJECT, object_type))
         unique_ids = set(ids)
         if len(unique_ids) != len(ids):
             raise ValueError("Duplicated ids!")
         self._used_ids = unique_ids
 
-    def data_check(self, df, ignore_cols=None, min_parse_ratio=0.95):
-        if ignore_cols is None:
-            ignore_cols = []
-        df = df.copy()  # ensure we write to the real frame, not a view
-        df = df.dropna(how="all").dropna(axis=1, how="all")
-        # normalize empties for object-like cols
-        obj_cols = df.select_dtypes(include="object").columns
-        df[obj_cols] = df[obj_cols].replace(r"^\s*$", np.nan, regex=True)
-
-        for col in df.columns:
-            if col in ignore_cols:
-                continue
-
-            non_null = df[col].notna().sum()
-            if non_null == 0:
-                continue
-
-            # already numeric/bool? skip
-            if pd.api.types.is_numeric_dtype(df[col]) or pd.api.types.is_bool_dtype(
-                df[col]
-            ):
-                continue
-
-            dt = _try_datetime(df[col], non_null, min_parse_ratio)
-            if dt is not None:
-                df[col] = dt
-                continue
-
-            num = _try_numeric(df[col], non_null, min_parse_ratio)
-            if num is not None:
-                df[col] = num
-        return df
-
-    def ids_not_used(self, ids) -> bool:
+    def ids_not_used(self, ids: Iterable) -> bool:
+        """Returns True if none of the given identifiers are already in the store."""
         return self._used_ids.isdisjoint(ids)
+
+
+def _as_relation_kind(value: RelationKind | str) -> RelationKind:
+    try:
+        return RelationKind(value)
+    except ValueError:
+        valid = ", ".join(k.value for k in RelationKind)
+        raise ValueError(
+            f"Valid relation types are {valid}, but {value} was given."
+        ) from None
+
+
+def _as_entity_kind(value: EntityKind | str) -> EntityKind:
+    try:
+        return EntityKind(value)
+    except ValueError:
+        valid = ", ".join(k.value for k in EntityKind)
+        raise ValueError(
+            f"Valid entity kinds are {valid}, but {value} was given."
+        ) from None
+
+
+def _remap_column(
+    df: pd.DataFrame,
+    column: str,
+    ids: Iterable,
+    change_function: Callable[[pd.Series], pd.Series],
+) -> None:
+    """Apply change_function in place to the rows of ``column`` whose value is in ``ids``."""
+    mask = df[column].isin(ids)
+    if mask.any():
+        df[column] = df[column].astype(object)
+        df.loc[mask, column] = change_function(df.loc[mask, column])

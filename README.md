@@ -63,18 +63,22 @@ Core pipeline: load event data → clean/normalise → configure build settings 
 
 | Module | Role |
 |---|---|
-| `data/oced.py` | `OCEDStore` — central in-memory data model |
+| `data/oced.py` | `OCEDStore` — central in-memory data model (`EventTable` / `ObjectTable` / `RelationTable`) |
+| `data/dtypes.py` | `infer_dtypes()` — dtype coercion applied on ingest |
 | `data/loading/classicalloader.py` | Load flat CSV/XES event logs |
 | `data/loading/pm4pyloader.py` | Load OCEL 2.0 XML / JSON / SQLite via pm4py |
 | `data/cleaning.py` | String cleaning, deduplication, collision-fixing |
-| `data/filtering.py` | Filter by activity / object type (operates on flat DataFrames) |
+| `data/filtering.py` | Filter by time window / variant frequency (operates on flat DataFrames) |
 | `data/binning.py` | Variant weighting, numeric binning helpers |
-| `onto/settings.py` | `OntoBuildSettings`, all enums, `validate_settings` |
+| `onto/settings.py` | `OntoBuildSettings` (incl. `validate()`), all enums |
 | `onto/semlog.py` | `SemanticLog` — pipeline output; write/read OWL + pickle |
 | `onto/upper.py` | Upper ontology (TBox schema) builder; called internally by `OCEDOntoBuilder` |
 | `onto/instantiate.py` | Full pipeline entry point: `OCEDOntoBuilder.build_ontology()` |
 | `onto/builder.py` | Low-level OWL axiom construction (owlapy) |
-| `onto/transform.py` | String ↔ OWL expression parsing |
+| `onto/annotations.py` | `AnnotationWriter` — all `rdfs:label` / `rdfs:comment` text |
+| `onto/attributes.py` | Attribute classes, properties and value individuals |
+| `onto/history.py` | OCEL 2.0 object attribute change history |
+| `onto/transform.py` | Manchester Syntax → OWL expression parsing |
 | `onto/reason.py` | Reasoner integration |
 | `enrich/declare.py` | `DeclareResult` + `DeclareEnricher` — DECLARE constraint mining (requires Lydia) |
 
@@ -108,14 +112,14 @@ The `ATTRIBUTE_HISTORY` extension loads per-object attribute change history from
 | `profile` | `OwlProfile` | `OWL2DL` | `OWL2DL` (full) or `OWL2EL` (lightweight, no TBox inverse/transitive axioms) |
 | `order_representation` | `list[EventOrderRepresentation]` | `[]` | Event ordering strategies; combinable |
 | `case_concepts` | `list[str]` | `[]` | Object types used as cases — required for any event order |
-| `inverse_representation` | `list[InverseRepresentation]` | `[AXIOMATIC, IMPLICIT]` | `AXIOMATIC`: TBox axiom (OWL2DL only); `IMPLICIT`: ABox materialisation (both profiles) |
+| `inverse_representation` | `list[InverseRepresentation]` | `[]` | `AXIOMATIC`: TBox axiom (OWL2DL only); `IMPLICIT`: ABox materialisation (both profiles). Empty means no inverses |
 | `ocel_extensions` | `list[OcelExtension]` | `[]` | Optional OCEL 2.0 features (e.g. `ATTRIBUTE_HISTORY`) |
 | `data_representation` | `list[DataRepresentation]` | `[VALUES]` | How numeric attributes are represented |
 | `bins` | `int` | `5` | Bin count for `EQUAL_BINS` / `DIST_BINS` |
 | `bin_labels` | `list[str]` | `["very_low", …, "very_high"]` | Labels for each bin; must have exactly `bins` elements |
 | `annotation_document` | `str \| None` | `None` | Path to JSON mapping entity names to `{label, comment}` dicts |
-| `annotation_data` | `dict \| None` | `None` | Loaded annotation JSON; call `load_annotation_document()` to populate |
-| `declare_file` | `str \| None` | `None` | Path to a DECLARE results CSV; call `load_declare_file()` to load |
+| `annotation_data` | `dict \| None` | `None` | Annotation JSON; read from `annotation_document` on first access, or assign directly |
+| `declare_file` | `str \| None` | `None` | Path to a DECLARE results CSV; read on first access to `declare_result` |
 | `declare_result` | `DeclareResult \| None` | `None` | Loaded DECLARE constraints; required when `DECLARE` is in `order_representation` |
 | `derive_annotations` | `bool` | `False` | Emit `rdfs:label` on event, Time, object, and attribute individuals |
 
@@ -156,7 +160,7 @@ declare_result = enricher.get_constraints_via_discovery(
 declare_result.write("constraints.csv")
 
 settings.declare_file = "constraints.csv"
-settings.load_declare_file()            # populates settings.declare_result
+# settings.declare_result is read from that path on first access
 ```
 
 `get_constraints_via_discovery` mines constraints meeting the support thresholds. `get_constraints_via_enumeration` checks a fixed constraint set exhaustively. The `DeclareResult` object can be serialised to CSV (`write`/`read`) or embedded in settings (`to_dict`/`from_dict`).

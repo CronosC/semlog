@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from rdflib import RDF, Graph, Namespace, URIRef
 
@@ -13,10 +15,12 @@ class TestReasoner(unittest.TestCase):
         self.settings.profile = OwlProfile.OWL2EL
         self.settings.order_representation = []
         self.settings.case_concepts = []
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
 
     def test_materialize(self):
         base_iri = DEFAULT_IRI
-        out_path = "data/temp/temp.owl"
+        out_path = str(Path(self._tmp.name) / "temp.owl")
 
         builder = OCEDBaseBuilder(base_iri, self.settings)
 

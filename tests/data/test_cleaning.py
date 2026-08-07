@@ -301,7 +301,7 @@ def test_fix_duplicate_names_renames_attribute_col_colliding_with_object_type():
 
     result = fix_duplicate_names(oced)
 
-    obj_df = result.get_object("TypeA")["data"]
+    obj_df = result.get_object("TypeA").data
     assert "TypeA_attr" in obj_df.columns
     assert "TypeA" not in obj_df.columns
 
@@ -312,7 +312,7 @@ def test_fix_duplicate_names_renames_attribute_value_colliding_with_reserved():
 
     result = fix_duplicate_names(oced)
 
-    status_vals = list(result.get_event("activity")["data"]["status"])
+    status_vals = list(result.get_events("activity").data["status"])
     assert "is_a_attr_val" in status_vals
     assert "normal_value" in status_vals
 
@@ -410,7 +410,7 @@ def test_clean_oced_data_sanitizes_special_chars_in_all_strings():
     assert "activity_type_" in result.get_activities()
     assert "obj_type_" in result.get_object_types()
     assert "rel_name_" in result.get_relation_types()
-    ev_data = result.get_event("activity_type_")["data"]
+    ev_data = result.get_events("activity_type_").data
     assert "some_attr_" in ev_data.columns
     assert "val_" in ev_data["some_attr_"].values
 

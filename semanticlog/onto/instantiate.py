@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -14,27 +12,21 @@ from owlapy.owl_axiom import (
 )
 from owlapy.owl_property import OWLObjectProperty
 
-from semanticlog.data.binning import bin_series, equal_bin_series
-from semanticlog.data.oced import OCEDStore
-from semanticlog.onto.builder import OCEDBaseBuilder
+from semanticlog.data.oced import OCEDStore, RelationKind
+from semanticlog.onto.annotations import timestamp_labels
+from semanticlog.onto.history import AttributeHistoryMixin
 from semanticlog.onto.semlog import SemanticLog
-from semanticlog.onto.settings import (
-    DataRepresentation,
-    EventOrderRepresentation,
-    OcelExtension,
-    OntoBuildSettings,
-    OwlProfile,
-    validate_settings,
-)
+from semanticlog.onto.settings import OntoBuildSettings, OwlProfile
 from semanticlog.onto.transform import parse_manchester
+from semanticlog.onto.upper import OCEDUpperOntoBuilder
 
 
-class OCEDOntoBuilder(OCEDBaseBuilder):
+class OCEDOntoBuilder(AttributeHistoryMixin, OCEDUpperOntoBuilder):
     """Full OCED-to-OWL pipeline builder: TBox + ABox.
 
-    Constructs the upper ontology (TBox) internally during ``__init__``, then
-    populates the ABox via :meth:`build_ontology`.  This is the main entry point
-    for converting an :class:`~semanticlog.data.oced.OCEDStore` into a
+    Constructs the upper ontology (TBox) during ``__init__``, then populates the
+    ABox via :meth:`build_ontology`.  This is the main entry point for converting
+    an :class:`~semanticlog.data.oced.OCEDStore` into a
     :class:`~semanticlog.onto.semlog.SemanticLog`.
 
     Args:
@@ -43,12 +35,8 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
     """
 
     def __init__(self, iri: str, settings: OntoBuildSettings) -> None:
-        from semanticlog.onto.upper import OCEDUpperOntoBuilder
-
-        upper = OCEDUpperOntoBuilder(iri, settings)
-        upper.construct_upper_ontology()
-        super().__init__(iri, settings, _onto=upper.onto)
-        self._named_inverse_map = dict(upper._named_inverse_map)
+        super().__init__(iri, settings)
+        self.construct_upper_ontology()
 
     def build_ontology(self, data: OCEDStore) -> SemanticLog:
         """Build the full ontology (TBox already done in __init__) and return a SemanticLog.
@@ -64,7 +52,8 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
         Returns:
             :class:`~semanticlog.onto.semlog.SemanticLog` containing the built ontology.
         """
-        validate_settings(self.settings)
+        self.settings.validate()
+        self.annotations.bind(data.backmap)
         logging.info("Instantiating ontology..")
         logging.info(
             f"Instantiating event data ({len(data.get_activities())} activities).."
@@ -81,15 +70,15 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
         )
         self.instantiate_object_data(data)
         logging.info(
-            f"Instantiating event to object relation data ({len(data.get_relation_types(relation_type='e2o'))} relation types).."
+            f"Instantiating event to object relation data ({len(data.get_relation_types(RelationKind.E2O))} relation types).."
         )
         self.instantiate_event_object_relation_data(data)
         logging.info(
-            f"Instantiating object to object relation data ({len(data.get_relation_types(relation_type='o2o'))} relation types).."
+            f"Instantiating object to object relation data ({len(data.get_relation_types(RelationKind.O2O))} relation types).."
         )
         self.instantiate_object_to_object_relation_data(data)
 
-        if OcelExtension.ATTRIBUTE_HISTORY in self.settings.ocel_extensions:
+        if self.settings.instantiate_attribute_history:
             if data.has_ocel_mode():
                 logging.info("Instantiating object attribute change history..")
                 self.instantiate_object_attribute_history(data)
@@ -113,34 +102,20 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
         Args:
             data: Populated OCEDStore.
         """
+        self.annotations.bind(data.backmap)
         activities = data.get_activities()
 
         self.add_classes(activities, "Event")
-        if self.settings.derive_annotations:
-            for a in activities:
-                orig = data.backmap.get(a, a)
-                self.annotate_entity(a, label=orig, comment=f"Events of type '{orig}'.")
         for activity in activities:
-            activity_data = data.get_events(activity)
-            activity_df = cast(pd.DataFrame, activity_data["data"])
-            id_col = cast(str, activity_data["id"])
-            self.assert_individuals(list(activity_df[id_col]), activity)
-            if self.settings.derive_annotations:
-                orig_activity = data.backmap.get(activity, activity)
-                self.annotate_individuals_bulk(
-                    [
-                        (
-                            str(eid),
-                            f"{orig_activity} ({data.backmap.get(str(eid), str(eid))})",
-                        )
-                        for eid in activity_df[id_col]
-                    ]
-                )
+            self.annotations.activity_class(activity)
+        for activity in activities:
+            table = data.get_events(activity)
+            self.assert_individuals(list(table.data[table.id]), activity)
+            self.annotations.entity_individuals(activity, table.data[table.id])
             self.instantiate_attributes(
-                activity_df.drop(columns=[cast(str, activity_data["time"])]),
-                id_col,
+                table.data.drop(columns=[table.time]),
+                table.id,
                 "EventAttribute",
-                backmap=data.backmap,
             )
 
     def instantiate_event_order(self, data: OCEDStore) -> None:
@@ -153,15 +128,11 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
         Args:
             data: Populated OCEDStore.
         """
-        if (
-            EventOrderRepresentation.DF in self.settings.order_representation
-            or EventOrderRepresentation.EF in self.settings.order_representation
-            or EventOrderRepresentation.EF_explicit
-            in self.settings.order_representation
-        ):
+        self.annotations.bind(data.backmap)
+        if self.settings.instantiate_traces:
             self.instantiate_event_order_via_directly_follows(data)
 
-        if EventOrderRepresentation.DECLARE in self.settings.order_representation:
+        if self.settings.instantiate_declare:
             self.instantiate_event_order_via_declare(data)
 
     def instantiate_event_order_via_directly_follows(self, data: OCEDStore) -> None:
@@ -173,41 +144,13 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
         Args:
             data: Populated OCEDStore.
         """
-        include_ef = (
-            EventOrderRepresentation.EF in self.settings.order_representation
-            or EventOrderRepresentation.EF_explicit
-            in self.settings.order_representation
-        )
-        has_inverses = bool(self.settings.inverse_representation)
+        include_ef = self.settings.instantiate_ef
+        has_inverses = self.settings.has_inverses
 
         self.add_property("df", "Event", "Event", create_inverse=has_inverses)
-        if self.settings.derive_annotations:
-            self.annotate_entity(
-                "df",
-                label="directly followed by",
-                comment="Holds between two events when one immediately precedes the other within any case. Supertype of all case-specific directly-follows properties.",
-            )
-            if has_inverses:
-                self.annotate_entity(
-                    "inv_df",
-                    label="directly preceded by",
-                    comment="Relates an event to the event that directly precedes it within any case. Inverse of 'directly followed by'.",
-                )
-
         if include_ef:
             self.add_property("ef", "Event", "Event", create_inverse=has_inverses)
-            if self.settings.derive_annotations:
-                self.annotate_entity(
-                    "ef",
-                    label="eventually followed by",
-                    comment="Holds between two events whenever one comes at or before the other within any case, including itself. Supertype of all case-specific eventually-follows properties.",
-                )
-                if has_inverses:
-                    self.annotate_entity(
-                        "inv_ef",
-                        label="eventually preceded by",
-                        comment="Relates an event to any event that comes at or before it within any case, including itself. Inverse of 'eventually followed by'.",
-                    )
+        self.annotations.order_superproperties(include_ef)
 
         for case_concept in self.settings.case_concepts:
             self.instantiate_directly_follows(case_concept, data, include_ef)
@@ -239,23 +182,12 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
         start_events = grouped.first()
         end_events = grouped.last()
 
-        has_inverses = bool(self.settings.inverse_representation)
+        has_inverses = self.settings.has_inverses
         start_cls = "StartEvent_" + case_concept
         end_cls = "EndEvent_" + case_concept
         self.add_class(start_cls, "Event")
         self.add_class(end_cls, "Event")
-        if self.settings.derive_annotations:
-            orig_cc = data.backmap.get(case_concept, case_concept)
-            self.annotate_entity(
-                start_cls,
-                label=f"Start Event (via {orig_cc})",
-                comment=f"Events with no directly-follows predecessor in the '{orig_cc}' case trace.",
-            )
-            self.annotate_entity(
-                end_cls,
-                label=f"End Event (via {orig_cc})",
-                comment=f"Events with no directly-follows successor in the '{orig_cc}' case trace.",
-            )
+        self.annotations.trace_boundary_classes(case_concept, start_cls, end_cls)
         self.assert_individuals(list(start_events["event_id"]), start_cls)
         self.assert_individuals(list(end_events["event_id"]), end_cls)
 
@@ -271,27 +203,10 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
             "df",
             create_inverse=has_inverses,
         )
-        if self.settings.derive_annotations:
-            _orig_cc = data.backmap.get(case_concept, case_concept)
-            self.annotate_entity(
-                df_rel,
-                label=f"directly followed (via {_orig_cc}) by",
-                comment=f"Holds between two events when one immediately precedes the other in the same '{_orig_cc}' case trace.",
-            )
-            if has_inverses:
-                self.annotate_entity(
-                    "inv_" + df_rel,
-                    label=f"directly preceded (via {_orig_cc}) by",
-                    comment=f"Relates an event to its direct predecessor in the same '{_orig_cc}' case trace. Inverse of 'directly followed (via {_orig_cc}) by'.",
-                )
+        self.annotations.df_property(case_concept, df_rel)
         self.assert_relations(df_pairs, df_rel, "event_id", "next_event_id")
 
         if include_ef:
-            make_explicit = (
-                EventOrderRepresentation.EF_explicit
-                in self.settings.order_representation
-            )
-
             ef_rel = "ef_" + case_concept
             self.add_property(
                 ef_rel,
@@ -300,19 +215,7 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
                 "ef",
                 create_inverse=has_inverses,
             )
-            if self.settings.derive_annotations:
-                _orig_cc = data.backmap.get(case_concept, case_concept)
-                self.annotate_entity(
-                    ef_rel,
-                    label=f"eventually followed (via {_orig_cc}) by",
-                    comment=f"Holds between two events whenever one comes at or before the other in the same '{_orig_cc}' case trace, including itself.",
-                )
-                if has_inverses:
-                    self.annotate_entity(
-                        "inv_" + ef_rel,
-                        label=f"eventually preceded (via {_orig_cc}) by",
-                        comment=f"Relates an event to any event that comes at or before it in the same '{_orig_cc}' case trace, including itself. Inverse of 'eventually followed (via {_orig_cc}) by'.",
-                    )
+            self.annotations.ef_property(case_concept, ef_rel)
 
             if self.settings.profile == OwlProfile.OWL2DL:
                 # ef as reflexive, transitive closure of df only if profile is DL
@@ -341,7 +244,7 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
                     )
                 )
 
-            if make_explicit:
+            if self.settings.instantiate_ef_explicit:
                 # Upper triangle of the sorted event matrix gives all EF pairs
                 # (position p <= q within a case iff eventually-follows holds).
                 ef_from_lists: list[np.ndarray] = []
@@ -378,15 +281,16 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
                 constraint data comes from ``settings.declare_result``).
 
         Raises:
-            ValueError: If ``settings.declare_result`` is ``None``.
+            ValueError: If no DECLARE constraints are available.
         """
-        if self.settings.declare_result is None:
+        declare_result = self.settings.declare_result
+        if declare_result is None:
             raise ValueError(
-                "settings.declare_result must be set before instantiating DECLARE constraints. "
-                "Call settings.load_declare_file() or assign settings.declare_result directly."
+                "No DECLARE constraints available. Set settings.declare_file to a "
+                "results CSV or assign settings.declare_result directly."
             )
 
-        df_declare = self.settings.declare_result.constraints
+        df_declare = declare_result.constraints
         constraints = [
             c for c in df_declare.columns if c not in ["case_concept", "trace_id"]
         ]
@@ -408,38 +312,28 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
         Args:
             data: Populated OCEDStore.
         """
+        self.annotations.bind(data.backmap)
         df_list = []
 
         for activity in data.get_activities():
-            activity_data = data.get_events(activity)
-            activity_df = cast(pd.DataFrame, activity_data["data"])
-            activity_df = activity_df.rename(
-                columns={
-                    cast(str, activity_data["id"]): "event",
-                    cast(str, activity_data["time"]): "time",
-                }
+            table = data.get_events(activity)
+            df_list.append(
+                table.data.rename(columns={table.id: "event", table.time: "time"})
             )
-            df_list.append(activity_df)
         df_time = pd.concat(df_list)
         if pd.api.types.is_datetime64_any_dtype(df_time["time"]):
             df_time["time_str"] = df_time["time"].dt.strftime("%Y%m%dT%H%M%S_%f")
-            df_time["time_label"] = df_time["time"].dt.strftime("%Y-%m-%d %H:%M:%S")
         else:
             df_time["time_str"] = df_time["time"].apply(self.generate_timestamp_string)
-            df_time["time_label"] = df_time["time"].astype(str)
+        df_time["time_label"] = timestamp_labels(df_time["time"])
         str_list = df_time["time_str"].to_list()
         self.assert_individuals(str_list, "Time")
         unique_times = df_time[["time_str", "time_label", "time"]].drop_duplicates(
             "time_str"
         )
-        if self.settings.derive_annotations:
-            self.annotate_individuals_bulk(
-                list(
-                    unique_times[["time_str", "time_label"]].itertuples(
-                        index=False, name=None
-                    )
-                )
-            )
+        self.annotations.time_individuals(
+            unique_times["time_str"], unique_times["time_label"]
+        )
         self.assert_relations(
             unique_times,
             prop="has_data_value",
@@ -465,306 +359,41 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
         Args:
             data: Populated OCEDStore.
         """
+        self.annotations.bind(data.backmap)
         object_types = data.get_object_types()
         self.add_classes(object_types, "Object")
-        if self.settings.derive_annotations:
-            for ot in object_types:
-                orig = data.backmap.get(ot, ot)
-                self.annotate_entity(
-                    ot, label=orig, comment=f"Objects of type '{orig}'."
-                )
+        for obj_type in object_types:
+            self.annotations.object_class(obj_type)
         for obj in object_types:
-            object_data = data.get_object(obj)
-            object_df = cast(pd.DataFrame, object_data["data"])
-            id_col = cast(str, object_data["id"])
-            self.assert_individuals(list(object_df[id_col]), obj)
-            if self.settings.derive_annotations:
-                orig_obj = data.backmap.get(obj, obj)
-                self.annotate_individuals_bulk(
-                    [
-                        (
-                            str(oid),
-                            f"{orig_obj} ({data.backmap.get(str(oid), str(oid))})",
-                        )
-                        for oid in object_df[id_col]
-                    ]
-                )
-            self.instantiate_attributes(
-                object_df, id_col, "ObjectAttribute", backmap=data.backmap
-            )
-
-    def instantiate_attributes(
-        self,
-        df: pd.DataFrame,
-        key_col: str,
-        attribute_parent: str,
-        backmap: dict[str, str] | None = None,
-    ) -> None:
-        """Instantiate attribute values for a single event or object type.
-
-        For each non-key column in ``df``: creates an attribute class under
-        ``attribute_parent``, adds a ``has_attribute`` sub-property, and asserts
-        attribute-value individuals using the configured ``data_representation``
-        strategy (values, equal-frequency bins, distribution-fitted bins).
-
-        Args:
-            df: Event or object DataFrame with the key column and attribute columns.
-            key_col: Column name of the individual's IRI local name.
-            attribute_parent: Parent class name (``"EventAttribute"`` or ``"ObjectAttribute"``).
-            backmap: Optional cleaned→original name mapping for annotation labels.
-        """
-        dr = self.settings.data_representation
-        for attr in (c for c in df.columns if c != key_col):
-            mask = df[attr].notna()
-            if not mask.any():
-                continue
-            df_attr = df.loc[mask, [key_col, attr]]
-            s = df_attr[attr]
-
-            if pd.api.types.is_numeric_dtype(s) and not dr:
-                continue
-
-            prop = self.generate_specialized_has_attribute_name(attr)
-            self.add_class(attr, attribute_parent)
-            self.add_property(
-                prop,
-                superprop="has_attribute",
-                create_inverse=bool(self.settings.inverse_representation),
-            )
-            if self.settings.derive_annotations and backmap is not None:
-                orig = backmap.get(attr, attr)
-                kind = "event" if attribute_parent == "EventAttribute" else "object"
-                self.annotate_entity(
-                    attr, label=orig, comment=f"Attribute '{orig}' of a {kind}."
-                )
-                self.annotate_entity(
-                    prop,
-                    label=f"has {orig}",
-                    comment=f"Links a {kind} to its '{orig}' attribute value.",
-                )
-                if bool(self.settings.inverse_representation):
-                    inv = self.generate_inverse_property_name(prop)
-                    self.annotate_entity(
-                        inv,
-                        label=f"is {orig} of",
-                        comment=f"Links a '{orig}' attribute value to its owning {kind}.",
-                    )
-
-            if pd.api.types.is_datetime64_any_dtype(s):
-                self._instantiate_datetime_attr(df_attr, key_col, attr, prop, backmap)
-            elif pd.api.types.is_numeric_dtype(s):
-                self._instantiate_numeric_attr(
-                    df_attr, key_col, attr, prop, dr, backmap
-                )
-            else:
-                self._instantiate_string_attr(df_attr, key_col, attr, prop, backmap)
-
-    def _instantiate_datetime_attr(
-        self,
-        df_attr: pd.DataFrame,
-        key_col: str,
-        attr: str,
-        prop: str,
-        backmap: dict[str, str] | None = None,
-    ) -> None:
-        self._instantiate_attr(
-            df_attr,
-            key_col,
-            attr,
-            prop,
-            value_to_id=lambda v, a=attr: f"{a}_{self.generate_timestamp_string(v)}",
-            also_assert_data_value=True,
-            backmap=backmap,
-        )
-
-    def _instantiate_numeric_attr(
-        self,
-        df_attr: pd.DataFrame,
-        key_col: str,
-        attr: str,
-        prop: str,
-        dr: list[DataRepresentation],
-        backmap: dict[str, str] | None = None,
-    ) -> None:
-        s = df_attr[attr]
-        if DataRepresentation.VALUES in dr:
-            self._instantiate_attr(
-                df_attr,
-                key_col,
-                attr,
-                prop,
-                value_to_id=lambda v, a=attr: f"{a}_{v}",
-                also_assert_data_value=True,
-                backmap=backmap,
-            )
-        quant = next(
-            (
-                x
-                for x in dr
-                if x
-                in (
-                    DataRepresentation.EQUAL_BINS,
-                    DataRepresentation.DIST_BINS,
-                )
-            ),
-            None,
-        )
-        if quant is None:
-            return
-        if quant == DataRepresentation.EQUAL_BINS:
-            binned = equal_bin_series(
-                s,
-                bins=self.settings.bins,
-                labels=self.settings.bin_labels,
-            )
-        else:
-            binned = bin_series(
-                s,
-                bins=self.settings.bins,
-                labels=self.settings.bin_labels,
-            )
-        df_merge = df_attr.copy()
-        df_merge["_bin"] = binned
-        out_of_bin = df_attr.loc[df_merge["_bin"].isna()]
-        df_q = df_merge[df_merge["_bin"].notna()]
-        for bin_label, bin_group in df_q.groupby("_bin", observed=True):
-            bin_class = f"{attr}_{str(bin_label)}"
-            self.add_class(bin_class, attr)
-            if DataRepresentation.VALUES in dr:
-                value_inds = [f"{attr}_{v}" for v in bin_group[attr].unique()]
-                self.assert_individuals(value_inds, bin_class)
-            else:
-                self.assert_individuals(bin_group[key_col].tolist(), bin_class)
-        if not out_of_bin.empty:
-            logging.warning(
-                f"BINNING: {len(out_of_bin)} value(s) for attribute "
-                f"'{attr}' fall outside all bin boundaries; using raw "
-                "numeric representation as fallback."
-            )
-            self._instantiate_attr(
-                out_of_bin,
-                key_col,
-                attr,
-                prop,
-                value_to_id=lambda v, a=attr: f"{a}_{v}",
-                also_assert_data_value=True,
-                backmap=backmap,
-            )
-
-    def _instantiate_string_attr(
-        self,
-        df_attr: pd.DataFrame,
-        key_col: str,
-        attr: str,
-        prop: str,
-        backmap: dict[str, str] | None = None,
-    ) -> None:
-        self._instantiate_attr(
-            df_attr,
-            key_col,
-            attr,
-            prop,
-            value_to_id=lambda v, a=attr: f"{a}_{str(v)}",
-            also_assert_data_value=False,
-            backmap=backmap,
-        )
-
-    def _instantiate_attr(
-        self,
-        df: pd.DataFrame,
-        key_col: str,
-        attr: str,
-        prop: str,
-        value_to_id: Callable[..., str],
-        also_assert_data_value: bool,
-        backmap: dict[str, str] | None = None,
-    ) -> None:
-        tmp = df.copy()
-
-        # map each distinct value to an attribute-individual IRI/name
-        vals = tmp[attr].unique()
-        mapping = {v: value_to_id(v) for v in vals}
-        tmp["attr_ind"] = tmp[attr].map(mapping)
-
-        # create individuals for the attribute values (unique only — one per distinct value)
-        self.assert_individuals(tmp["attr_ind"].unique().tolist(), attr)
-
-        if self.settings.derive_annotations:
-            bm = backmap or {}
-            self.annotate_individuals_bulk(
-                [
-                    (
-                        iid,
-                        bm.get(
-                            iid,
-                            v.strftime("%Y-%m-%d %H:%M:%S")
-                            if isinstance(v, pd.Timestamp)
-                            else str(v),
-                        ),
-                    )
-                    for v, iid in mapping.items()
-                ]
-            )
-
-        # connect objects/events (key_col) to attribute-individuals via the property
-        self.assert_relations(tmp, prop=prop, from_key=key_col, to_key="attr_ind")
-
-        # for numeric/datetime, also attach the literal value
-        if also_assert_data_value:
-            self.assert_relations(
-                tmp,
-                prop="has_data_value",
-                from_key="attr_ind",
-                to_key=attr,
-                data_prop=True,
-            )
+            table = data.get_object(obj)
+            self.assert_individuals(list(table.data[table.id]), obj)
+            self.annotations.entity_individuals(obj, table.data[table.id])
+            self.instantiate_attributes(table.data, table.id, "ObjectAttribute")
 
     def _instantiate_relation_data(
         self,
         data: OCEDStore,
-        relation_filter: str,
+        relation_filter: RelationKind,
         superprop: str,
         include_domain: bool = False,
     ) -> None:
-        for relation in data.get_relation_types(relation_type=relation_filter):
-            relation_data = data.get_relation(relation)
+        self.annotations.bind(data.backmap)
+        for relation in data.get_relation_types(relation_filter):
+            table = data.get_relation(relation)
+            from_types = table.from_type or []
             self.add_property(
                 relation,
                 superprop=superprop,
-                domain_class=(
-                    " or ".join(relation_data["from_type"]) if include_domain else None
-                ),
-                range_class=" or ".join(relation_data["to_type"]),
-                create_inverse=bool(self.settings.inverse_representation),
+                domain_class=" or ".join(from_types) if include_domain else None,
+                range_class=" or ".join(table.to_type),
+                create_inverse=self.settings.has_inverses,
             )
-            if self.settings.derive_annotations:
-                orig = data.backmap.get(relation, relation)
-                raw_from = relation_data.get("from_type", [])
-                from_types = (
-                    " or ".join(data.backmap.get(t, t) for t in raw_from)
-                    if raw_from
-                    else "event"
-                )
-                to_types = " or ".join(
-                    data.backmap.get(t, t) for t in relation_data["to_type"]
-                )
-                self.annotate_entity(
-                    relation,
-                    label=orig,
-                    comment=f"Relates '{from_types}' to '{to_types}' via the '{orig}' relationship.",
-                )
-                if bool(self.settings.inverse_representation):
-                    inv = self.generate_inverse_property_name(relation)
-                    self.annotate_entity(
-                        inv,
-                        label=f"inverse of {orig}",
-                        comment=f"Inverse of '{orig}': relates '{to_types}' back to '{from_types}'.",
-                    )
+            self.annotations.relation(relation, from_types, table.to_type)
             self.assert_relations(
-                relation_data["data"],
+                table.data,
                 relation,
-                from_key=relation_data["from_id"],
-                to_key=relation_data["to_id"],
+                from_key=table.from_id,
+                to_key=table.to_id,
             )
 
     def instantiate_event_object_relation_data(self, data: OCEDStore) -> None:
@@ -773,7 +402,7 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
         Args:
             data: Populated OCEDStore.
         """
-        self._instantiate_relation_data(data, "e2o", "event_object_relation")
+        self._instantiate_relation_data(data, RelationKind.E2O, "event_object_relation")
 
     def instantiate_object_to_object_relation_data(self, data: OCEDStore) -> None:
         """Assert all o2o relation properties and their ABox triples.
@@ -782,183 +411,5 @@ class OCEDOntoBuilder(OCEDBaseBuilder):
             data: Populated OCEDStore.
         """
         self._instantiate_relation_data(
-            data, "o2o", "object_object_relation", include_domain=True
+            data, RelationKind.O2O, "object_object_relation", include_domain=True
         )
-
-    def instantiate_object_attribute_history(self, data: OCEDStore) -> None:
-        """Instantiate object attribute change history as AttributeChange individuals.
-
-        For each change record ``(ocel:oid, ocel:field, value, ocel:timestamp)``,
-        creates one ``AttributeChange`` individual and asserts:
-
-        - ``has_attribute_change``: object → AttributeChange
-        - ``attribute_change_value``: AttributeChange → attribute-value individual
-        - ``changed_at``: AttributeChange → Time individual
-
-        Attribute-value individuals are linked via a per-attribute subproperty of
-        ``attribute_change_value`` (e.g., ``change_value_price``).  Datetime attributes
-        and numeric attributes with ``DataRepresentation.VALUES`` also get a
-        ``has_data_value`` literal.  Binning modes (``EQUAL_BINS``,
-        ``DIST_BINS``) are intentionally ignored for changes — only the exact
-        numeric value is recorded.
-
-        Args:
-            data: OCEDStore created with ``ocel_mode=True`` that contains object
-                change history loaded via ``add_object_changes``.
-        """
-        has_inverses = bool(self.settings.inverse_representation)
-        for obj_type in data.get_object_change_types():
-            changes_df = data.get_object_changes(obj_type)
-
-            for attr_name, grp in changes_df.groupby("ocel:field"):
-                attr_name = str(attr_name)
-                if attr_name not in grp.columns:
-                    logging.warning(
-                        f"ATTRIBUTE_HISTORY: ocel:field value '{attr_name}' has no "
-                        f"matching column in object_changes for type '{obj_type}' — "
-                        "skipping. This indicates unexpected object_changes structure."
-                    )
-                    continue
-
-                self.add_class(attr_name, "ObjectAttribute")
-                attr_change_cls = attr_name + "Change"
-                self.add_class(attr_change_cls, "AttributeChange")
-                change_prop = self.generate_attr_change_value_prop_name(attr_name)
-                self.add_property(
-                    change_prop,
-                    superprop="attribute_change_value",
-                    range_class=attr_name,
-                    create_inverse=has_inverses,
-                )
-                if self.settings.derive_annotations:
-                    orig_attr = data.backmap.get(attr_name, attr_name)
-                    self.annotate_entity(
-                        attr_name,
-                        label=orig_attr,
-                        comment=f"Attribute '{orig_attr}' of an object, tracking changes over time.",
-                    )
-                    self.annotate_entity(
-                        attr_change_cls,
-                        label=f"{orig_attr} Change",
-                        comment=f"A timestamped record of the attribute '{orig_attr}' taking a new value.",
-                    )
-                    self.annotate_entity(
-                        change_prop,
-                        label=f"changes {orig_attr} to",
-                        comment=f"Links an attribute change record to the new value of '{orig_attr}'.",
-                    )
-                    if has_inverses:
-                        self.annotate_entity(
-                            self.generate_inverse_property_name(change_prop),
-                            label=f"is new {orig_attr} in change",
-                            comment=f"Links a '{orig_attr}' value to the attribute change record in which it became the new value.",
-                        )
-
-                tmp = grp[["ocel:oid", "ocel:timestamp", attr_name]].copy()
-                tmp = tmp[tmp[attr_name].notna()].copy()
-                if tmp.empty:
-                    continue
-
-                s = tmp[attr_name]
-                if pd.api.types.is_numeric_dtype(s):
-                    if (
-                        DataRepresentation.VALUES
-                        not in self.settings.data_representation
-                    ):
-                        continue
-
-                tmp["ts_str"] = tmp["ocel:timestamp"].apply(
-                    self.generate_timestamp_string
-                )
-                tmp["attr_change_id"] = (
-                    "AttrChange_"
-                    + tmp["ocel:oid"].astype(str)
-                    + "_"
-                    + attr_name
-                    + "_"
-                    + tmp["ts_str"]
-                )
-                tmp["time_id"] = tmp["ts_str"]
-
-                self.assert_individuals(tmp["attr_change_id"].tolist(), attr_change_cls)
-                if self.settings.derive_annotations:
-                    ts_labels = (
-                        tmp["ocel:timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
-                        if pd.api.types.is_datetime64_any_dtype(tmp["ocel:timestamp"])
-                        else tmp["ocel:timestamp"].astype(str)
-                    )
-                    obj_labels = obj_type + " (" + tmp["ocel:oid"].astype(str) + ")"
-                    self.annotate_individuals_bulk(
-                        list(
-                            zip(
-                                tmp["attr_change_id"],
-                                f"{attr_name} Change for "
-                                + obj_labels
-                                + " at "
-                                + ts_labels,
-                            )
-                        )
-                    )
-                self.assert_relations(
-                    tmp,
-                    "has_attribute_change",
-                    from_key="ocel:oid",
-                    to_key="attr_change_id",
-                )
-                s = tmp[attr_name]
-                if pd.api.types.is_datetime64_any_dtype(s):
-                    self._instantiate_attr(
-                        tmp,
-                        "attr_change_id",
-                        attr_name,
-                        change_prop,
-                        lambda v, a=attr_name: (
-                            f"{a}_{self.generate_timestamp_string(v)}"
-                        ),
-                        also_assert_data_value=True,
-                    )
-                elif pd.api.types.is_numeric_dtype(s):
-                    self._instantiate_attr(
-                        tmp,
-                        "attr_change_id",
-                        attr_name,
-                        change_prop,
-                        lambda v, a=attr_name: f"{a}_{v}",
-                        also_assert_data_value=True,
-                    )
-                else:
-                    self._instantiate_attr(
-                        tmp,
-                        "attr_change_id",
-                        attr_name,
-                        change_prop,
-                        lambda v, a=attr_name: f"{a}_{str(v)}",
-                        also_assert_data_value=False,
-                    )
-                self.assert_individuals(tmp["time_id"].unique().tolist(), "Time")
-                unique_change_times = tmp[
-                    ["time_id", "ocel:timestamp"]
-                ].drop_duplicates("time_id")
-                if self.settings.derive_annotations:
-                    ts_labels = (
-                        unique_change_times["ocel:timestamp"].dt.strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
-                        if pd.api.types.is_datetime64_any_dtype(
-                            unique_change_times["ocel:timestamp"]
-                        )
-                        else unique_change_times["ocel:timestamp"].astype(str)
-                    )
-                    self.annotate_individuals_bulk(
-                        list(zip(unique_change_times["time_id"], ts_labels))
-                    )
-                self.assert_relations(
-                    unique_change_times,
-                    "has_data_value",
-                    from_key="time_id",
-                    to_key="ocel:timestamp",
-                    data_prop=True,
-                )
-                self.assert_relations(
-                    tmp, "changed_at", from_key="attr_change_id", to_key="time_id"
-                )

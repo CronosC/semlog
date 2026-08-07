@@ -1,19 +1,71 @@
 import logging
+from collections.abc import Callable
+from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 import pm4py as pm
+from pm4py.objects.ocel.obj import OCEL
 
 from semanticlog.data.loading.abstractloader import AbstractLoader
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.oced import EntityKind, OCEDStore
 
 if TYPE_CHECKING:
     from semanticlog.onto.settings import OcelExtension
 
+_FORMAT_BY_SUFFIX: dict[str, str] = {
+    ".xml": "xml",
+    ".xmlocel": "xml",
+    ".json": "json",
+    ".jsonocel": "json",
+    ".sqlite": "sqlite",
+}
 
-def _type_prefix(ids: pd.Series, object_type: str) -> pd.Series:
-    return object_type + "_" + ids.astype(str)
+# Reader *names* rather than the functions themselves, so that the lookup on the
+# pm4py module happens at call time and the readers stay patchable in tests.
+_READER_NAMES: dict[str, str] = {
+    "xml": "read_ocel2_xml",
+    "json": "read_ocel2_json",
+    "sqlite": "read_ocel2_sqlite",
+}
+
+# Qualifier values pm4py may emit for an unqualified relation.  Both the true
+# nulls and the string placeholders are replaced, so both must be counted when
+# reporting how many rows were affected.
+_MISSING_QUALIFIER_STRINGS: list[str] = ["None", "none", "NA", "N/A", ""]
+_MISSING_QUALIFIERS: list = [None, np.nan, *_MISSING_QUALIFIER_STRINGS]
+_FALLBACK_QUALIFIER = "modifies"
+
+
+def _prefix_ids(ids: pd.Series, prefix: str) -> pd.Series:
+    """Prefix purely numeric identifiers with their type or activity name."""
+    return prefix + "_" + ids.astype(str)
+
+
+def _normalise_qualifiers(df: pd.DataFrame, kind: str) -> pd.DataFrame:
+    """Return a copy of ``df`` with missing qualifiers replaced by the fallback name.
+
+    Args:
+        df: Relation table containing an ``ocel:qualifier`` column.
+        kind: ``"e2o"`` or ``"o2o"``, used only in the warning message.
+
+    Returns:
+        A copy of ``df``; the caller's DataFrame is never mutated.
+    """
+    df = df.copy()
+    qualifier = df["ocel:qualifier"]
+    n_missing = int(
+        qualifier.isna().sum() + qualifier.isin(_MISSING_QUALIFIER_STRINGS).sum()
+    )
+    if n_missing:
+        logging.warning(
+            f"pm4pyloader: {n_missing} {kind} relation(s) had no qualifier and were "
+            f"assigned the fallback relation name '{_FALLBACK_QUALIFIER}'."
+        )
+    df["ocel:qualifier"] = qualifier.replace(_MISSING_QUALIFIERS, _FALLBACK_QUALIFIER)
+    return df
 
 
 class PM4PYLoader(AbstractLoader):
@@ -38,15 +90,26 @@ class PM4PYLoader(AbstractLoader):
         """
         super().__init__(path, config)
         self._ocel_extensions: list[OcelExtension] = ocel_extensions or []
-        if "file_format" not in config:
-            if path.endswith(".xml") or path.endswith(".xmlocel"):
-                config["file_format"] = "xml"
-            elif path.endswith(".json") or path.endswith(".jsonocel"):
-                config["file_format"] = "json"
-            elif path.endswith(".sqlite"):
-                config["file_format"] = "sqlite"
-            else:
-                raise ValueError("Unknown file type.")
+        self.file_format = self._resolve_file_format(path, config)
+        config["file_format"] = self.file_format
+
+    @staticmethod
+    def _resolve_file_format(path: str, config: dict[str, str]) -> str:
+        given = config.get("file_format")
+        if given is not None:
+            if given not in _READER_NAMES:
+                raise ValueError(
+                    f"Unsupported file_format '{given}'. "
+                    f"Supported formats: {', '.join(sorted(_READER_NAMES))}."
+                )
+            return given
+        inferred = _FORMAT_BY_SUFFIX.get(Path(path).suffix.lower())
+        if inferred is None:
+            raise ValueError(
+                f"Cannot infer OCEL format from '{path}'. Supported extensions: "
+                f"{', '.join(sorted(_FORMAT_BY_SUFFIX))}."
+            )
+        return inferred
 
     def get_oced(self) -> OCEDStore:
         """Returns the data as a OCEDStore object"""
@@ -55,12 +118,8 @@ class PM4PYLoader(AbstractLoader):
         load_attr_history = OcelExtension.ATTRIBUTE_HISTORY in self._ocel_extensions
 
         logging.info(f"Loading ocel data from file {self.path}..")
-        if self.config["file_format"] == "xml":
-            log = pm.read_ocel2_xml(self.path)
-        elif self.config["file_format"] == "json":
-            log = pm.read_ocel2_json(self.path)
-        elif self.config["file_format"] == "sqlite":
-            log = pm.read_ocel2_sqlite(self.path)
+        read: Callable[[str], OCEL] = getattr(pm, _READER_NAMES[self.file_format])
+        log = read(self.path)
 
         oced = OCEDStore(ocel_mode=load_attr_history)
 
@@ -84,17 +143,9 @@ class PM4PYLoader(AbstractLoader):
                 raise ValueError("IDs are not unique!")
 
         # O2O Relations
-        n_o2o_null = log.o2o["ocel:qualifier"].isna().sum()
-        if n_o2o_null:
-            logging.warning(
-                f"pm4pyloader: {n_o2o_null} o2o relation(s) had no qualifier "
-                "and were assigned the fallback relation name 'modifies'."
-            )
-        log.o2o["ocel:qualifier"] = log.o2o["ocel:qualifier"].replace(
-            [None, np.nan, "None", "none", "NA", "N/A", ""], "modifies"
-        )
+        o2o = _normalise_qualifiers(log.o2o, "o2o")
         o2o_relation_dfs = {
-            relation_type: df for relation_type, df in log.o2o.groupby("ocel:qualifier")
+            relation_type: df for relation_type, df in o2o.groupby("ocel:qualifier")
         }
         for relation_type in o2o_relation_dfs:
             df = o2o_relation_dfs[relation_type]
@@ -113,19 +164,7 @@ class PM4PYLoader(AbstractLoader):
             )
 
         # E2O Relations
-        relations = log.relations
-        n_e2o_null = (
-            relations["ocel:qualifier"].isna().sum()
-            + relations["ocel:qualifier"].isin(["None", "none", "NA", "N/A", ""]).sum()
-        )
-        if n_e2o_null:
-            logging.warning(
-                f"pm4pyloader: {n_e2o_null} e2o relation(s) had no qualifier "
-                "and were assigned the fallback relation name 'modifies'."
-            )
-        relations["ocel:qualifier"] = relations["ocel:qualifier"].replace(
-            [None, np.nan, "None", "none", "NA", "N/A", ""], "modifies"
-        )
+        relations = _normalise_qualifiers(log.relations, "e2o")
         e2o_relation_dfs = {
             relation_type: df
             for relation_type, df in relations.groupby("ocel:qualifier")
@@ -146,9 +185,9 @@ class PM4PYLoader(AbstractLoader):
         # collisions with numerically indexed events.
         for object_type in reindex_objects:
             oced.change_ids(
-                "object",
+                EntityKind.OBJECT,
                 object_type,
-                lambda x, ot=object_type: _type_prefix(x, ot),
+                partial(_prefix_ids, prefix=object_type),
             )
 
         # Load object attribute change history when ATTRIBUTE_HISTORY is active.
@@ -161,7 +200,7 @@ class PM4PYLoader(AbstractLoader):
                 oc = oc.copy()
                 for object_type in reindex_objects:
                     mask = oc["ocel:type"] == object_type
-                    oc.loc[mask, "ocel:oid"] = _type_prefix(
+                    oc.loc[mask, "ocel:oid"] = _prefix_ids(
                         oc.loc[mask, "ocel:oid"], object_type
                     )
                 for obj_type, grp in oc.groupby("ocel:type"):
@@ -196,7 +235,7 @@ class PM4PYLoader(AbstractLoader):
         # Prefix purely numerical event IDs with their activity name.
         for activity in reindex_events:
             oced.change_ids(
-                "event", activity, lambda x, a=activity: a + "_" + x.astype(str)
+                EntityKind.EVENT, activity, partial(_prefix_ids, prefix=activity)
             )
 
         return oced

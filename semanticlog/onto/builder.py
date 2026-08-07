@@ -27,7 +27,8 @@ from owlapy.owl_literal import OWLLiteral
 from owlapy.owl_ontology import Ontology
 from owlapy.owl_property import OWLDataProperty, OWLObjectProperty
 
-from semanticlog.onto.settings import InverseRepresentation, OntoBuildSettings
+from semanticlog.onto.annotations import AnnotationWriter
+from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.transform import parse_manchester
 
 _OWL_DATATYPES: frozenset[str] = frozenset({"integer", "double", "boolean", "dateTime"})
@@ -52,6 +53,22 @@ _RDFS_COMMENT = OWLAnnotationProperty(
 )
 
 
+def _read_named_inverses(onto: Ontology) -> dict[str, str]:
+    """Return the named inverse pairs declared in an ontology loaded from disk.
+
+    The only owlapy-private access in this package.  owlapy 1.6 exposes no public
+    equivalent: ``object_properties_in_signature()`` yields ``OWLObjectProperty``
+    objects whose ``get_inverse_property()`` returns a syntactic ``OWLObjectInverseOf``
+    rather than the named inverse, and ``get_tbox_axioms()`` raises
+    ``NotImplementedError``.  Revisit when owlapy grows a public accessor.
+    """
+    pairs: dict[str, str] = {}
+    for prop in onto._onto.object_properties():
+        if prop.inverse_property is not None:
+            pairs[prop.name] = prop.inverse_property.name
+    return pairs
+
+
 class OCEDBaseBuilder:
     """Low-level OWL axiom builder wrapping owlapy.
 
@@ -63,35 +80,40 @@ class OCEDBaseBuilder:
     and :class:`~semanticlog.onto.instantiate.OCEDOntoBuilder` (full pipeline).
     """
 
-    def __init__(
-        self,
-        iri: str,
-        settings: OntoBuildSettings,
-        _onto: Ontology | None = None,
-    ):
-        if _onto is not None:
-            self.onto = _onto
-            self.iri = iri
-        else:
-            try:
-                self.onto = Ontology(IRI.create(iri), load=True)
-                self.iri = self.onto.get_ontology_id().get_ontology_iri().str  # type: ignore[union-attr]
-            except Exception as e:
-                # Ontology could not be loaded (file not found, unsupported kwarg, etc.)
-                # — fall back to creating a fresh empty ontology.
-                logging.warning(
-                    f"Could not load ontology from IRI '{iri}': {e}. Creating empty ontology."
-                )
-                self.onto = Ontology(IRI.create(iri), load=False)
-                self.iri = iri
+    def __init__(self, iri: str, settings: OntoBuildSettings, load: bool = False):
+        """Create a builder over a new or existing ontology.
+
+        Args:
+            iri: Ontology IRI, or a resolvable document IRI when ``load`` is True.
+                A trailing ``#`` is appended if missing.
+            settings: Build configuration.
+            load: Read an existing ontology from ``iri`` instead of starting empty.
+                Off by default: resolving a non-document IRI makes owlapy attempt a
+                network fetch.
+        """
+        self.onto, self.iri = self._open_ontology(iri, load)
         if not self.iri.endswith("#"):
             self.iri = self.iri + "#"
         self.settings = settings
         self._named_inverse_map: dict[str, str] = dict(_SCHEMA_NAMED_INVERSES)
-        for prop in self.onto._onto.object_properties():
-            if prop.inverse_property is not None:
-                self._named_inverse_map[prop.name] = prop.inverse_property.name
+        if load:
+            self._named_inverse_map.update(_read_named_inverses(self.onto))
         self._annotation_doc: dict[str, dict[str, str]] = settings.annotation_data or {}
+        self.annotations = AnnotationWriter(self, settings)
+
+    @staticmethod
+    def _open_ontology(iri: str, load: bool) -> tuple[Ontology, str]:
+        if not load:
+            return Ontology(IRI.create(iri), load=False), iri
+        try:
+            onto = Ontology(IRI.create(iri), load=True)
+            return onto, onto.get_ontology_id().get_ontology_iri().str  # type: ignore[union-attr]
+        except Exception as e:
+            # Not resolvable (file missing, no network, unsupported kwarg) — start empty.
+            logging.warning(
+                f"Could not load ontology from IRI '{iri}': {e}. Creating empty ontology."
+            )
+            return Ontology(IRI.create(iri), load=False), iri
 
     def annotate_entity(
         self,
@@ -261,7 +283,7 @@ class OCEDBaseBuilder:
             self._named_inverse_map[inverse_name] = prop_name
             owl_inverse = prop_class(self.iri + inverse_name)
             self.onto.add_axiom(OWLDeclarationAxiom(owl_inverse))
-            if InverseRepresentation.AXIOMATIC in self.settings.inverse_representation:
+            if self.settings.axiomatic_inverses:
                 self.onto.add_axiom(
                     OWLInverseObjectPropertiesAxiom(owl_prop, owl_inverse)
                 )
@@ -351,7 +373,7 @@ class OCEDBaseBuilder:
                 OWLObjectPropertyAssertionAxiom(owl_from, owl_prop, owl_to)  # type: ignore[arg-type]
             )
 
-            if InverseRepresentation.IMPLICIT in self.settings.inverse_representation:
+            if self.settings.implicit_inverses:
                 inv = inverse_name if inverse_name is not None else "inv_" + prop_name
                 inv_prop = OWLObjectProperty(self.iri + inv)
                 self.onto.add_axiom(
@@ -420,7 +442,7 @@ class OCEDBaseBuilder:
         if axioms:
             self.onto.add_axiom(axioms)
 
-        if InverseRepresentation.IMPLICIT in self.settings.inverse_representation:
+        if self.settings.implicit_inverses:
             inv = inverse_name if inverse_name is not None else "inv_" + prop
             inv_prop = OWLObjectProperty(f"{iri}{inv}")
             inverse_axioms = [

@@ -380,7 +380,7 @@ def test_numeric_id_prefix_propagates_to_e2o_relation(numeric_ids_ocel):
     """After prefixing, relation tables must reference the new IDs, not the originals."""
     oced = PM4PYLoader(numeric_ids_ocel, {}).get_oced()
     rel = oced.get_relations("e2o")["modifies"]
-    to_ids = set(rel["data"][rel["to_id"]].tolist())
+    to_ids = set(rel.data[rel.to_id].tolist())
     assert to_ids == {"order_10", "order_20"}
 
 

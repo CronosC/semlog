@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -93,6 +94,10 @@ class InverseRepresentation(str, Enum):
     IMPLICIT = "implicit"
 
 
+_DEFAULT_BINS = 5
+_DEFAULT_BIN_LABELS = ["very_low", "low", "average", "high", "very_high"]
+
+
 @dataclass
 class OntoBuildSettings:
     """
@@ -106,26 +111,26 @@ class OntoBuildSettings:
             ATTRIBUTE_HISTORY). Empty list by default (no extensions active).
         case_concepts: Object types to use as case concepts; each defines an
             independent trace perspective. Must be set before calling build_ontology.
-        declare_file: Path to a pre-computed DECLARE results CSV. Used as a reference
-            path alongside declare_result (which holds the loaded data).
-        declare_result: Loaded DECLARE constraint results. Required when DECLARE is in
-            order_representation. Populate via load_declare_file() or set directly.
+        declare_file: Path to a pre-computed DECLARE results CSV. Read on first access
+            to ``declare_result``.
         inverse_representation: Inverse relation strategies to include. AXIOMATIC
             adds InverseObjectProperty TBox axioms (OWL2DL only); IMPLICIT
-            materialises inverse assertions in the ABox (both profiles). Both are
-            enabled by default; use an empty list to omit inverses entirely.
+            materialises inverse assertions in the ABox (both profiles). Empty by
+            default, meaning no inverse relations are emitted.
         data_representation: How numeric attribute columns are represented. A list of
             modes; empty list means omit numeric attributes entirely. VALUES and one
             binning mode may coexist; EQUAL_BINS and DIST_BINS are mutually exclusive.
         bins: Number of bins for EQUAL_BINS and DIST_BINS modes.
         bin_labels: Labels for each bin; must have exactly bins elements.
         annotation_document: Path to a JSON file mapping entity names to annotation
-            dicts. Each entry may contain "label" and/or "comment" keys. Used as a
-            reference path alongside annotation_data (which holds the loaded content).
-        annotation_data: Loaded contents of annotation_document. Populated via
-            load_annotation_document() or set directly. Used by the builder.
+            dicts. Each entry may contain "label" and/or "comment" keys. Read on first
+            access to ``annotation_data``.
         derive_annotations: If True, emit rdfs:label on every event, Time, and object
             individual using a human-readable label constructed from the source data.
+
+    The ``annotation_data`` and ``declare_result`` properties resolve
+    ``annotation_document`` and ``declare_file`` lazily on first read, and can also
+    be assigned directly when the data did not come from a file.
     """
 
     profile: OwlProfile = OwlProfile.OWL2DL
@@ -133,62 +138,208 @@ class OntoBuildSettings:
     ocel_extensions: list[OcelExtension] = field(default_factory=list)
     case_concepts: list[str] = field(default_factory=list)
     declare_file: str | None = None
-    declare_result: DeclareResult | None = None
-    inverse_representation: list[InverseRepresentation] = field(
-        default_factory=lambda: [
-            InverseRepresentation.AXIOMATIC,
-            InverseRepresentation.IMPLICIT,
-        ]
-    )
+    inverse_representation: list[InverseRepresentation] = field(default_factory=list)
     data_representation: list[DataRepresentation] = field(
         default_factory=lambda: [DataRepresentation.VALUES]
     )
-    bins: int = 5
-    bin_labels: list[str] = field(
-        default_factory=lambda: ["very_low", "low", "average", "high", "very_high"]
-    )
+    bins: int = _DEFAULT_BINS
+    bin_labels: list[str] = field(default_factory=lambda: list(_DEFAULT_BIN_LABELS))
     annotation_document: str | None = None
-    annotation_data: dict[str, dict[str, str]] | None = None
     derive_annotations: bool = False
 
     def __post_init__(self) -> None:
+        # Each cache remembers the path it came from, so re-pointing the path field
+        # after a read invalidates it rather than returning the previous file.
+        self._annotation_data: dict[str, dict[str, str]] | None = None
+        self._annotation_source: str | None = None
+        self._declare_result: DeclareResult | None = None
+        self._declare_source: str | None = None
+        problem = self._bin_label_problem()
+        if problem is not None:
+            raise ValueError(problem)
+
+    def _bin_label_problem(self) -> str | None:
         if len(self.bin_labels) != self.bins:
-            raise ValueError(
+            return (
                 f"bin_labels must have exactly bins={self.bins} "
                 f"elements, got {len(self.bin_labels)}."
             )
+        return None
 
-    def load_annotation_document(self) -> None:
-        """Load annotation_document from disk into annotation_data.
+    # ------------------------------------------------------------------
+    # Lazily resolved inputs
+    # ------------------------------------------------------------------
+
+    @property
+    def annotation_data(self) -> dict[str, dict[str, str]] | None:
+        """Annotation document contents, read from ``annotation_document`` on first access.
+
+        Assigning directly takes precedence over the path for as long as
+        ``annotation_document`` is not changed afterwards.
+        """
+        if self.annotation_document is not None and (
+            self._annotation_data is None
+            or self._annotation_source != self.annotation_document
+        ):
+            with open(self.annotation_document, encoding="utf-8") as f:
+                self._annotation_data = json.load(f)
+            self._annotation_source = self.annotation_document
+        return self._annotation_data
+
+    @annotation_data.setter
+    def annotation_data(self, value: dict[str, dict[str, str]] | None) -> None:
+        self._annotation_data = value
+        self._annotation_source = self.annotation_document
+
+    @property
+    def declare_result(self) -> DeclareResult | None:
+        """Mined DECLARE constraints, read from ``declare_file`` on first access.
+
+        Assigning directly takes precedence over the path for as long as
+        ``declare_file`` is not changed afterwards.
+        """
+        if self.declare_file is not None and (
+            self._declare_result is None or self._declare_source != self.declare_file
+        ):
+            from semanticlog.enrich.declare import DeclareResult
+
+            self._declare_result = DeclareResult.read(self.declare_file)
+            self._declare_source = self.declare_file
+        return self._declare_result
+
+    @declare_result.setter
+    def declare_result(self, value: DeclareResult | None) -> None:
+        self._declare_result = value
+        self._declare_source = self.declare_file
+
+    # ------------------------------------------------------------------
+    # Derived flags
+    # ------------------------------------------------------------------
+
+    @property
+    def has_inverses(self) -> bool:
+        """True if any inverse representation strategy is active."""
+        return bool(self.inverse_representation)
+
+    @property
+    def axiomatic_inverses(self) -> bool:
+        """True if inverses are declared via InverseObjectProperty TBox axioms."""
+        return InverseRepresentation.AXIOMATIC in self.inverse_representation
+
+    @property
+    def implicit_inverses(self) -> bool:
+        """True if inverse assertions are materialised in the ABox."""
+        return InverseRepresentation.IMPLICIT in self.inverse_representation
+
+    @property
+    def instantiate_df(self) -> bool:
+        """True if directly-follows relations should be asserted."""
+        return EventOrderRepresentation.DF in self.order_representation
+
+    @property
+    def instantiate_ef(self) -> bool:
+        """True if eventually-follows relations should be built, axiomatically or explicitly."""
+        return (
+            EventOrderRepresentation.EF in self.order_representation
+            or self.instantiate_ef_explicit
+        )
+
+    @property
+    def instantiate_ef_explicit(self) -> bool:
+        """True if every eventually-follows pair should be materialised in the ABox."""
+        return EventOrderRepresentation.EF_explicit in self.order_representation
+
+    @property
+    def instantiate_declare(self) -> bool:
+        """True if DECLARE constraint membership should be asserted."""
+        return EventOrderRepresentation.DECLARE in self.order_representation
+
+    @property
+    def instantiate_traces(self) -> bool:
+        """True if any order strategy requires case traces, and therefore case concepts."""
+        return self.instantiate_df or self.instantiate_ef
+
+    @property
+    def instantiate_attribute_history(self) -> bool:
+        """True if object attribute change history should be represented."""
+        return OcelExtension.ATTRIBUTE_HISTORY in self.ocel_extensions
+
+    # ------------------------------------------------------------------
+    # Validation
+    # ------------------------------------------------------------------
+
+    def validate(self, require_inputs: bool = True) -> None:
+        """Raise ValueError if the configuration is internally inconsistent.
+
+        Checks profile compatibility for EF and AXIOMATIC inverses and mutual
+        exclusivity of EQUAL_BINS and DIST_BINS.  All problems are collected and
+        reported together.
+
+        Args:
+            require_inputs: Also check that the data each active strategy needs is
+                present (``case_concepts``, ``declare_result``).  Pass ``False`` to
+                validate a flag combination before that data has been gathered.
 
         Raises:
-            ValueError: If annotation_document is not set.
+            ValueError: If any check fails.
         """
-        if self.annotation_document is None:
-            raise ValueError(
-                "annotation_document must be set before calling load_annotation_document()."
+        errors: list[str] = []
+        is_el = self.profile == OwlProfile.OWL2EL
+
+        # Re-checked here as well as in __post_init__: bins and bin_labels are
+        # commonly assigned field-by-field after construction (e.g. by the CLI).
+        bin_problem = self._bin_label_problem()
+        if bin_problem is not None:
+            errors.append(bin_problem)
+
+        if EventOrderRepresentation.EF in self.order_representation and is_el:
+            errors.append(
+                "EventOrderRepresentation.EF uses TBox transitivity axioms which are not "
+                "supported in OWL2EL. Use EventOrderRepresentation.EF_explicit instead, or "
+                "switch to OwlProfile.OWL2DL."
             )
-        import json
 
-        with open(self.annotation_document) as f:
-            self.annotation_data = json.load(f)
-
-    def load_declare_file(self) -> None:
-        """Load declare_file from disk into declare_result.
-
-        Raises:
-            ValueError: If declare_file is not set.
-        """
-        if self.declare_file is None:
-            raise ValueError(
-                "declare_file must be set before calling load_declare_file()."
+        if self.axiomatic_inverses and is_el:
+            errors.append(
+                "InverseRepresentation.AXIOMATIC (InverseObjectProperty TBox axioms) is not "
+                "supported in OWL2EL. Remove AXIOMATIC from inverse_representation or switch "
+                "to OwlProfile.OWL2DL."
             )
-        from semanticlog.enrich.declare import DeclareResult
 
-        self.declare_result = DeclareResult.read(self.declare_file)
+        if (
+            DataRepresentation.EQUAL_BINS in self.data_representation
+            and DataRepresentation.DIST_BINS in self.data_representation
+        ):
+            errors.append(
+                "DataRepresentation.EQUAL_BINS and DIST_BINS are mutually exclusive; "
+                "include at most one in data_representation."
+            )
+
+        if require_inputs:
+            if self.instantiate_traces and not self.case_concepts:
+                errors.append(
+                    "order_representation includes DF/EF/EF_explicit but case_concepts is "
+                    "empty. Set settings.case_concepts before calling build_ontology()."
+                )
+
+            if self.instantiate_declare and self.declare_result is None:
+                errors.append(
+                    "order_representation includes DECLARE but no DECLARE constraints are "
+                    "available. Set settings.declare_file or assign settings.declare_result."
+                )
+
+        if errors:
+            raise ValueError(
+                "Invalid OntoBuildSettings:\n" + "\n".join(f"  - {e}" for e in errors)
+            )
+
+    # ------------------------------------------------------------------
+    # Serialisation
+    # ------------------------------------------------------------------
 
     def to_dict(self) -> dict:
         """Serialise settings to a JSON-compatible dict."""
+        declare_result = self.declare_result
         return {
             "profile": self.profile.value,
             "order_representation": [e.value for e in self.order_representation],
@@ -196,9 +347,7 @@ class OntoBuildSettings:
             "case_concepts": self.case_concepts,
             "declare_file": self.declare_file,
             "declare_result": (
-                self.declare_result.to_dict()
-                if self.declare_result is not None
-                else None
+                declare_result.to_dict() if declare_result is not None else None
             ),
             "inverse_representation": [e.value for e in self.inverse_representation],
             "data_representation": [e.value for e in self.data_representation],
@@ -214,12 +363,7 @@ class OntoBuildSettings:
         """Restore settings from a dict produced by to_dict()."""
         from semanticlog.enrich.declare import DeclareResult
 
-        declare_result = (
-            DeclareResult.from_dict(d["declare_result"])
-            if d.get("declare_result") is not None
-            else None
-        )
-        return cls(
+        settings = cls(
             profile=OwlProfile(d["profile"]),
             order_representation=[
                 EventOrderRepresentation(v) for v in d.get("order_representation", [])
@@ -227,89 +371,20 @@ class OntoBuildSettings:
             ocel_extensions=[OcelExtension(v) for v in d.get("ocel_extensions", [])],
             case_concepts=d.get("case_concepts", []),
             declare_file=d.get("declare_file"),
-            declare_result=declare_result,
             inverse_representation=[
-                InverseRepresentation(v)
-                for v in d.get(
-                    "inverse_representation",
-                    [InverseRepresentation.AXIOMATIC, InverseRepresentation.IMPLICIT],
-                )
+                InverseRepresentation(v) for v in d.get("inverse_representation", [])
             ],
             data_representation=[
                 DataRepresentation(v)
                 for v in d.get("data_representation", [DataRepresentation.VALUES])
             ],
-            bins=d.get("bins", 5),
-            bin_labels=d.get(
-                "bin_labels", ["very_low", "low", "average", "high", "very_high"]
-            ),
+            bins=d.get("bins", _DEFAULT_BINS),
+            bin_labels=d.get("bin_labels", list(_DEFAULT_BIN_LABELS)),
             annotation_document=d.get("annotation_document"),
-            annotation_data=d.get("annotation_data"),
             derive_annotations=d.get("derive_annotations", False),
         )
-
-
-def validate_settings(settings: OntoBuildSettings) -> None:
-    """Validate OntoBuildSettings and raise ValueError with an informative message on conflict.
-
-    Checks profile compatibility for EF and AXIOMATIC inverses, and mutual exclusivity
-    of EQUAL_BINS and DIST_BINS.
-    """
-    errors: list[str] = []
-
-    if (
-        EventOrderRepresentation.EF in settings.order_representation
-        and settings.profile == OwlProfile.OWL2EL
-    ):
-        errors.append(
-            "EventOrderRepresentation.EF uses TBox transitivity axioms which are not "
-            "supported in OWL2EL. Use EventOrderRepresentation.EF_explicit instead, or "
-            "switch to OwlProfile.OWL2DL."
-        )
-
-    if (
-        InverseRepresentation.AXIOMATIC in settings.inverse_representation
-        and settings.profile == OwlProfile.OWL2EL
-    ):
-        errors.append(
-            "InverseRepresentation.AXIOMATIC (InverseObjectProperty TBox axioms) is not "
-            "supported in OWL2EL. Remove AXIOMATIC from inverse_representation or switch "
-            "to OwlProfile.OWL2DL."
-        )
-
-    if (
-        DataRepresentation.EQUAL_BINS in settings.data_representation
-        and DataRepresentation.DIST_BINS in settings.data_representation
-    ):
-        errors.append(
-            "DataRepresentation.EQUAL_BINS and DIST_BINS are mutually exclusive; "
-            "include at most one in data_representation."
-        )
-
-    order_needs_cases = {
-        EventOrderRepresentation.DF,
-        EventOrderRepresentation.EF,
-        EventOrderRepresentation.EF_explicit,
-    }
-    if (
-        any(o in settings.order_representation for o in order_needs_cases)
-        and not settings.case_concepts
-    ):
-        errors.append(
-            "order_representation includes DF/EF/EF_explicit but case_concepts is empty. "
-            "Set settings.case_concepts before calling build_ontology()."
-        )
-
-    if (
-        EventOrderRepresentation.DECLARE in settings.order_representation
-        and settings.declare_result is None
-    ):
-        errors.append(
-            "order_representation includes DECLARE but settings.declare_result is None. "
-            "Call settings.load_declare_file() or assign a DeclareResult directly."
-        )
-
-    if errors:
-        raise ValueError(
-            "Invalid OntoBuildSettings:\n" + "\n".join(f"  - {e}" for e in errors)
-        )
+        if d.get("declare_result") is not None:
+            settings.declare_result = DeclareResult.from_dict(d["declare_result"])
+        if d.get("annotation_data") is not None:
+            settings.annotation_data = d["annotation_data"]
+        return settings

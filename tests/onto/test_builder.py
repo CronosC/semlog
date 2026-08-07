@@ -1,5 +1,7 @@
+import tempfile
 import time
 import unittest
+from pathlib import Path
 
 import pandas as pd
 
@@ -13,9 +15,12 @@ class TestBuilder(unittest.TestCase):
         self.settings.profile = OwlProfile.OWL2DL
         self.settings.order_representation = []
         self.settings.case_concepts = []
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.out_path = str(Path(self._tmp.name) / "temp.owl")
 
     def test_add_class(self):
-        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        builder = OCEDBaseBuilder("https://test#", self.settings)
         self.assertEqual(len(list(builder.onto.classes_in_signature())), 0)
         builder.add_class("Human")
         builder.add_class("Parent", "Human")
@@ -24,33 +29,33 @@ class TestBuilder(unittest.TestCase):
         self.assertEqual(len(list(builder.onto.classes_in_signature())), 4)
 
     def test_add_classes(self):
-        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        builder = OCEDBaseBuilder("https://test#", self.settings)
         builder.add_classes(["Human", "Male", "Female"])
         builder.add_classes(["Man", "Women"], ["Human and Male", "Human and Female"])
         builder.add_classes(["Child"], [None])
         self.assertEqual(len(list(builder.onto.classes_in_signature())), 6)
 
     def test_assert_individual(self):
-        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        builder = OCEDBaseBuilder("https://test#", self.settings)
         individuals = ["a", "b", "c", "d", "e"]
         builder.add_class("Letter")
         for ind in individuals:
             builder.assert_individual(ind, "Letter")
         self.assertEqual(len(list(builder.onto.classes_in_signature())), 1)
         self.assertEqual(len(list(builder.onto.individuals_in_signature())), 5)
-        builder.save_onto("data/temp/temp.owl")
+        builder.save_onto(self.out_path)
 
     def test_assert_individuals(self):
-        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        builder = OCEDBaseBuilder("https://test#", self.settings)
         individuals = ["a", "b", "c", "d", "e"]
         builder.add_class("Letter")
         builder.assert_individuals(individuals, "Letter")
         self.assertEqual(len(list(builder.onto.classes_in_signature())), 1)
         self.assertEqual(len(list(builder.onto.individuals_in_signature())), 5)
-        builder.save_onto("data/temp/temp.owl")
+        builder.save_onto(self.out_path)
 
     def test_assert_individuals_scale(self):
-        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        builder = OCEDBaseBuilder("https://test#", self.settings)
         individuals = [str(i) for i in range(100000)]
         builder.add_class("Letter")
         t0 = time.time()
@@ -63,7 +68,7 @@ class TestBuilder(unittest.TestCase):
         )
 
     def test_add_property(self):
-        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        builder = OCEDBaseBuilder("https://test#", self.settings)
         builder.add_property("isRelated")
         builder.add_class("Parent")
         builder.add_class("Child")
@@ -90,7 +95,7 @@ class TestBuilder(unittest.TestCase):
         self.assertEqual(len(list(builder.onto.data_properties_in_signature())), 1)
 
     def test_assert_relation(self):
-        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        builder = OCEDBaseBuilder("https://test#", self.settings)
         builder.add_class("Person")
         individuals = ["Alice", "Bob"]
         builder.assert_individuals(individuals, "Person")
@@ -106,10 +111,10 @@ class TestBuilder(unittest.TestCase):
         )
         builder.assert_relation("hasAge", "Alice", 25, data_prop=True)
         builder.assert_relation("hasAge", "Bob", 34, data_prop=True)
-        builder.save_onto("data/temp/temp.owl")
+        builder.save_onto(self.out_path)
 
     def test_assert_relations(self):
-        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        builder = OCEDBaseBuilder("https://test#", self.settings)
         builder.add_class("Number")
         individuals = [str(i) for i in range(100)]
         individuals_int = [i for i in range(100)]
@@ -138,7 +143,7 @@ class TestBuilder(unittest.TestCase):
         )
 
     def test_assert_relations_scale(self):
-        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        builder = OCEDBaseBuilder("https://test#", self.settings)
         builder.add_class("Number")
         individuals = [str(i) for i in range(10000)]
         individuals_int = [i for i in range(10000)]
@@ -176,10 +181,10 @@ class TestBuilder(unittest.TestCase):
         t1 = time.time()
         print(f"\nAdding {len(individuals)} data relations took: {str(t1 - t0)}s")
 
-        builder.save_onto("data/temp/temp.owl")
+        builder.save_onto(self.out_path)
 
     def test_assert_data_relations_with_datetimes(self):
-        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        builder = OCEDBaseBuilder("https://test#", self.settings)
         # Class + individuals
         builder.add_class("Event")
         builder.assert_individuals(["e1", "e2"], "Event")
@@ -206,10 +211,10 @@ class TestBuilder(unittest.TestCase):
         )
 
         # If we got here, saving should also not raise
-        builder.save_onto("data/temp/temp.owl")
+        builder.save_onto(self.out_path)
 
     def test_add_property_validation(self):
-        builder = OCEDBaseBuilder("data/test.owl#", self.settings)
+        builder = OCEDBaseBuilder("https://test#", self.settings)
         builder.add_class("A")
         builder.add_class("B")
 

@@ -18,7 +18,7 @@ import pytest
 
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.loading.pm4pyloader import PM4PYLoader
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.oced import OCEDStore, RelationKind
 
 CLEAN_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
@@ -46,17 +46,19 @@ def check_oced_integrity(oced: OCEDStore) -> list[str]:
     violations = []
 
     all_event_ids: set = set()
-    for entry in oced._events.values():
-        all_event_ids.update(entry["data"][entry["id"]].unique())
+    for activity in oced.get_activities():
+        entry = oced.get_events(activity)
+        all_event_ids.update(entry.data[entry.id].unique())
 
     object_ids_by_type: dict[str, set] = {}
-    for obj_type, entry in oced._objects.items():
-        object_ids_by_type[obj_type] = set(entry["data"][entry["id"]].unique())
+    for obj_type, entry in oced.get_objects().items():
+        object_ids_by_type[obj_type] = set(entry.data[entry.id].unique())
 
-    for rel_name, rel in oced._relations["event_to_object"].items():
-        df = rel["data"]
-        from_col = rel["from_id"]
-        to_col = rel["to_id"]
+    for rel_name in oced.get_relation_types(RelationKind.E2O):
+        rel = oced.get_relation(rel_name)
+        df = rel.data
+        from_col = rel.from_id
+        to_col = rel.to_id
 
         missing_events = set(df[from_col].unique()) - all_event_ids
         if missing_events:
@@ -68,21 +70,22 @@ def check_oced_integrity(oced: OCEDStore) -> list[str]:
 
         # Each to_id must exist in at least one of the referenced types (union check)
         all_known: set = set()
-        for to_type in rel["to_type"]:
+        for to_type in rel.to_type:
             all_known |= object_ids_by_type.get(to_type, set())
         missing = set(df[to_col].unique()) - all_known
         if missing:
             sample = sorted(str(x) for x in missing)[:5]
             violations.append(
-                f"E2O '{rel_name}' → {rel['to_type']}: {len(missing)} object IDs not in "
+                f"E2O '{rel_name}' → {rel.to_type}: {len(missing)} object IDs not in "
                 f"any referenced object type (sample: {sample})"
             )
 
-    for rel_name, rel in oced._relations["object_to_object"].items():
-        df = rel["data"]
+    for rel_name in oced.get_relation_types(RelationKind.O2O):
+        rel = oced.get_relation(rel_name)
+        df = rel.data
         for id_col, types, label in [
-            (rel["from_id"], rel["from_type"], "from"),
-            (rel["to_id"], rel["to_type"], "to"),
+            (rel.from_id, rel.from_type, "from"),
+            (rel.to_id, rel.to_type, "to"),
         ]:
             all_known = set()
             for obj_type in types:
@@ -183,10 +186,7 @@ def test_all_names_clean_after_normalization_synthetic():
     oced.add_object("obj type", "oid", objects)
     oced = clean_oced_data(oced)
     for name in (
-        list(oced._events)
-        + list(oced._objects)
-        + list(oced._relations["event_to_object"])
-        + list(oced._relations["object_to_object"])
+        oced.get_activities() + oced.get_object_types() + oced.get_relation_types()
     ):
         assert CLEAN_RE.match(name), f"Unclean name after normalization: {name!r}"
 
@@ -231,9 +231,6 @@ def test_all_names_clean_after_normalization(file_name):
     oced = PM4PYLoader(os.path.join(OCEL_DIR, file_name), {}).get_oced()
     oced = clean_oced_data(oced)
     for name in (
-        list(oced._events)
-        + list(oced._objects)
-        + list(oced._relations["event_to_object"])
-        + list(oced._relations["object_to_object"])
+        oced.get_activities() + oced.get_object_types() + oced.get_relation_types()
     ):
         assert CLEAN_RE.match(name), f"Unclean name in '{file_name}': {name!r}"

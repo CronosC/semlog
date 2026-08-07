@@ -36,7 +36,10 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-exclude = ["tests*"]
+include = ["semanticlog*"]
+
+[tool.setuptools.package-data]
+semanticlog = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,18 +2,15 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from semanticlog.data.binning import (
     _dist_bin_series,
     bin_attributes,
     bin_series,
     equal_bin_series,
-    expon_bin_series,
-    gamma_bin_series,
-    gaussian_bin_series,
     get_best_fit_distribution,
     get_weighted_variant_mapping,
-    lognorm_bin_series,
 )
 from semanticlog.data.oced import OCEDStore
 
@@ -151,45 +148,31 @@ def test_get_best_fit_distribution_returns_none_when_pvalue_threshold_not_met():
 
 
 # ---------------------------------------------------------------------------
-# Distribution-specific bin wrappers
+# Distribution-fitted binning
 # ---------------------------------------------------------------------------
 
 
-def test_gaussian_bin_series_output_contains_only_expected_labels():
-    rng = np.random.default_rng(0)
-    series = pd.Series(rng.normal(0, 1, 300))
+@pytest.mark.parametrize(
+    ("dist_name", "sample"),
+    [
+        ("norm", lambda rng: rng.normal(0, 1, 300)),
+        ("lognorm", lambda rng: rng.lognormal(0, 1, 300)),
+        ("expon", lambda rng: rng.exponential(1, 300)),
+        ("gamma", lambda rng: rng.gamma(2, 2, 300)),
+    ],
+)
+def test_dist_bin_series_output_contains_only_expected_labels(dist_name, sample):
+    series = pd.Series(sample(np.random.default_rng(0)))
     labels = ["Low", "Average", "High"]
-    result = gaussian_bin_series(series, bins=3, labels=labels)
-    valid = set(result.dropna().astype(str))
-    assert valid.issubset(set(labels))
-    assert valid == set(labels)
+    result = _dist_bin_series(series, dist_name, bins=3, labels=labels)
+    assert set(result.dropna().astype(str)).issubset(set(labels))
 
 
-def test_lognorm_bin_series_output_contains_only_expected_labels():
-    rng = np.random.default_rng(1)
-    series = pd.Series(rng.lognormal(0, 1, 300))
+def test_dist_bin_series_uses_every_label_for_normal_data():
+    series = pd.Series(np.random.default_rng(0).normal(0, 1, 300))
     labels = ["Low", "Average", "High"]
-    result = lognorm_bin_series(series, bins=3, labels=labels)
-    valid = set(result.dropna().astype(str))
-    assert valid.issubset(set(labels))
-
-
-def test_expon_bin_series_output_contains_only_expected_labels():
-    rng = np.random.default_rng(2)
-    series = pd.Series(rng.exponential(1, 300))
-    labels = ["Low", "Average", "High"]
-    result = expon_bin_series(series, bins=3, labels=labels)
-    valid = set(result.dropna().astype(str))
-    assert valid.issubset(set(labels))
-
-
-def test_gamma_bin_series_output_contains_only_expected_labels():
-    rng = np.random.default_rng(3)
-    series = pd.Series(rng.gamma(2, 2, 300))
-    labels = ["Low", "Average", "High"]
-    result = gamma_bin_series(series, bins=3, labels=labels)
-    valid = set(result.dropna().astype(str))
-    assert valid.issubset(set(labels))
+    result = _dist_bin_series(series, "norm", bins=3, labels=labels)
+    assert set(result.dropna().astype(str)) == set(labels)
 
 
 def test_dist_bin_series_returns_all_nan_for_empty_series():
@@ -215,7 +198,7 @@ def test_bin_attributes_applies_to_numeric_object_attributes():
 
     result = bin_attributes(oced)
 
-    obj_df = result.get_object("item")["data"]
+    obj_df = result.get_object("item").data
     assert not pd.api.types.is_numeric_dtype(obj_df["score"])
 
 
@@ -233,7 +216,7 @@ def test_bin_attributes_applies_to_numeric_event_attributes():
 
     result = bin_attributes(oced)
 
-    ev_df = result.get_event("act")["data"]
+    ev_df = result.get_events("act").data
     assert not pd.api.types.is_numeric_dtype(ev_df["value"])
 
 
@@ -251,7 +234,7 @@ def test_bin_attributes_skips_id_and_time_columns():
 
     result = bin_attributes(oced)
 
-    ev_df = result.get_event("act")["data"]
+    ev_df = result.get_events("act").data
     # id column must stay numeric
     assert pd.api.types.is_numeric_dtype(ev_df["eid"])
     # attribute column gets binned
