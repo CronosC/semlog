@@ -3,19 +3,74 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections import defaultdict
 
 import pandas as pd
 
 from semanticlog.data.binning import bin_series, equal_bin_series
-from semanticlog.onto.builder import OCEDBaseBuilder
+from semanticlog.data.oced import OCEDStore
+from semanticlog.onto import vocabulary as vocab
+from semanticlog.onto.emit import Emitter
 from semanticlog.onto.settings import DataRepresentation
 
 
-class AttributeInstantiationMixin(OCEDBaseBuilder):
-    """Turns attribute columns into OWL classes, properties and value individuals.\n\n    Mixed into :class:`~semanticlog.onto.instantiate.OCEDOntoBuilder`; the\n    ``OCEDBaseBuilder`` base is declared so that the axiom-emitting helpers\n    this mixin calls are visible to the type checker."""
+def attribute_owners(data: OCEDStore) -> dict[str, list[str]]:
+    """Map each attribute column name to the entity types that carry it.
 
-    def instantiate_attributes(
+    An attribute class is named after the column alone, so a column appearing on
+    two types produces one class shared between them. Knowing the full set of
+    owners up front is what lets the domain be written as their union: emitting a
+    domain per table instead would be read as an intersection, and an attribute
+    on both ``order`` and ``item`` would end up with an unsatisfiable domain.
+    """
+    owners: dict[str, set[str]] = defaultdict(set)
+    for activity in data.get_activities():
+        table = data.get_events(activity)
+        for column in set(table.data.columns) - {table.id, table.time}:
+            owners[column].add(activity)
+    for obj_type in data.get_object_types():
+        obj = data.get_object(obj_type)
+        for column in set(obj.data.columns) - {obj.id}:
+            owners[column].add(obj_type)
+    return {attribute: sorted(types) for attribute, types in owners.items()}
+
+
+def report_conflated_attributes(owners: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Log the attributes that more than one entity type shares, and return them.
+
+    Sharing a column name merges two attributes into one class with one set of
+    value individuals, which is rarely what the source data meant. Renaming them
+    would change IRIs, so this reports rather than acts: it makes the scale of the
+    conflation visible on real logs before anyone decides what to do about it.
+    """
+    conflated = {a: types for a, types in owners.items() if len(types) > 1}
+    if conflated:
+        detail = "; ".join(
+            f"{attribute!r} on {', '.join(types)}"
+            for attribute, types in sorted(conflated.items())
+        )
+        logging.warning(
+            f"ATTRIBUTE CONFLATION: {len(conflated)} attribute name(s) are shared by "
+            f"more than one entity type and become a single OWL class with shared "
+            f"value individuals: {detail}"
+        )
+    return conflated
+
+
+class AttributeEmitter(Emitter):
+    """Turns attribute columns into OWL classes, properties and value individuals."""
+
+    _owners: dict[str, list[str]] = {}
+
+    def bind_owners(self, owners: dict[str, list[str]]) -> None:
+        """Point the emitter at which entity types carry each attribute.
+
+        Without this the ``has_{attr}`` properties get no domain, since a single
+        table cannot know whether other tables share the column.
+        """
+        self._owners = owners
+
+    def emit(
         self,
         df: pd.DataFrame,
         key_col: str,
@@ -31,7 +86,8 @@ class AttributeInstantiationMixin(OCEDBaseBuilder):
         Args:
             df: Event or object DataFrame with the key column and attribute columns.
             key_col: Column name of the individual's IRI local name.
-            attribute_parent: Parent class name (``"EventAttribute"`` or ``"ObjectAttribute"``).
+            attribute_parent: Parent class name (``"EventAttribute"`` or
+                ``"ObjectAttribute"``).
         """
         dr = self.settings.data_representation
         for attr in (c for c in df.columns if c != key_col):
@@ -44,40 +100,27 @@ class AttributeInstantiationMixin(OCEDBaseBuilder):
             if pd.api.types.is_numeric_dtype(s) and not dr:
                 continue
 
-            prop = self.generate_specialized_has_attribute_name(attr)
-            self.add_class(attr, attribute_parent)
-            self.add_property(
+            prop = vocab.has_attribute_property(attr)
+            self.sink.add_class(attr, attribute_parent)
+            owners = self._owners.get(attr, [])
+            self.sink.add_property(
                 prop,
-                superprop="has_attribute",
+                domain_class=" or ".join(owners) if owners else None,
+                range_class=attr,
+                superprop=vocab.HAS_ATTRIBUTE,
                 create_inverse=self.settings.has_inverses,
             )
-            owner = "event" if attribute_parent == "EventAttribute" else "object"
+            owner = "event" if attribute_parent == vocab.EVENT_ATTRIBUTE else "object"
             self.annotations.attribute(attr, prop, owner)
 
             if pd.api.types.is_datetime64_any_dtype(s):
-                self._instantiate_datetime_attr(df_attr, key_col, attr, prop)
+                self.emit_values(df_attr, key_col, attr, prop, True)
             elif pd.api.types.is_numeric_dtype(s):
-                self._instantiate_numeric_attr(df_attr, key_col, attr, prop, dr)
+                self._emit_numeric(df_attr, key_col, attr, prop, dr)
             else:
-                self._instantiate_string_attr(df_attr, key_col, attr, prop)
+                self.emit_values(df_attr, key_col, attr, prop, False)
 
-    def _instantiate_datetime_attr(
-        self,
-        df_attr: pd.DataFrame,
-        key_col: str,
-        attr: str,
-        prop: str,
-    ) -> None:
-        self._instantiate_attr(
-            df_attr,
-            key_col,
-            attr,
-            prop,
-            value_to_id=lambda v, a=attr: f"{a}_{self.generate_timestamp_string(v)}",
-            also_assert_data_value=True,
-        )
-
-    def _instantiate_numeric_attr(
+    def _emit_numeric(
         self,
         df_attr: pd.DataFrame,
         key_col: str,
@@ -87,14 +130,7 @@ class AttributeInstantiationMixin(OCEDBaseBuilder):
     ) -> None:
         s = df_attr[attr]
         if DataRepresentation.VALUES in dr:
-            self._instantiate_attr(
-                df_attr,
-                key_col,
-                attr,
-                prop,
-                value_to_id=lambda v, a=attr: f"{a}_{v}",
-                also_assert_data_value=True,
-            )
+            self.emit_values(df_attr, key_col, attr, prop, True)
         quant = next(
             (
                 x
@@ -126,73 +162,61 @@ class AttributeInstantiationMixin(OCEDBaseBuilder):
         out_of_bin = df_attr.loc[df_merge["_bin"].isna()]
         df_q = df_merge[df_merge["_bin"].notna()]
         for bin_label, bin_group in df_q.groupby("_bin", observed=True):
-            bin_class = f"{attr}_{str(bin_label)}"
-            self.add_class(bin_class, attr)
+            bin_cls = vocab.bin_class(attr, bin_label)
+            self.sink.add_class(bin_cls, attr)
             if DataRepresentation.VALUES in dr:
-                value_inds = [f"{attr}_{v}" for v in bin_group[attr].unique()]
-                self.assert_individuals(value_inds, bin_class)
+                value_inds = [
+                    vocab.attribute_value(attr, v) for v in bin_group[attr].unique()
+                ]
+                self.sink.assert_individuals(value_inds, bin_cls)
             else:
-                self.assert_individuals(bin_group[key_col].tolist(), bin_class)
+                self.sink.assert_individuals(bin_group[key_col].tolist(), bin_cls)
         if not out_of_bin.empty:
             logging.warning(
                 f"BINNING: {len(out_of_bin)} value(s) for attribute "
                 f"'{attr}' fall outside all bin boundaries; using raw "
                 "numeric representation as fallback."
             )
-            self._instantiate_attr(
-                out_of_bin,
-                key_col,
-                attr,
-                prop,
-                value_to_id=lambda v, a=attr: f"{a}_{v}",
-                also_assert_data_value=True,
-            )
+            self.emit_values(out_of_bin, key_col, attr, prop, True)
 
-    def _instantiate_string_attr(
-        self,
-        df_attr: pd.DataFrame,
-        key_col: str,
-        attr: str,
-        prop: str,
-    ) -> None:
-        self._instantiate_attr(
-            df_attr,
-            key_col,
-            attr,
-            prop,
-            value_to_id=lambda v, a=attr: f"{a}_{str(v)}",
-            also_assert_data_value=False,
-        )
-
-    def _instantiate_attr(
+    def emit_values(
         self,
         df: pd.DataFrame,
         key_col: str,
         attr: str,
         prop: str,
-        value_to_id: Callable[..., str],
         also_assert_data_value: bool,
     ) -> None:
+        """Create one individual per distinct value and link the owners to it.
+
+        Args:
+            df: Rows holding the owner key and the attribute column.
+            key_col: Column naming the owning event or object individual.
+            attr: Attribute name, used as both the class and the name prefix.
+            prop: Property linking owner to value individual.
+            also_assert_data_value: Also attach the raw value as a literal, which
+                is wanted for numeric and datetime attributes but not for strings.
+        """
         tmp = df.copy()
 
         # map each distinct value to an attribute-individual IRI/name
         vals = tmp[attr].unique()
-        mapping = {v: value_to_id(v) for v in vals}
+        mapping = {v: vocab.attribute_value(attr, v) for v in vals}
         tmp["attr_ind"] = tmp[attr].map(mapping)
 
         # create individuals for the attribute values (unique only — one per distinct value)
-        self.assert_individuals(tmp["attr_ind"].unique().tolist(), attr)
+        self.sink.assert_individuals(tmp["attr_ind"].unique().tolist(), attr)
 
         self.annotations.attribute_values(mapping)
 
         # connect objects/events (key_col) to attribute-individuals via the property
-        self.assert_relations(tmp, prop=prop, from_key=key_col, to_key="attr_ind")
+        self.sink.assert_relations(tmp, prop=prop, from_key=key_col, to_key="attr_ind")
 
         # for numeric/datetime, also attach the literal value
         if also_assert_data_value:
-            self.assert_relations(
+            self.sink.assert_relations(
                 tmp,
-                prop="has_data_value",
+                prop=vocab.HAS_DATA_VALUE,
                 from_key="attr_ind",
                 to_key=attr,
                 data_prop=True,

@@ -1,3 +1,6 @@
+import logging
+
+from owlapy.owl_axiom import OWLObjectPropertyAssertionAxiom
 from owlapy.owl_ontology import SyncOntology
 from owlapy.owl_reasoner import SyncReasoner
 
@@ -42,8 +45,7 @@ class Reasoner:
         Args:
             path: Path to the OWL file to load.
             backend: Reasoner backend to use. One of ``"HermiT"``, ``"Pellet"``, ``"ELK"``.
-            profile: OWL profile of the ontology. OWL2DL enables additional generators
-                (characteristic property axioms) that are invalid in OWL2EL.
+            profile: OWL profile of the ontology.
 
         Raises:
             ValueError: If ``backend`` is not one of the supported values.
@@ -58,19 +60,57 @@ class Reasoner:
         if profile != OwlProfile.OWL2EL:
             self.possible_generators.extend(_GENERATORS_DL_ONLY)
 
-    def materialize(self, overwrite_old: bool = True) -> None:
+    def materialize(
+        self, overwrite_old: bool = True, property_assertions: bool = True
+    ) -> None:
         """Run all applicable inference generators and add the results to the ontology.
 
         Args:
             overwrite_old: If True (default), save the materialised ontology back to
                 the original path after inference.
+            property_assertions: Also write the entailed object property assertions
+                that the OWL API generator omits (see
+                :meth:`inferred_property_assertions`). On by default, because
+                without them a materialised ontology is missing exactly the
+                consequences a reasoner was run for. Turn off for a cheap
+                class-level-only pass.
         """
-        inferred_axioms = self.reasoner.infer_axioms(
-            inference_types=self.possible_generators
+        inferred = list(
+            self.reasoner.infer_axioms(inference_types=self.possible_generators)
         )
-        self.ontology.add_axiom(inferred_axioms)
+        if property_assertions:
+            inferred.extend(self.inferred_property_assertions())
+        self.ontology.add_axiom(inferred)
         if overwrite_old:
             self.save_onto()
+
+    def inferred_property_assertions(self) -> list[OWLObjectPropertyAssertionAxiom]:
+        """Return the object property assertions the reasoner entails.
+
+        ``InferredPropertyAssertionGenerator`` returns nothing through owlapy, so
+        transitive and sub-property consequences never reach a materialised file.
+        That silently empties out the point of
+        :attr:`~semanticlog.onto.settings.EventOrderRepresentation.EF`, whose whole
+        design is to let a reasoner derive the eventually-follows closure.
+
+        Asking the reasoner directly is the only way to recover them, and it costs
+        one query per individual per object property. That product, not the
+        reasoning itself, is what makes materialisation unsuited to large logs.
+        """
+        individuals = list(self.ontology.individuals_in_signature())
+        properties = list(self.ontology.object_properties_in_signature())
+        logging.info(
+            f"  querying {len(individuals)} individuals x {len(properties)} "
+            "object properties for entailed assertions.."
+        )
+        axioms = [
+            OWLObjectPropertyAssertionAxiom(individual, prop, value)
+            for individual in individuals
+            for prop in properties
+            for value in self.reasoner.object_property_values(individual, prop)
+        ]
+        logging.info(f"  {len(axioms)} entailed object property assertion(s)")
+        return axioms
 
     def infer(self, generator: str):
         """Run a single named inference generator and return the resulting axioms.

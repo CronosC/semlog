@@ -33,6 +33,31 @@ The script builds and installs from source: CUDD 3.0.0, MONA 1.4, Syft 0.1.1, an
 
 ## Quick Start
 
+The CLI is the entry point. From a fresh clone, this works with no extra data:
+
+```bash
+semlog inspect tests/fixtures/pipeline.jsonocel   # what is in this log?
+semlog build --config examples/pipeline.toml      # build it
+semlog reason examples/out/pipeline.owl --check   # is the result consistent?
+```
+
+Every build writes two files side by side:
+
+| File | Contents |
+|---|---|
+| `<name>.owl` | The ontology — the product |
+| `<name>.manifest.json` | How it was produced: input path and SHA-256, resolved settings, where the case concepts came from, semlog version, per-stage timings, entity counts |
+
+The manifest is what makes a result traceable. An `.owl` on its own says nothing
+about the configuration behind it, and two configurations of the same log
+produce different ontologies.
+
+See [CLI](#cli--semlog) for the full command reference.
+
+---
+
+## Library Use
+
 ```python
 from semanticlog.data.loading.pm4pyloader import PM4PYLoader
 from semanticlog.data.cleaning import clean_oced_data
@@ -74,13 +99,25 @@ Core pipeline: load event data → clean/normalise → configure build settings 
 | `onto/semlog.py` | `SemanticLog` — pipeline output; write/read OWL + pickle |
 | `onto/upper.py` | Upper ontology (TBox schema) builder; called internally by `OCEDOntoBuilder` |
 | `onto/instantiate.py` | Full pipeline entry point: `OCEDOntoBuilder.build_ontology()` |
-| `onto/builder.py` | Low-level OWL axiom construction (owlapy) |
+| `onto/sink.py` | `AxiomSink` — the one place a name becomes an axiom; `InMemorySink` (owlapy) by default, `StreamingSink` for large logs |
+| `onto/emit.py` | `Emitter` — base for the build steps that write axioms |
+| `onto/abox.py` | ABox emitters: events, objects, time, event order, relations |
+| `onto/audit.py` | Pre-build rejection of malformed or ambiguous IRI local names |
+| `onto/provenance.py` | Version and build configuration recorded into the ontology |
+| `data/persist.py` | `OCEDStore.write`/`read` — Parquet tables plus a JSON manifest |
+| `onto/builder.py` | Builder facade: holds the sink, settings and annotation writer |
+| `onto/vocabulary.py` | Every IRI local name a build emits; source of the reserved-name set |
 | `onto/annotations.py` | `AnnotationWriter` — all `rdfs:label` / `rdfs:comment` text |
 | `onto/attributes.py` | Attribute classes, properties and value individuals |
 | `onto/history.py` | OCEL 2.0 object attribute change history |
 | `onto/transform.py` | Manchester Syntax → OWL expression parsing |
 | `onto/reason.py` | Reasoner integration |
 | `enrich/declare.py` | `DeclareResult` + `DeclareEnricher` — DECLARE constraint mining (requires Lydia) |
+| `cli/__init__.py` | Argument parsing and subcommand dispatch — the only module that knows about argparse |
+| `cli/config.py` | `RunConfig` — TOML and flags resolved into one checked value |
+| `cli/run.py` | The pipeline behind each subcommand, driven by values rather than flags |
+| `cli/manifest.py` | `RunManifest` — the record written beside every ontology |
+| `cli/logs.py` | Console and per-input file logging |
 
 ---
 
@@ -145,61 +182,120 @@ Event order is only instantiated when `settings.case_concepts` is non-empty.
 
 ## DECLARE Constraint Mining
 
-Requires the `[declare]` extra and Lydia (see [Installation](#installation)).
+Requires the `[declare]` extra and Lydia (see [Installation](#installation)). Mining is a
+separate step from building, so only this step needs Lydia and the mined constraints can
+be reused across builds.
+
+```bash
+semlog mine-declare data/ocel/log.json \
+    --output data/declare/log.csv \
+    --constraints Response Precedence Coexistence Init End \
+    --constraint-support 0.5 --itemset-support 0.5 \
+    --case-concepts order
+
+semlog build data/ocel/log.json --order declare --declare-file data/declare/log.csv
+```
+
+From Python:
 
 ```python
 from semanticlog.enrich.declare import DeclareEnricher
 
-enricher = DeclareEnricher(oced)
-declare_result = enricher.get_constraints_via_discovery(
+result = DeclareEnricher(oced).get_constraints_via_discovery(
     case_concepts=["order"],
     constraint_set=["Response", "Precedence", "Coexistence", "Init", "End"],
     constraint_support_threshold=0.5,
     itemset_support_threshold=0.5,
 )
-declare_result.write("constraints.csv")
-
-settings.declare_file = "constraints.csv"
-# settings.declare_result is read from that path on first access
+result.write("constraints.csv")
+settings.declare_file = "constraints.csv"   # read on first access to declare_result
 ```
 
 `get_constraints_via_discovery` mines constraints meeting the support thresholds. `get_constraints_via_enumeration` checks a fixed constraint set exhaustively. The `DeclareResult` object can be serialised to CSV (`write`/`read`) or embedded in settings (`to_dict`/`from_dict`).
 
 ---
 
-## CLI — `build_onto.py`
+## CLI — `semlog`
 
-Batch-builds ontologies from a folder of OCEL files:
+Four subcommands. `semlog <command> --help` documents each in full.
 
-```bash
-python scripts/build_onto.py --folder data/ocel --files log.json \
-    --profile OWL2EL --order DF \
-    --case-concepts order item \
-    --data-representation values \
-    --output data/onto
+| Command | Purpose |
+|---|---|
+| `semlog build` | Load, clean and build one or more ontologies, plus a manifest per result |
+| `semlog inspect` | Summarise an OCEL file: activities, object types, relations, time range, suggested case concepts |
+| `semlog mine-declare` | Mine DECLARE constraints into a CSV (needs Lydia) |
+| `semlog reason` | Materialise or consistency-check an existing `.owl` |
+
+### Run configs
+
+Any build setting can live in a TOML file. `extends` pulls in shared settings, and a flag
+on the command line always beats the file, so one config can be reused with a variation:
+
+```toml
+# runs/hiring.toml
+extends = "_base.toml"
+
+input = "data/ocel/Hiring.xml"
+case_concepts = ["Candidate", "JobRequisition", "Recruiter"]
 ```
 
-| Argument | Default | Description |
-|---|---|---|
-| `--folder` | required | Folder containing OCEL input files |
-| `--files` | all files | Filenames within `--folder` to process |
-| `--output` | `data/onto` | Output directory for `.owl` files |
-| `--profile` | `OWL2DL` | `OWL2DL` or `OWL2EL` |
-| `--order` | `DF` | Space-separated: `DF EF EF_explicit DECLARE` |
-| `--case-concepts` | auto (top 3) | Object type names to use as case concepts |
-| `--inverse-representation` | `AXIOMATIC IMPLICIT` | Space-separated; pass none to omit inverses |
-| `--data-representation` | `values` | Space-separated: `values equal_bins dist_bins` |
-| `--bins` | `5` | Bin count for `equal_bins` / `dist_bins` |
-| `--bin-labels` | `very_low … very_high` | Bin label names (must match `--bins`) |
-| `--ocel-extensions` | none | `ATTRIBUTE_HISTORY` |
-| `--materialize` / `--no-materialize` | on | Run reasoner after build |
-| `--annotation-document` | none | JSON file mapping entity names to label/comment |
-| `--derive-annotations` | off | Emit `rdfs:label` on individuals |
-| `--declare-constraints` | none | DECLARE constraint types to mine (requires `DECLARE` in `--order`) |
-| `--declare-constraint-support` | `0.5` | Per-constraint support threshold |
-| `--declare-itemset-support` | `0.5` | Itemset support threshold |
-| `--log-dir` | none | Directory for per-file log files |
-| `--size-limit` | 0 (no limit) | Skip files larger than N MB |
+```bash
+semlog build --config runs/hiring.toml
+semlog build --config runs/hiring.toml --profile OWL2DL   # same run, DL instead
+semlog build --config runs/hiring.toml --dry-run          # resolve and print, build nothing
+```
+
+The output is named after the config (`hiring.owl`, `hiring.manifest.json`), so several
+configurations of one dataset coexist without overwriting each other. Relative paths in a
+config resolve against the current directory; only `extends` resolves against the config
+file. An unknown key is an error, with a suggestion.
+
+`examples/pipeline.toml` is a complete config that runs from a fresh clone.
+
+### `semlog build`
+
+Input is positional: a file, a directory (every OCEL file in it), or omitted in favour of
+the config's `input` key. A path that does not exist is an error rather than a silent skip.
+
+| Flag | Config key | Default | Description |
+|---|---|---|---|
+| `PATH...` | `input` | from config | OCEL files or directories to build |
+| `--config` | — | none | TOML config; flags override it |
+| `--dry-run` | — | off | Print the resolved config and output paths, build nothing |
+| `--output` | `output` | `data/onto` | Directory for the ontology and manifest |
+| `--name` | `name` | config or input stem | Shared stem for every artifact |
+| `--profile` | `profile` | `OWL2DL` | `OWL2DL` or `OWL2EL` |
+| `--order` | `order` | `df` | `df ef ef_explicit declare`; pass with no values for none |
+| `--case-concepts` | `case_concepts` | auto | Object types to use as cases |
+| `--auto-case-concepts` | `auto_case_concepts` | `3` | How many to auto-select |
+| `--data-representation` | `data_representation` | `values` | `values equal_bins dist_bins` |
+| `--bins` | `bins` | `5` | Bin count for the binning modes |
+| `--bin-labels` | `bin_labels` | `very_low … very_high` | Must have exactly `--bins` entries |
+| `--inverse-representation` | `inverse_representation` | none | `axiomatic implicit` |
+| `--ocel-extensions` | `ocel_extensions` | none | `attribute_history` |
+| `--annotation-document` | `annotation_document` | none | JSON of entity name → label/comment |
+| `--derive-annotations` | `derive_annotations` | off | Emit `rdfs:label` on individuals |
+| `--declare-file` | `declare_file` | none | Constraints CSV; required with `--order declare` |
+| `--materialize` | `materialize` | off | Run the reasoner after writing |
+| `--reasoner-backend` | `reasoner_backend` | `HermiT` | `HermiT`, `Pellet` or `ELK` |
+| `--save-backmap` | `save_backmap` | off | Also write the cleaned → original name map |
+| `--save-store` | `save_store` | off | Also write the loaded `OCEDStore` pickle |
+| `--size-limit` | `size_limit` | `0` | Skip inputs larger than N MB |
+| `--log-dir` | `log_dir` | none | Directory for per-input log files |
+
+Enum values are accepted in either spelling, case-insensitively: `--order DF` and
+`--order df` are the same, as are `ATTRIBUTE_HISTORY` and `attribute_history`.
+
+Exit codes: `0` success, `1` a build failed or an ontology was inconsistent, `2` the
+configuration was unusable.
+
+### Makefile targets
+
+```bash
+make example                        # build examples/pipeline.toml
+make build CONFIG=runs/hiring.toml  # build one config
+make build-all                      # build every runs/*.toml
+```
 
 ---
 

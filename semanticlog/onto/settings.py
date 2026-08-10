@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import dataclass, field
 from enum import Enum
@@ -8,7 +9,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from semanticlog.enrich.declare import DeclareResult
 
-DEFAULT_IRI: str = "https://oced#"
+# Re-exported: callers have always imported DEFAULT_IRI from here, but the
+# definition lives outside the onto package so the data layer can use it too.
+from semanticlog.iri import DEFAULT_IRI as DEFAULT_IRI
 
 # Classes that define configuration settings for onto instantiation
 
@@ -97,6 +100,14 @@ class InverseRepresentation(str, Enum):
 _DEFAULT_BINS = 5
 _DEFAULT_BIN_LABELS = ["very_low", "low", "average", "high", "very_high"]
 
+#: Ceiling on materialised eventually-follows pairs, per case concept.
+#:
+#: EF_explicit is quadratic in trace length, not in event count, so a log that
+#: looks small can still ask for hundreds of millions of axioms: one 5,000-event
+#: trace is 12.5M pairs on its own. 50M is high enough not to interrupt real work
+#: and low enough to catch the runaway before it exhausts memory.
+_DEFAULT_MAX_EF_PAIRS = 50_000_000
+
 
 @dataclass
 class OntoBuildSettings:
@@ -146,6 +157,7 @@ class OntoBuildSettings:
     bin_labels: list[str] = field(default_factory=lambda: list(_DEFAULT_BIN_LABELS))
     annotation_document: str | None = None
     derive_annotations: bool = False
+    max_ef_pairs: int = _DEFAULT_MAX_EF_PAIRS
 
     def __post_init__(self) -> None:
         # Each cache remembers the path it came from, so re-pointing the path field
@@ -238,11 +250,18 @@ class OntoBuildSettings:
 
     @property
     def instantiate_ef(self) -> bool:
-        """True if eventually-follows relations should be built, axiomatically or explicitly."""
-        return (
-            EventOrderRepresentation.EF in self.order_representation
-            or self.instantiate_ef_explicit
-        )
+        """True if an eventually-follows property is needed, axiomatically or explicitly."""
+        return self.instantiate_ef_axiomatic or self.instantiate_ef_explicit
+
+    @property
+    def instantiate_ef_axiomatic(self) -> bool:
+        """True if eventually-follows should be left for a reasoner to derive.
+
+        Distinct from :attr:`instantiate_ef_explicit`: the two are alternative
+        strategies for the same relation, so selecting materialisation must not
+        also emit the TBox axioms that materialisation exists to avoid.
+        """
+        return EventOrderRepresentation.EF in self.order_representation
 
     @property
     def instantiate_ef_explicit(self) -> bool:
@@ -337,9 +356,43 @@ class OntoBuildSettings:
     # Serialisation
     # ------------------------------------------------------------------
 
+    def resolve(self) -> None:
+        """Read every lazily-loaded input now.
+
+        After this, nothing else touches the filesystem, so serialising or
+        inspecting the settings has no side effects and cannot fail on a missing
+        file halfway through a build.
+        """
+        _ = self.annotation_data
+        _ = self.declare_result
+
+    def snapshot(self) -> OntoBuildSettings:
+        """Return an independent copy with the same resolved inputs.
+
+        A build takes one of these so that mutating the caller's settings
+        afterwards cannot change what the build does, and so the settings stored
+        on the finished :class:`~semanticlog.onto.semlog.SemanticLog` are provably
+        the ones that produced it. The list fields are copied because those are
+        what callers mutate in place; the resolved caches are carried over so the
+        copy does not re-read from disk.
+        """
+        clone = copy.copy(self)
+        clone.order_representation = list(self.order_representation)
+        clone.ocel_extensions = list(self.ocel_extensions)
+        clone.case_concepts = list(self.case_concepts)
+        clone.inverse_representation = list(self.inverse_representation)
+        clone.data_representation = list(self.data_representation)
+        clone.bin_labels = list(self.bin_labels)
+        return clone
+
     def to_dict(self) -> dict:
-        """Serialise settings to a JSON-compatible dict."""
-        declare_result = self.declare_result
+        """Serialise settings to a JSON-compatible dict.
+
+        Reports the inputs already resolved rather than reading them: a
+        serialisation call that silently opened files would make the result
+        depend on when it was called. Call :meth:`resolve` first to include them.
+        """
+        declare_result = self._declare_result
         return {
             "profile": self.profile.value,
             "order_representation": [e.value for e in self.order_representation],
@@ -354,8 +407,9 @@ class OntoBuildSettings:
             "bins": self.bins,
             "bin_labels": self.bin_labels,
             "annotation_document": self.annotation_document,
-            "annotation_data": self.annotation_data,
+            "annotation_data": self._annotation_data,
             "derive_annotations": self.derive_annotations,
+            "max_ef_pairs": self.max_ef_pairs,
         }
 
     @classmethod
@@ -382,6 +436,7 @@ class OntoBuildSettings:
             bin_labels=d.get("bin_labels", list(_DEFAULT_BIN_LABELS)),
             annotation_document=d.get("annotation_document"),
             derive_annotations=d.get("derive_annotations", False),
+            max_ef_pairs=d.get("max_ef_pairs", _DEFAULT_MAX_EF_PAIRS),
         )
         if d.get("declare_result") is not None:
             settings.declare_result = DeclareResult.from_dict(d["declare_result"])

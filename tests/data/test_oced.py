@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.oced import EntityKind, OCEDStore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -608,6 +608,45 @@ def test_get_log_row_count_and_activity_column(minimal_oced):
     assert activity_counts["type2"] == 2
 
 
+def test_get_logs_matches_get_log_per_case_concept():
+    oced = OCEDStore()
+    oced.add_object("A", "oid", pd.DataFrame({"oid": ["a1", "a2"]}))
+    oced.add_object("B", "bid", pd.DataFrame({"bid": ["b1"]}))
+    oced.add_event(
+        "E",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {"eid": ["e1", "e2"], "ts": pd.to_datetime(["2022-01-01", "2022-01-02"])}
+        ),
+    )
+    oced.add_event_to_object_relation(
+        "rel_a",
+        "eid",
+        "oid",
+        ["A"],
+        pd.DataFrame({"eid": ["e1", "e2"], "oid": ["a1", "a2"]}),
+    )
+    oced.add_event_to_object_relation(
+        "rel_b", "eid", "bid", ["B"], pd.DataFrame({"eid": ["e1"], "bid": ["b1"]})
+    )
+
+    logs = oced.get_logs(["A", "B"])
+
+    assert set(logs) == {"A", "B"}
+    assert_frame_equal(logs["A"], oced.get_log("A"))
+    assert_frame_equal(logs["B"], oced.get_log("B"))
+
+
+def test_get_logs_empty_input_returns_empty_dict(minimal_oced):
+    assert minimal_oced.get_logs([]) == {}
+
+
+def test_get_logs_propagates_unknown_case_concept(minimal_oced):
+    with pytest.raises(ValueError, match="Unknown object type"):
+        minimal_oced.get_logs(["A", "no_such_type"])
+
+
 # ---------------------------------------------------------------------------
 # ocel_mode
 # ---------------------------------------------------------------------------
@@ -773,3 +812,37 @@ def test_load_id_backmap_overwrites_existing(tmp_path):
     oced.load_backmap(path)
     assert oced.backmap == {"old_key": "old_val"}
     assert "other" not in oced.backmap
+
+
+def test_get_types_can_be_restricted_to_one_kind(event_df_1):
+    """Callers that need object types should not receive activity names.
+
+    Unrestricted, the search spans both, so an o2o relation could be given an
+    activity as one of its endpoint types.
+    """
+    oced = OCEDStore()
+    oced.add_event("an_activity", "event", "timestamp", event_df_1)
+    oced.add_object("A", "object", pd.DataFrame({"object": ["o1"]}))
+    mixed = ["e1", "o1"]
+
+    assert oced.get_types(mixed) == ["A", "an_activity"]
+    assert oced.get_types(mixed, of=EntityKind.OBJECT) == ["A"]
+    assert oced.get_types(mixed, of=EntityKind.EVENT) == ["an_activity"]
+
+
+def test_get_types_rejects_an_invalid_kind():
+    with pytest.raises(ValueError, match="Valid entity kinds"):
+        OCEDStore().get_types(["x"], of="neither")
+
+
+def test_failed_id_change_restores_relation_tables(minimal_oced):
+    """Rollback must cover the relations that were rewritten, not just the objects."""
+    before = minimal_oced.get_relation("rel1").data.copy()
+
+    def explode(series):
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        minimal_oced.change_object_ids("A", explode)
+
+    pd.testing.assert_frame_equal(minimal_oced.get_relation("rel1").data, before)

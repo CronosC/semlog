@@ -1,0 +1,23 @@
+# A complete, runnable example. The input is the small OCEL log committed with
+# the test suite, so this works from a fresh clone with no extra data:
+#
+#     semlog build --config examples/pipeline.toml
+#
+# It writes examples/out/pipeline.owl and examples/out/pipeline.manifest.json.
+# The manifest records the input checksum, the resolved settings and the semlog
+# version, which together identify exactly what produced the ontology.
+
+input = "tests/fixtures/pipeline.jsonocel"
+output = "examples/out"
+
+profile = "OWL2DL"
+order = ["df"]
+case_concepts = ["order"]
+
+data_representation = ["values"]
+inverse_representation = ["implicit"]
+derive_annotations = true
+
+# Reasoning is a separate step; run it with:
+#     semlog reason examples/out/pipeline.owl
+materialize = false

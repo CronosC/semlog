@@ -27,6 +27,7 @@ logs/
 
 # Generated / temporary data
 data/*
+examples/out/
 simulated.csv
 *.semlog
 
@@ -43,5 +44,6 @@ components/RDFox/RDFox.lic
 .idea/
 .vscode/
 
-# Local build scripts (dataset-specific, not shared)
-scripts/build_*.sh
+# Local run configs (dataset-specific, not shared).
+# examples/ holds the one config that is meant to be shared.
+runs/

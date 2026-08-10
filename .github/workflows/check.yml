@@ -1,0 +1,52 @@
+name: check
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+concurrency:
+  # A newer push to the same branch makes an in-flight run irrelevant.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      # The reasoner tests run HermiT through the OWL API, which needs a JVM.
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Lint
+        run: uv run ruff check semanticlog/ tests/
+
+      - name: Format
+        run: uv run ruff format --check semanticlog/ tests/
+
+      - name: Type check
+        run: uv run mypy semanticlog/
+
+      # Not split by directory: the build matrix and the reasoner tests are the
+      # ones most likely to catch a regression, and both are cross-cutting.
+      - name: Test
+        run: uv run pytest tests/ -q
+
+      - name: Build the committed example end to end
+        run: uv run semlog build --config examples/pipeline.toml

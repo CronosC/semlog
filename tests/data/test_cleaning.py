@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 
 from semanticlog.data.cleaning import (
-    _build_backmap,
+    RenameLog,
     _collect_schema_names,
     apply_function_to_value,
     clean_column_values,
@@ -271,6 +271,57 @@ def test_fix_duplicate_names_renames_reserved_activity():
 
     assert "observes_" in result.get_activities()
     assert "observes" not in result.get_activities()
+
+
+def test_fix_duplicate_names_renames_activity_colliding_with_derived_property():
+    """An activity named ``has_price`` claims the property derived from ``price``.
+
+    A class and an object property under one IRI is punning that owlready2
+    rejects mid-build, so the activity has to be renamed here instead.
+    """
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("has_price", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"], "price": [10.0]}))
+
+    result = fix_duplicate_names(oced)
+
+    assert "has_price_" in result.get_activities()
+    assert "has_price" not in result.get_activities()
+
+
+def test_fix_duplicate_names_renames_object_colliding_with_case_concept_property():
+    """``df_{object_type}`` is reserved for every object type, not just case concepts.
+
+    Cleaning runs once per store while the same store may be built under several
+    configurations, so it cannot know which object types become case concepts.
+    """
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("df_order", "eid", "ts", ev)
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1"]}))
+
+    result = fix_duplicate_names(oced)
+
+    assert "df_order_" in result.get_activities()
+
+
+def test_fix_duplicate_names_leaves_unrelated_derived_lookalikes_alone():
+    """Only names a build would actually derive are reserved."""
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("has_weight", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"], "price": [10.0]}))
+
+    result = fix_duplicate_names(oced)
+
+    assert "has_weight" in result.get_activities()
 
 
 def test_fix_duplicate_names_renames_object_colliding_with_activity():
@@ -558,33 +609,76 @@ def test_collect_schema_names_includes_attribute_columns():
     assert "oid" not in names
 
 
-def test_build_name_backmap_maps_changed_names():
-    pre = {"Order Execution", "Purchase Item"}
-    post = {"Order_Execution", "Purchase_Item"}
-    backmap = _build_backmap(pre, post, casefold=False)
-    assert backmap["Order_Execution"] == "Order Execution"
-    assert backmap["Purchase_Item"] == "Purchase Item"
+def test_rename_log_maps_a_final_name_to_its_original():
+    log = RenameLog()
+    log.record("activity", "Order Execution", "Order_Execution")
+
+    assert log.flat()["Order_Execution"] == "Order Execution"
 
 
-def test_build_name_backmap_omits_unchanged_names():
-    pre = {"act", "obj"}
-    post = {"act", "obj"}
-    backmap = _build_backmap(pre, post, casefold=False)
-    assert backmap == {}
+def test_rename_log_composes_successive_renames():
+    """Cleaning then de-collision must map the end back to the start, not the middle."""
+    log = RenameLog()
+    log.record("activity", "Has Price", "Has_Price")
+    log.record("activity", "Has_Price", "Has_Price_")
+
+    assert log.flat() == {"Has_Price_": "Has Price"}
 
 
-def test_build_name_backmap_reserved_collision_attr_suffix():
-    pre = {"observed_at"}
-    post = {"observed_at_attr"}
-    backmap = _build_backmap(pre, post, casefold=False)
-    assert backmap["observed_at_attr"] == "observed_at"
+def test_rename_log_omits_names_it_did_not_change():
+    log = RenameLog()
+    log.record("activity", "act", "act")
+
+    assert log.flat() == {}
 
 
-def test_build_name_backmap_reserved_collision_underscore_suffix():
-    pre = {"df"}
-    post = {"df_"}
-    backmap = _build_backmap(pre, post, casefold=False)
-    assert backmap["df_"] == "df"
+def test_rename_log_keeps_kinds_apart():
+    """An id and an activity cleaning to one string must not overwrite each other."""
+    log = RenameLog()
+    log.record("id", "o 1", "o_1")
+    log.record("activity", "o.1", "o_1")
+
+    assert log.of_kind("id") == {"o_1": "o 1"}
+    assert log.of_kind("activity") == {"o_1": "o.1"}
+
+
+def test_rename_log_rejects_an_unknown_kind():
+    with pytest.raises(ValueError, match="Unknown rename kind"):
+        RenameLog().record("nonsense", "a", "b")
+
+
+def test_rename_log_takes_an_explicit_original():
+    """A value individual maps back to its cell value, not to its previous name."""
+    log = RenameLog()
+    log.record("value", "status_df", "status_df_attr_val", original="df")
+
+    assert log.flat()["status_df_attr_val"] == "df"
+
+
+def test_backmap_records_a_reserved_activity_suffix():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("observes", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
+
+    result = clean_oced_data(oced)
+
+    assert result.backmap["observes_"] == "observes"
+
+
+def test_backmap_records_an_attribute_column_suffix():
+    oced = OCEDStore()
+    ev = pd.DataFrame(
+        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+    oced.add_event("act", "eid", "ts", ev)
+    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"], "observed_at": ["x"]}))
+
+    result = clean_oced_data(oced)
+
+    assert result.backmap["observed_at_attr"] == "observed_at"
 
 
 def test_clean_oced_data_name_backmap_maps_activity_and_object_type():

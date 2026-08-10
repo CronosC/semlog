@@ -15,10 +15,13 @@ dependencies = [
     "owlapy>=1.6,<2",
     "scipy<2",
     "pandas>=2.2",
+    # Parquet engine for OCEDStore.write/read. Chosen over CSV so the stored
+    # dtypes come back exactly as written, without a schema-guessing step.
+    "pyarrow>=15",
 ]
 
 [project.scripts]
-semlog-build = "semanticlog.cli:main"
+semlog = "semanticlog.cli:main"
 
 [project.optional-dependencies]
 # Note: [declare] also requires the Lydia LTLf/LDLf solver (not on PyPI).

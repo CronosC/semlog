@@ -7,15 +7,31 @@ import logging
 import pandas as pd
 
 from semanticlog.data.oced import OCEDStore
-from semanticlog.onto.annotations import timestamp_labels
-from semanticlog.onto.attributes import AttributeInstantiationMixin
-from semanticlog.onto.settings import DataRepresentation
+from semanticlog.onto import vocabulary as vocab
+from semanticlog.onto.annotations import AnnotationWriter, timestamp_labels
+from semanticlog.onto.attributes import AttributeEmitter
+from semanticlog.onto.emit import Emitter
+from semanticlog.onto.settings import DataRepresentation, OntoBuildSettings
+from semanticlog.onto.sink import AxiomSink
 
 
-class AttributeHistoryMixin(AttributeInstantiationMixin):
-    """Turns ``log.object_changes`` records into timestamped AttributeChange individuals.\n\n    Mixed into :class:`~semanticlog.onto.instantiate.OCEDOntoBuilder`; active only\n    when ``OcelExtension.ATTRIBUTE_HISTORY`` is enabled."""
+class HistoryEmitter(Emitter):
+    """Turns ``log.object_changes`` records into timestamped AttributeChange individuals.
 
-    def instantiate_object_attribute_history(self, data: OCEDStore) -> None:
+    Active only when ``OcelExtension.ATTRIBUTE_HISTORY`` is enabled.
+    """
+
+    def __init__(
+        self,
+        sink: AxiomSink,
+        settings: OntoBuildSettings,
+        annotations: AnnotationWriter,
+        attributes: AttributeEmitter | None = None,
+    ) -> None:
+        super().__init__(sink, settings, annotations)
+        self.attributes = attributes or AttributeEmitter(sink, settings, annotations)
+
+    def emit(self, data: OCEDStore) -> None:
         """Instantiate object attribute change history as AttributeChange individuals.
 
         For each change record ``(ocel:oid, ocel:field, value, ocel:timestamp)``,
@@ -51,13 +67,13 @@ class AttributeHistoryMixin(AttributeInstantiationMixin):
                     )
                     continue
 
-                self.add_class(attr_name, "ObjectAttribute")
-                attr_change_cls = attr_name + "Change"
-                self.add_class(attr_change_cls, "AttributeChange")
-                change_prop = self.generate_attr_change_value_prop_name(attr_name)
-                self.add_property(
+                self.sink.add_class(attr_name, vocab.OBJECT_ATTRIBUTE)
+                attr_change_cls = vocab.attribute_change_class(attr_name)
+                self.sink.add_class(attr_change_cls, vocab.ATTRIBUTE_CHANGE)
+                change_prop = vocab.change_value_property(attr_name)
+                self.sink.add_property(
                     change_prop,
-                    superprop="attribute_change_value",
+                    superprop=vocab.ATTRIBUTE_CHANGE_VALUE,
                     range_class=attr_name,
                     create_inverse=has_inverses,
                 )
@@ -78,20 +94,15 @@ class AttributeHistoryMixin(AttributeInstantiationMixin):
                     ):
                         continue
 
-                tmp["ts_str"] = tmp["ocel:timestamp"].apply(
-                    self.generate_timestamp_string
-                )
-                tmp["attr_change_id"] = (
-                    "AttrChange_"
-                    + tmp["ocel:oid"].astype(str)
-                    + "_"
-                    + attr_name
-                    + "_"
-                    + tmp["ts_str"]
+                tmp["ts_str"] = vocab.timestamp_ids(tmp["ocel:timestamp"])
+                tmp["attr_change_id"] = vocab.attribute_change_ids(
+                    tmp["ocel:oid"], attr_name, tmp["ts_str"]
                 )
                 tmp["time_id"] = tmp["ts_str"]
 
-                self.assert_individuals(tmp["attr_change_id"].tolist(), attr_change_cls)
+                self.sink.assert_individuals(
+                    tmp["attr_change_id"].tolist(), attr_change_cls
+                )
                 self.annotations.attribute_change_individuals(
                     tmp["attr_change_id"],
                     attr_name,
@@ -99,43 +110,25 @@ class AttributeHistoryMixin(AttributeInstantiationMixin):
                     tmp["ocel:oid"],
                     tmp["ocel:timestamp"],
                 )
-                self.assert_relations(
+                self.sink.assert_relations(
                     tmp,
-                    "has_attribute_change",
+                    vocab.HAS_ATTRIBUTE_CHANGE,
                     from_key="ocel:oid",
                     to_key="attr_change_id",
                 )
-                s = tmp[attr_name]
-                if pd.api.types.is_datetime64_any_dtype(s):
-                    self._instantiate_attr(
-                        tmp,
-                        "attr_change_id",
-                        attr_name,
-                        change_prop,
-                        lambda v, a=attr_name: (
-                            f"{a}_{self.generate_timestamp_string(v)}"
-                        ),
-                        also_assert_data_value=True,
-                    )
-                elif pd.api.types.is_numeric_dtype(s):
-                    self._instantiate_attr(
-                        tmp,
-                        "attr_change_id",
-                        attr_name,
-                        change_prop,
-                        lambda v, a=attr_name: f"{a}_{v}",
-                        also_assert_data_value=True,
-                    )
-                else:
-                    self._instantiate_attr(
-                        tmp,
-                        "attr_change_id",
-                        attr_name,
-                        change_prop,
-                        lambda v, a=attr_name: f"{a}_{str(v)}",
-                        also_assert_data_value=False,
-                    )
-                self.assert_individuals(tmp["time_id"].unique().tolist(), "Time")
+                # Only datetime and numeric changes carry a literal alongside the
+                # value individual; strings are represented by the individual alone.
+                self.attributes.emit_values(
+                    tmp,
+                    "attr_change_id",
+                    attr_name,
+                    change_prop,
+                    pd.api.types.is_datetime64_any_dtype(s)
+                    or pd.api.types.is_numeric_dtype(s),
+                )
+                self.sink.assert_individuals(
+                    tmp["time_id"].unique().tolist(), vocab.TIME
+                )
                 unique_change_times = tmp[
                     ["time_id", "ocel:timestamp"]
                 ].drop_duplicates("time_id")
@@ -143,13 +136,16 @@ class AttributeHistoryMixin(AttributeInstantiationMixin):
                     unique_change_times["time_id"],
                     timestamp_labels(unique_change_times["ocel:timestamp"]),
                 )
-                self.assert_relations(
+                self.sink.assert_relations(
                     unique_change_times,
-                    "has_data_value",
+                    vocab.HAS_DATA_VALUE,
                     from_key="time_id",
                     to_key="ocel:timestamp",
                     data_prop=True,
                 )
-                self.assert_relations(
-                    tmp, "changed_at", from_key="attr_change_id", to_key="time_id"
+                self.sink.assert_relations(
+                    tmp,
+                    vocab.CHANGED_AT,
+                    from_key="attr_change_id",
+                    to_key="time_id",
                 )

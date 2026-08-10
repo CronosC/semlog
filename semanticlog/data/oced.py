@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import pickle
+import warnings
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -13,8 +14,7 @@ import pandas as pd
 import pm4py as pm
 
 from semanticlog.data.dtypes import infer_dtypes
-
-_DEFAULT_IRI: str = "https://oced#"
+from semanticlog.iri import DEFAULT_IRI as _DEFAULT_IRI
 
 
 class EntityKind(str, Enum):
@@ -166,13 +166,56 @@ class OCEDStore:
         """
         return [self.get_original(name, base_iri) for name in iri_or_local_names]
 
+    def write(self, path: str | Path) -> Path:
+        """
+        Write the store to a directory of Parquet tables plus a JSON manifest.
+
+        Preferred over :meth:`save`: the result does not encode this class's
+        layout, so it keeps loading across code changes and can be opened by
+        anything that reads Parquet.
+
+        Args:
+            path: Destination directory. Replaced if it already exists.
+
+        Returns:
+            The directory written to.
+        """
+        from semanticlog.data.persist import write_store
+
+        return write_store(self, path)
+
+    @classmethod
+    def read(cls, path: str | Path) -> OCEDStore:
+        """
+        Read a store written by :meth:`write`.
+
+        Args:
+            path: The store directory.
+
+        Returns:
+            Restored ``OCEDStore``, including its backmap.
+        """
+        from semanticlog.data.persist import read_store
+
+        return read_store(path)
+
     def save(self, path: str | Path) -> None:
         """
         Persist the full OCEDStore to a pickle file.
 
+        Deprecated in favour of :meth:`write`. A pickle records this class's
+        layout as well as the data, so it stops loading as soon as a field is
+        added and nothing but semlog can read it.
+
         Args:
             path: Destination file path (e.g. ``store.pkl``).
         """
+        warnings.warn(
+            "OCEDStore.save writes a pickle, which breaks when the class changes. "
+            "Use OCEDStore.write(path) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         with open(path, "wb") as f:
             pickle.dump(self, f)
 
@@ -180,6 +223,9 @@ class OCEDStore:
     def load(cls, path: str | Path) -> OCEDStore:
         """
         Load an OCEDStore from a pickle file produced by :meth:`save`.
+
+        Kept so stores written by earlier versions can still be opened. New code
+        should use :meth:`write` and :meth:`read`.
 
         Args:
             path: Path to the pickle file.
@@ -212,19 +258,38 @@ class OCEDStore:
 
     # MISCELLANEOUS
 
-    def get_types(self, ids: list[str] | pd.Series) -> list[str]:
+    def get_types(
+        self, ids: list[str] | pd.Series, of: EntityKind | str | None = None
+    ) -> list[str]:
         """
         Find the object or event types that include any of the given ids.
+
+        Args:
+            ids: Identifiers to look up.
+            of: Restrict the search to one kind. ``None``, the default, searches
+                object types and then activities, so the result can mix the two.
+                Callers that need object types back should say so: an activity
+                name reaching a field that expects an object type is rejected far
+                from here, if at all.
+
+        Returns:
+            The matching type names, object types first.
+
+        Raises:
+            ValueError: If ``of`` is not a valid :class:`EntityKind`.
         """
+        kind = _as_entity_kind(of) if of is not None else None
         if isinstance(ids, list):
             ids = pd.Series(ids)
         types = []
-        for object_type, table in self._objects.items():
-            if ids.isin(table.data[table.id]).any():
-                types.append(object_type)
-        for activity, event_table in self._events.items():
-            if ids.isin(event_table.data[event_table.id]).any():
-                types.append(activity)
+        if kind is not EntityKind.EVENT:
+            for object_type, table in self._objects.items():
+                if ids.isin(table.data[table.id]).any():
+                    types.append(object_type)
+        if kind is not EntityKind.OBJECT:
+            for activity, event_table in self._events.items():
+                if ids.isin(event_table.data[event_table.id]).any():
+                    types.append(activity)
 
         return types
 
@@ -242,34 +307,62 @@ class OCEDStore:
         Raises:
             ValueError: If the provided case_concept is not among the known object types.
         """
+        return self.get_logs([case_concept])[case_concept]
+
+    def get_logs(self, case_concepts: Iterable[str]) -> dict[str, pd.DataFrame]:
+        """
+        Generate one classical event log per case-concept.
+
+        Equivalent to calling :meth:`get_log` for each entry, but the event table
+        every log is built from is assembled once rather than once per
+        case-concept.
+
+        Parameters:
+            case_concepts (Iterable[str]): Object types to use as case-concepts.
+
+        Returns:
+            dict[str, pd.DataFrame]: A pm4py event log per case-concept.
+
+        Raises:
+            ValueError: If a case_concept is not among the known object types, if
+                no event-to-object relation references it, or if the store holds
+                no event data.
+        """
+        logs: dict[str, pd.DataFrame] = {}
+        events_data: pd.DataFrame | None = None
+        for case_concept in case_concepts:
+            rel_data = self._case_relations(case_concept)
+            if events_data is None:
+                events_data = self._event_frame()
+            logs[case_concept] = self._flatten(case_concept, rel_data, events_data)
+        return logs
+
+    def _case_relations(self, case_concept: str) -> pd.DataFrame:
+        """Return the e2o rows linking events to objects of ``case_concept``."""
         if case_concept not in self.get_object_types():
             raise ValueError(f"Unknown object type: {case_concept}")
 
-        # get all relevant e2o relations
-        data_list = []
-        for relation in self._relations.event_to_object.values():
-            if case_concept in relation.to_type:
-                data_list.append(
-                    relation.data.rename(
-                        columns={
-                            relation.to_id: case_concept,
-                            relation.from_id: "event_id",
-                        }
-                    )
-                )
-
+        data_list = [
+            relation.data.rename(
+                columns={relation.to_id: case_concept, relation.from_id: "event_id"}
+            )
+            for relation in self._relations.event_to_object.values()
+            if case_concept in relation.to_type
+        ]
         if not data_list:
             raise ValueError(
                 f"No event-to-object relations reference object type '{case_concept}'."
             )
+
         rel_data = pd.concat(data_list, ignore_index=True)
         valid_case_ids = set(self.get_ids(EntityKind.OBJECT, case_concept))
         dropped_ids = set(rel_data[case_concept]) - valid_case_ids
-        rel_data = rel_data[rel_data[case_concept].isin(valid_case_ids)]
-
         if dropped_ids:
             self._warn_unknown_case_ids(case_concept, dropped_ids)
+        return rel_data[rel_data[case_concept].isin(valid_case_ids)]
 
+    def _event_frame(self) -> pd.DataFrame:
+        """Return every event as ``event_id``, ``time:timestamp``, ``concept:name``."""
         events_data_list = []
         for event_type, event_table in self._events.items():
             event_data = event_table.data[[event_table.id, event_table.time]].copy()
@@ -281,7 +374,11 @@ class OCEDStore:
 
         if not events_data_list:
             raise ValueError("No event data available.")
-        events_data = pd.concat(events_data_list, ignore_index=True)
+        return pd.concat(events_data_list, ignore_index=True)
+
+    def _flatten(
+        self, case_concept: str, rel_data: pd.DataFrame, events_data: pd.DataFrame
+    ) -> pd.DataFrame:
         log = pd.merge(events_data, rel_data, on="event_id", how="inner")
 
         log = pm.format_dataframe(
@@ -292,11 +389,9 @@ class OCEDStore:
         )
 
         log = log.set_index("event_id")
-        log = log[["case:concept:name", "concept:name", "time:timestamp"]].sort_values(
+        return log[["case:concept:name", "concept:name", "time:timestamp"]].sort_values(
             by=["case:concept:name", "time:timestamp"], ascending=True
         )
-
-        return log
 
     def _warn_unknown_case_ids(self, case_concept: str, dropped_ids: set) -> None:
         all_object_ids: set = set()
@@ -735,12 +830,28 @@ class OCEDStore:
     def change_object_ids(
         self, object_type: str, change_function: Callable[[pd.Series], pd.Series]
     ) -> None:
-        """Rewrite one object type's identifiers, updating every relation that uses them."""
-        # snapshot for rollback
-        objects_backup = copy.deepcopy(self._objects[object_type])
-        relations_backup = copy.deepcopy(self._relations)
+        """Rewrite one object type's identifiers, updating every relation that uses them.
+
+        Only the tables actually rewritten are snapshotted for rollback. Copying
+        the whole relation set instead duplicated every relation table in the
+        store on every call, which the loader makes once per numerically-indexed
+        object type.
+        """
+        table = self._objects[object_type]
+        touched = [
+            relation
+            for relation in self._relations.object_to_object.values()
+            if object_type in (relation.from_type or [])
+            or object_type in relation.to_type
+        ] + [
+            relation
+            for relation in self._relations.event_to_object.values()
+            if object_type in relation.to_type
+        ]
+        backups = [(relation, relation.data.copy()) for relation in touched]
+        objects_backup = copy.deepcopy(table)
+
         try:
-            table = self._objects[object_type]
             unique_ids = table.data[table.id].unique()
 
             # change IDs in the object table
@@ -767,7 +878,8 @@ class OCEDStore:
             self.update_used_ids()
         except Exception:
             self._objects[object_type] = objects_backup
-            self._relations = relations_backup
+            for relation, data in backups:
+                relation.data = data
             raise
 
     def change_event_ids(

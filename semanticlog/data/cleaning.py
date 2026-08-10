@@ -14,6 +14,7 @@ from semanticlog.data.oced import (
     Relations,
     RelationTable,
 )
+from semanticlog.onto import vocabulary as vocab
 
 _ISO8601_RE = re.compile(
     r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
@@ -22,21 +23,10 @@ _ISO8601_RE = re.compile(
     r"(?:Z|[+-]\d{2}:?\d{2})?)?$"
 )
 
-_RESERVED_OWL_NAMES: frozenset[str] = frozenset(
-    {
-        "is_a",
-        "observes",
-        "observed_at",
-        "df",
-        "ef",
-        "has_attribute",
-        "attribute_of",
-        "event_object_relation",
-        "object_object_relation",
-        "Starts",
-        "Ends",
-    }
-)
+# Derived from the vocabulary so this cannot drift from what a build emits.
+# ``is_a`` is added on top: owlready2 exposes it on every entity, so a data name
+# of that form would shadow it even though semlog never writes it itself.
+_RESERVED_OWL_NAMES: frozenset[str] = vocab.RESERVED_NAMES | {"is_a"}
 
 
 def is_timestamp(string: str) -> bool:
@@ -218,6 +208,18 @@ def _collect_entity_ids(data: OCEDStore) -> set[str]:
     return ids
 
 
+def _collect_attribute_names(data: OCEDStore) -> set[str]:
+    """Return every attribute column name across all events and objects."""
+    names: set[str] = set()
+    for activity in data.get_activities():
+        table = data.get_events(activity)
+        names |= set(table.data.columns) - {table.id, table.time}
+    for obj_type in data.get_object_types():
+        obj = data.get_object(obj_type)
+        names |= set(obj.data.columns) - {obj.id}
+    return names
+
+
 def _collect_schema_names(data: OCEDStore) -> set[str]:
     """Return all current schema-level names that become OWL IRI fragments."""
     names: set[str] = set()
@@ -263,46 +265,80 @@ def _check_schema_name_collisions(data: OCEDStore, casefold: bool) -> None:
         )
 
 
-def _build_backmap(
-    pre: set[str], post: set[str], casefold: bool = False
-) -> dict[str, str]:
-    """Build cleaned_name → original_name mapping from pre- and post-clean snapshots.
+class RenameLog:
+    """Records every rename a cleaning pass performs, keyed by what was renamed.
 
-    Covers both entity IDs and schema names (activities, object types, attributes).
-    Predicts the post-clean form of each pre-clean name via clean_string(), then checks
-    for suffixes that fix_duplicate_names() may append on reserved-name collisions:
-    ``_attr_val`` (entity ID values), ``_attr`` (attribute columns), ``_`` (activities,
-    objects, relations).  Names unchanged by cleaning are omitted.
+    The alternative is to reconstruct the mapping afterwards by predicting what
+    cleaning would have done and testing for each suffix it might have appended.
+    That silently loses entries the moment a new rename rule is added, and it
+    cannot tell an object ID from an activity that cleaned to the same string.
+    Recording at the point of the rename has neither problem.
+
+    Renames compose: a name cleaned and then suffixed to dodge a reserved word
+    maps from its final form back to the form it arrived in.
     """
-    backmap: dict[str, str] = {}
-    for pre_name in pre:
-        predicted = clean_string(str(pre_name), casefold=casefold)
-        if predicted in post:
-            if predicted != str(pre_name):
-                backmap[predicted] = str(pre_name)
-        elif predicted + "_attr_val" in post:
-            backmap[predicted + "_attr_val"] = str(pre_name)
-        elif predicted + "_attr" in post:
-            backmap[predicted + "_attr"] = str(pre_name)
-        elif predicted + "_" in post:
-            backmap[predicted + "_"] = str(pre_name)
-    return backmap
+
+    #: What a name names. Kept apart so two kinds cleaning to the same string do
+    #: not overwrite each other.
+    KINDS = ("activity", "object_type", "relation", "attribute", "id", "value")
+
+    def __init__(self) -> None:
+        self._original: dict[str, dict[str, str]] = {k: {} for k in self.KINDS}
+        self._current: dict[str, dict[str, str]] = {k: {} for k in self.KINDS}
+
+    def record(
+        self, kind: str, old: str, new: str, original: str | None = None
+    ) -> None:
+        """Note that ``old`` is now called ``new``.
+
+        Args:
+            kind: One of :attr:`KINDS`.
+            old: The name as it was before this step, not necessarily the original.
+            new: The name after this step.
+            original: What ``new`` should map back to, when that is not simply
+                whatever ``old`` mapped back to. Needed for value individuals,
+                whose name combines a column with a cell value, so the thing a
+                reader wants back is the cell value rather than the previous name.
+        """
+        if kind not in self._original:
+            raise ValueError(
+                f"Unknown rename kind {kind!r}; expected one of {self.KINDS}"
+            )
+        root = original if original is not None else self._current[kind].get(old, old)
+        self._current[kind].pop(old, None)
+        self._original[kind].pop(old, None)
+        if new != root:
+            self._original[kind][new] = root
+        self._current[kind][new] = root
+
+    def of_kind(self, kind: str) -> dict[str, str]:
+        """Return the final-name to original-name map for one kind."""
+        return dict(self._original[kind])
+
+    def flat(self) -> dict[str, str]:
+        """Return one merged final-name to original-name map.
+
+        The stored form is per kind, but ``OCEDStore.backmap`` and the JSON it is
+        saved as are flat, and downstream consumers read them that way.
+        """
+        merged: dict[str, str] = {}
+        for kind in self.KINDS:
+            merged.update(self._original[kind])
+        return merged
 
 
-def _collect_attr_value_backmap(
-    data: OCEDStore, casefold: bool = False
-) -> dict[str, str]:
-    """Map attribute-value individual local names to their original cell values.
+def _record_value_renames(
+    data: OCEDStore, log: RenameLog, casefold: bool = False
+) -> None:
+    """Record the value individuals whose local name differs from the cell value.
 
-    Snapshots the pre-clean string attribute cell values (the same leaves
-    :func:`clean_value` would alter) and predicts each value individual's local
-    name ``{cleaned_column}_{cleaned_value}`` — matching the ``value_to_id``
-    convention used in :mod:`semanticlog.onto.instantiate`.  Only values whose
-    cleaned form differs from the original are recorded; unchanged values fall
-    back to the cleaned text at annotation time.  Must be called *before*
-    cleaning mutates the store.
+    A value individual is named ``{cleaned_column}_{cleaned_value}``, following
+    :func:`~semanticlog.onto.vocabulary.attribute_value`.  Values that cleaning
+    leaves alone are skipped: annotation falls back to the cleaned text, so an
+    identity entry would only take up space.
+
+    Must run *before* cleaning mutates the store.
     """
-    backmap: dict[str, str] = {}
 
     def _collect(df: pd.DataFrame, skip: set[str]) -> None:
         for col in df.columns:
@@ -315,7 +351,7 @@ def _collect_attr_value_backmap(
                 cleaned_val = clean_string(value, casefold=casefold)
                 if cleaned_val == value:
                     continue
-                backmap[f"{cleaned_col}_{cleaned_val}"] = value
+                log.record("value", value, f"{cleaned_col}_{cleaned_val}")
 
     for activity in data.get_activities():
         table = data.get_events(activity)
@@ -324,10 +360,19 @@ def _collect_attr_value_backmap(
         obj = data.get_object(obj_type)
         _collect(obj.data, {obj.id})
 
-    return backmap
+
+def _record_id_renames(data: OCEDStore, log: RenameLog, casefold: bool = False) -> None:
+    """Record every event and object identifier that cleaning will change.
+
+    Must run *before* cleaning mutates the store.
+    """
+    for value in _collect_entity_ids(data):
+        cleaned = clean_string(value, casefold=casefold)
+        if cleaned != value:
+            log.record("id", value, cleaned)
 
 
-def fix_duplicate_names(data: OCEDStore) -> OCEDStore:
+def fix_duplicate_names(data: OCEDStore, log: RenameLog | None = None) -> OCEDStore:
     """Rename entities whose names collide with reserved OWL property/class names.
 
     Checks activities, object types, relation names, attribute column names, and
@@ -335,19 +380,32 @@ def fix_duplicate_names(data: OCEDStore) -> OCEDStore:
     during the pass).  Appends ``_`` to entity names, ``_attr`` to attribute
     columns, and ``_attr_val`` to cell values that collide.
 
+    The reserved set also covers the names a build *derives* from the data, such
+    as the ``has_{attr}`` property of an attribute or the ``df_{cc}`` property of
+    a case concept.  Without that, an activity called ``has_price`` and an
+    attribute called ``price`` claim one IRI as both a class and a property, and
+    the build fails inside owlready2 rather than here.
+
     Args:
         data: OCEDStore to fix in-place (also returned for chaining).
+        log: Rename log to record into, so the backmap does not have to
+            reconstruct these suffixes by guessing. Optional, for callers that
+            only want the renames applied.
 
     Returns:
         The same OCEDStore with collisions resolved.
     """
-    names: set[str] = set(_RESERVED_OWL_NAMES)
-    attribute_names: set[str] = set()
+    log = log if log is not None else RenameLog()
+    attribute_names = _collect_attribute_names(data)
+    names: set[str] = set(_RESERVED_OWL_NAMES) | vocab.derived_schema_names(
+        data.get_object_types(), attribute_names
+    )
 
     for relation_type in data.get_relation_types():
         if relation_type in names:
             logging.info(f"  renaming relation {relation_type} to avoid collision..")
             data.rename_relation(relation_type, relation_type + "_")
+            log.record("relation", relation_type, relation_type + "_")
             names.add(relation_type + "_")
         else:
             names.add(relation_type)
@@ -356,6 +414,7 @@ def fix_duplicate_names(data: OCEDStore) -> OCEDStore:
         if activity in names:
             logging.info(f"  renaming activity {activity} to avoid collision..")
             data.rename_activity(activity, activity + "_")
+            log.record("activity", activity, activity + "_")
             names.add(activity + "_")
         else:
             names.add(activity)
@@ -364,23 +423,16 @@ def fix_duplicate_names(data: OCEDStore) -> OCEDStore:
         if object_type in names:
             logging.info(f"  renaming object {object_type} to avoid collision..")
             data.rename_object(object_type, object_type + "_")
+            log.record("object_type", object_type, object_type + "_")
             names.add(object_type + "_")
         else:
             names.add(object_type)
 
     # Re-fetch after rename so subsequent passes use current (possibly suffixed) names.
+    # Attribute columns are unaffected by the entity renames above, so the set
+    # gathered before them is still current.
     current_activities = list(data.get_activities())
     current_object_types = list(data.get_object_types())
-
-    # Collect attribute names from events
-    for activity in current_activities:
-        table = data.get_events(activity)
-        attribute_names |= set(table.data.columns) - {table.id, table.time}
-
-    # Collect attribute names from objects
-    for object_type in current_object_types:
-        obj = data.get_object(object_type)
-        attribute_names |= set(obj.data.columns) - {obj.id}
 
     # Rename attribute columns that clash with OWL property/class names
     names_casefolded = {n.casefold() for n in names}
@@ -389,6 +441,7 @@ def fix_duplicate_names(data: OCEDStore) -> OCEDStore:
     ]
     for attribute in attributes_names_overlap:
         renaming = {attribute: attribute + "_attr"}
+        log.record("attribute", attribute, attribute + "_attr")
         for activity in current_activities:
             df = data.get_events(activity).data
             if attribute in df.columns:
@@ -402,15 +455,31 @@ def fix_duplicate_names(data: OCEDStore) -> OCEDStore:
     # frozenset, not a list: this is membership-tested once per DataFrame cell.
     all_names = frozenset(names | attribute_names)
 
-    def rename_values(df: pd.DataFrame) -> pd.DataFrame:
+    def rename_values(df: pd.DataFrame, key_cols: set[str]) -> pd.DataFrame:
+        for column in df.columns:
+            collided = [
+                v
+                for v in df[column].dropna().unique()
+                if isinstance(v, str) and v in all_names
+            ]
+            for value in collided:
+                if column in key_cols:
+                    # An identifier column: the individual is the id itself.
+                    log.record("id", value, value + "_attr_val")
+                else:
+                    # An attribute column: the individual is {column}_{value}, so
+                    # what a reader wants back is the cell value, not that name.
+                    before = f"{column}_{value}"
+                    known = log.of_kind("value").get(before)
+                    log.record("value", before, before + "_attr_val", known or value)
         return df.map(lambda v: _rename_attr_val(v, all_names))
 
     for activity in current_activities:
-        data.set_event_data(activity, rename_values(data.get_events(activity).data))
+        table = data.get_events(activity)
+        data.set_event_data(activity, rename_values(table.data, {table.id, table.time}))
     for object_type in current_object_types:
-        data.set_object_data(
-            object_type, rename_values(data.get_object(object_type).data)
-        )
+        obj = data.get_object(object_type)
+        data.set_object_data(object_type, rename_values(obj.data, {obj.id}))
 
     return data
 
@@ -436,13 +505,15 @@ def clean_oced_data(data: OCEDStore, casefold: bool = False) -> OCEDStore:
     """
     logging.info("Cleaning data..")
     _check_schema_name_collisions(data, casefold)
-    pre_ids = _collect_entity_ids(data)
-    pre_names = _collect_schema_names(data)
-    value_backmap = _collect_attr_value_backmap(data, casefold=casefold)
+
+    log = RenameLog()
+    _record_id_renames(data, log, casefold=casefold)
+    _record_value_renames(data, log, casefold=casefold)
+
     data.replace_tables(
-        events=_clean_events(data, casefold),
-        objects=_clean_objects(data, casefold),
-        relations=_clean_relations(data, casefold),
+        events=_clean_events(data, casefold, log),
+        objects=_clean_objects(data, casefold, log),
+        relations=_clean_relations(data, casefold, log),
     )
     if data.has_ocel_mode():
         data.replace_object_changes(
@@ -453,37 +524,60 @@ def clean_oced_data(data: OCEDStore, casefold: bool = False) -> OCEDStore:
                 for obj_type in data.get_object_change_types()
             }
         )
-    data = fix_duplicate_names(data)
+    data = fix_duplicate_names(data, log)
     data.update_used_ids()
-    post = _collect_entity_ids(data) | _collect_schema_names(data)
-    backmap = _build_backmap(pre_ids | pre_names, post, casefold=casefold)
-    backmap.update(value_backmap)
-    data.backmap = backmap
+    data.backmap = log.flat()
     return data
 
 
-def _clean_events(data: OCEDStore, casefold: bool) -> dict[str, EventTable]:
-    return {
-        clean_string(activity, casefold=casefold): EventTable(
+def _clean_columns(
+    df: pd.DataFrame, skip: set[str], log: RenameLog, casefold: bool
+) -> None:
+    """Record the attribute column renames cleaning is about to perform."""
+    for column in df.columns:
+        if column in skip:
+            continue
+        cleaned = clean_string(str(column), casefold=casefold)
+        if cleaned != str(column):
+            log.record("attribute", str(column), cleaned)
+
+
+def _clean_events(
+    data: OCEDStore, casefold: bool, log: RenameLog
+) -> dict[str, EventTable]:
+    events = {}
+    for activity in data.get_activities():
+        table = data.get_events(activity)
+        cleaned = clean_string(activity, casefold=casefold)
+        if cleaned != activity:
+            log.record("activity", activity, cleaned)
+        _clean_columns(table.data, {table.id, table.time}, log, casefold)
+        events[cleaned] = EventTable(
             id=clean_string(table.id, casefold=casefold),
             time=clean_string(table.time, casefold=casefold),
             data=clean_dataframe(table.data, casefold=casefold),
         )
-        for activity, table in ((a, data.get_events(a)) for a in data.get_activities())
-    }
+    return events
 
 
-def _clean_objects(data: OCEDStore, casefold: bool) -> dict[str, ObjectTable]:
-    return {
-        clean_string(obj_type, casefold=casefold): ObjectTable(
+def _clean_objects(
+    data: OCEDStore, casefold: bool, log: RenameLog
+) -> dict[str, ObjectTable]:
+    objects = {}
+    for obj_type in data.get_object_types():
+        obj = data.get_object(obj_type)
+        cleaned = clean_string(obj_type, casefold=casefold)
+        if cleaned != obj_type:
+            log.record("object_type", obj_type, cleaned)
+        _clean_columns(obj.data, {obj.id}, log, casefold)
+        objects[cleaned] = ObjectTable(
             id=clean_string(obj.id, casefold=casefold),
             data=clean_dataframe(obj.data, casefold=casefold),
         )
-        for obj_type, obj in ((o, data.get_object(o)) for o in data.get_object_types())
-    }
+    return objects
 
 
-def _clean_relations(data: OCEDStore, casefold: bool) -> Relations:
+def _clean_relations(data: OCEDStore, casefold: bool, log: RenameLog) -> Relations:
     def clean_types(types: list[str] | None) -> list[str] | None:
         if types is None:
             return None
@@ -491,16 +585,19 @@ def _clean_relations(data: OCEDStore, casefold: bool) -> Relations:
 
     def clean_family(kind: RelationKind) -> dict[str, RelationTable]:
         family = cast(dict[str, RelationTable], data.get_relations(kind))
-        return {
-            clean_string(name, casefold=casefold): RelationTable(
+        cleaned_family = {}
+        for name, rel in family.items():
+            cleaned = clean_string(name, casefold=casefold)
+            if cleaned != name:
+                log.record("relation", name, cleaned)
+            cleaned_family[cleaned] = RelationTable(
                 from_id=clean_string(rel.from_id, casefold=casefold),
                 from_type=clean_types(rel.from_type),
                 to_id=clean_string(rel.to_id, casefold=casefold),
                 to_type=cast(list, clean_types(rel.to_type)),
                 data=clean_dataframe(rel.data, casefold=casefold),
             )
-            for name, rel in family.items()
-        }
+        return cleaned_family
 
     return Relations(
         event_to_object=clean_family(RelationKind.E2O),

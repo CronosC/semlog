@@ -23,6 +23,10 @@ _FORMAT_BY_SUFFIX: dict[str, str] = {
     ".sqlite": "sqlite",
 }
 
+# Derived so that callers selecting input files cannot drift from what this
+# loader actually accepts.
+OCEL_SUFFIXES: frozenset[str] = frozenset(_FORMAT_BY_SUFFIX)
+
 # Reader *names* rather than the functions themselves, so that the lookup on the
 # pm4py module happens at call time and the readers stay patchable in tests.
 _READER_NAMES: dict[str, str] = {
@@ -151,8 +155,11 @@ class PM4PYLoader(AbstractLoader):
             df = o2o_relation_dfs[relation_type]
             relation_type = relation_type + "_o2o"
 
-            type_1 = oced.get_types(df["ocel:oid"])
-            type_2 = oced.get_types(df["ocel:oid_2"])
+            # Object types only. Both ends of an o2o relation are objects, and
+            # asking for objects explicitly removes the reliance on events not
+            # having been loaded yet.
+            type_1 = oced.get_types(df["ocel:oid"], of=EntityKind.OBJECT)
+            type_2 = oced.get_types(df["ocel:oid_2"], of=EntityKind.OBJECT)
 
             if not type_1 or not type_2:
                 raise ValueError(

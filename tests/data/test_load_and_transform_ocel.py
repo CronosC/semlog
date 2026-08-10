@@ -1,4 +1,3 @@
-import logging.config
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,20 +11,6 @@ from semanticlog.onto.settings import (
     OntoBuildSettings,
     OwlProfile,
 )
-
-logging.config.dictConfig(
-    {
-        "version": 1,
-        "disable_existing_loggers": True,
-    }
-)
-logging.root.handlers = []
-logging.basicConfig(
-    format="%(name)s | %(asctime)s | %(message)s",
-    level=logging.INFO,
-    datefmt="%H:%M:%S",
-)
-
 
 _P2P_LOG = Path("data/ocel/P2P.xml")
 

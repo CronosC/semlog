@@ -95,3 +95,37 @@ def test_semlog_pickle_individuals_accessible(tmp_path):
 
     ind = OWLNamedIndividual(IRI(DEFAULT_IRI, "e1"))
     assert ind in list(loaded.onto.individuals_in_signature())
+
+
+def test_check_reports_consistency_without_a_destination(tmp_path):
+    """A consistency check writes nothing back, so it needs no output path."""
+    semlog = OCEDOntoBuilder(DEFAULT_IRI, _minimal_settings()).build_ontology(
+        _minimal_oced()
+    )
+
+    assert semlog.check() is True
+
+
+def test_reason_writes_the_ontology_it_reasons_over(tmp_path):
+    """The reasoner reads from a file, so reason() puts one there for it."""
+    path = tmp_path / "reasoned.owl"
+    semlog = OCEDOntoBuilder(DEFAULT_IRI, _minimal_settings()).build_ontology(
+        _minimal_oced()
+    )
+
+    reasoner = semlog.reason(path=str(path))
+
+    assert path.exists()
+    assert reasoner.check() is True
+
+
+def test_reason_without_a_path_explains_itself():
+    """An in-memory ontology has nothing for a reasoner to load."""
+    import pytest
+
+    semlog = OCEDOntoBuilder(DEFAULT_IRI, _minimal_settings()).build_ontology(
+        _minimal_oced()
+    )
+
+    with pytest.raises(ValueError, match="only in memory"):
+        semlog.reason()
