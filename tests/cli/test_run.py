@@ -1,23 +1,20 @@
-"""The pipelines behind the subcommands, exercised against the committed fixture.
-
-Unlike the old CLI tests these do run real builds: the fixture log is small
-enough that an end-to-end pass costs a fraction of a second, and a CLI meant to
-be the reproducible entry point should be tested by actually reproducing.
-"""
+"""What each subcommand does, and what it leaves on disk."""
 
 import json
 from pathlib import Path
 
 import pytest
 
+from semanticlog.cli import EXIT_USAGE, main
 from semanticlog.cli.config import resolve_run_config
 from semanticlog.cli.run import (
+    build_all,
     build_one,
     choose_case_concepts,
     inspect_input,
     load_and_clean,
-    run_build,
 )
+from tests.cli.conftest import run_record
 
 
 @pytest.fixture
@@ -28,22 +25,16 @@ def cfg(ocel, tmp_path):
     )
 
 
-# ---------------------------------------------------------------------------
-# build
-# ---------------------------------------------------------------------------
-
-
-def test_a_build_writes_an_ontology_and_a_manifest(cfg, ocel):
-    report = run_build(cfg)
+def test_a_build_writes_one_file(cfg, ocel):
+    report = build_all(cfg)
 
     assert report.ok
     assert report.built == [ocel]
-    assert cfg.ontology_path(ocel).is_file()
-    assert cfg.manifest_path(ocel).is_file()
+    assert [p.name for p in cfg.output_dir.iterdir()] == ["pipeline.owl"]
 
 
 def test_the_optional_artifacts_are_off_by_default(cfg, ocel):
-    run_build(cfg)
+    build_all(cfg)
     assert not cfg.backmap_path(ocel).exists()
     assert not cfg.store_path(ocel).exists()
 
@@ -57,34 +48,33 @@ def test_the_optional_artifacts_are_written_when_asked_for(ocel, tmp_path):
             "save_store": True,
         }
     )
-    record = build_one(cfg, ocel)
+    build_one(cfg, ocel)
 
     assert cfg.backmap_path(ocel).is_file()
-    # The store is a directory of Parquet tables, not a single pickle.
     assert cfg.store_path(ocel).is_dir()
-    assert record["outputs"]["backmap"] == str(cfg.backmap_path(ocel))
-    assert record["outputs"]["store"] == str(cfg.store_path(ocel))
+    outputs = run_record(cfg.ontology_path(ocel))["buildOutputs"]
+    assert outputs["backmap"] == str(cfg.backmap_path(ocel))
+    assert outputs["store"] == str(cfg.store_path(ocel))
 
 
-def test_the_manifest_records_how_the_result_was_produced(cfg, ocel):
+def test_the_ontology_records_how_it_was_produced(cfg, ocel):
     build_one(cfg, ocel)
-    record = json.loads(cfg.manifest_path(ocel).read_text())
+    record = run_record(cfg.ontology_path(ocel))
 
-    assert record["input"]["path"] == str(ocel)
-    assert len(record["input"]["sha256"]) == 64
-    assert record["command"] == "semlog build fixture"
-    assert record["settings"]["profile"] == "OWL2DL"
-    assert record["stats"]["events"] == 12
-    assert record["stats"]["individuals"] > 0
-    assert "build" in record["timings_s"]
-    assert record["materialized"] is False
+    assert record["sourceLog"] == str(ocel)
+    assert len(record["sourceLogSha256"]) == 64
+    assert record["sourceLogBytes"] == str(ocel.stat().st_size)
+    assert record["buildCommand"] == "semlog build fixture"
+    assert record["buildConfiguration"]["profile"] == "OWL2DL"
+    assert record["buildInputStatistics"]["events"] == 12
+    assert record["materialized"] == "false"
 
 
-def test_the_manifest_says_where_the_case_concepts_came_from(cfg, ocel, tmp_path):
+def test_the_ontology_says_where_the_case_concepts_came_from(cfg, ocel, tmp_path):
     build_one(cfg, ocel)
-    auto = json.loads(cfg.manifest_path(ocel).read_text())
-    assert auto["case_concepts"]["source"] == "auto(n=3)"
-    assert auto["case_concepts"]["value"]
+    auto = run_record(cfg.ontology_path(ocel))
+    assert auto["caseConceptSource"] == "auto(n=3)"
+    assert auto["buildConfiguration"]["case_concepts"]
 
     chosen = resolve_run_config(
         {
@@ -93,12 +83,26 @@ def test_the_manifest_says_where_the_case_concepts_came_from(cfg, ocel, tmp_path
             "case_concepts": ["order"],
         }
     )
-    record = build_one(chosen, ocel)
-    assert record["case_concepts"] == {"value": ["order"], "source": "config"}
+    build_one(chosen, ocel)
+    record = run_record(chosen.ontology_path(ocel))
+    assert record["caseConceptSource"] == "config"
+    assert record["buildConfiguration"]["case_concepts"] == ["order"]
+
+
+def test_two_builds_of_one_input_are_byte_for_byte_identical(ocel, tmp_path):
+    outputs = []
+    for name in ("first", "second"):
+        cfg = resolve_run_config(
+            {"input": [str(ocel)], "output": str(tmp_path / name)},
+            command="semlog build fixture",
+        )
+        build_one(cfg, ocel)
+        outputs.append(cfg.ontology_path(ocel).read_bytes())
+
+    assert outputs[0] == outputs[1]
 
 
 def test_two_configs_of_one_input_do_not_overwrite_each_other(ocel, tmp_path):
-    """The old flag-encoded filenames collided whenever case concepts differed."""
     common = {"input": [str(ocel)], "output": str(tmp_path / "onto")}
     first = resolve_run_config(
         {**common, "case_concepts": ["order"], "name": "by-order"}
@@ -121,7 +125,7 @@ def test_a_failing_input_does_not_stop_the_batch(ocel, tmp_path):
     (folder / "broken.jsonocel").write_text("not valid ocel")
 
     cfg = resolve_run_config({"input": [str(folder)], "output": str(tmp_path / "onto")})
-    report = run_build(cfg)
+    report = build_all(cfg)
 
     assert not report.ok
     assert [p.name for p in report.built] == ["good.jsonocel"]
@@ -131,17 +135,16 @@ def test_a_failing_input_does_not_stop_the_batch(ocel, tmp_path):
 def test_an_oversized_input_is_skipped_and_reported(ocel, tmp_path):
     folder = tmp_path / "in"
     folder.mkdir()
-    # Not valid OCEL: reaching the loader at all would fail rather than skip.
     (folder / "big.jsonocel").write_bytes(b"x" * (2 * 1024 * 1024))
 
     cfg = resolve_run_config(
         {
             "input": [str(folder)],
             "output": str(tmp_path / "onto"),
-            "size_limit": 1,
+            "size_limit_mb": 1,
         }
     )
-    report = run_build(cfg)
+    report = build_all(cfg)
 
     assert report.ok
     assert [p.name for p, _ in report.skipped] == ["big.jsonocel"]
@@ -156,7 +159,7 @@ def test_a_run_writes_one_log_file_per_input(ocel, tmp_path):
             "log_dir": str(tmp_path / "logs"),
         }
     )
-    run_build(cfg)
+    build_all(cfg)
     assert list((tmp_path / "logs").glob("*_pipeline.log"))
 
 
@@ -169,13 +172,8 @@ def test_the_binning_warning_is_emitted_at_run_time(ocel, tmp_path, caplog):
             "bin_labels": ["a", "b", "c"],
         }
     )
-    run_build(cfg)
+    build_all(cfg)
     assert "no effect" in caplog.text
-
-
-# ---------------------------------------------------------------------------
-# case concepts
-# ---------------------------------------------------------------------------
 
 
 def test_auto_selection_takes_the_most_common_object_types(ocel, tmp_path):
@@ -191,11 +189,6 @@ def test_auto_selection_takes_the_most_common_object_types(ocel, tmp_path):
 
     assert chosen == store.get_most_common_objects(n=1)
     assert source == "auto(n=1)"
-
-
-# ---------------------------------------------------------------------------
-# inspect
-# ---------------------------------------------------------------------------
 
 
 def test_inspect_summarises_without_writing_anything(ocel, tmp_path):
@@ -220,7 +213,6 @@ def test_inspect_renders_the_names_a_build_would_accept(ocel):
 
 
 def test_inspect_reports_names_that_cleaning_changed(tmp_path, ocel):
-    """The cleaned name is what --case-concepts matches, so it is shown first."""
     raw = json.loads(ocel.read_text())
     for obj in raw["objects"]:
         if obj["type"] == "order":
@@ -232,11 +224,6 @@ def test_inspect_reports_names_that_cleaning_changed(tmp_path, ocel):
     assert report.renamed.get("sales_order") == "sales order"
 
 
-# ---------------------------------------------------------------------------
-# reason
-# ---------------------------------------------------------------------------
-
-
 def test_reason_reports_a_built_ontology_as_consistent(cfg, ocel):
     from semanticlog.cli.run import reason
 
@@ -246,3 +233,25 @@ def test_reason_reports_a_built_ontology_as_consistent(cfg, ocel):
         profile=cfg.settings.profile,
         check_only=True,
     )
+
+
+def test_a_streaming_build_writes_a_complete_ontology_with_its_record(tmp_path, ocel):
+    out = tmp_path / "out"
+    assert main(["build", str(ocel), "--streaming", "--output", str(out)]) == 0
+
+    ontology = out / "pipeline.owl"
+    assert ontology.is_file()
+    text = ontology.read_text()
+    assert text.startswith("Prefix(")
+    assert text.rstrip().endswith(")")
+
+    record = run_record(ontology)
+    assert len(record["sourceLogSha256"]) == 64
+    assert record["buildInputStatistics"]["events"] == 12
+
+
+def test_streaming_and_materialize_together_are_refused(tmp_path, ocel):
+    code = main(
+        ["build", str(ocel), "--streaming", "--materialize", "--output", str(tmp_path)]
+    )
+    assert code == EXIT_USAGE

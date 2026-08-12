@@ -6,7 +6,6 @@ on:
   pull_request:
 
 concurrency:
-  # A newer push to the same branch makes an in-flight run irrelevant.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
@@ -43,10 +42,20 @@ jobs:
       - name: Type check
         run: uv run mypy semanticlog/
 
-      # Not split by directory: the build matrix and the reasoner tests are the
-      # ones most likely to catch a regression, and both are cross-cutting.
+      - name: Refuse a golden re-baseline
+        run: |
+          test -z "${SEMLOG_UPDATE_GOLDEN:-}" \
+            || { echo "SEMLOG_UPDATE_GOLDEN must not be set in CI"; exit 1; }
+
       - name: Test
         run: uv run pytest tests/ -q
+
+      - name: Assert the suite actually collected tests
+        run: |
+          collected=$(uv run pytest tests/ --collect-only -q 2>/dev/null | tail -1 | grep -oE '^[0-9]+')
+          echo "collected: ${collected:-0}"
+          test "${collected:-0}" -ge 500 \
+            || { echo "expected at least 500 tests, collected ${collected:-0}"; exit 1; }
 
       - name: Build the committed example end to end
         run: uv run semlog build --config examples/pipeline.toml

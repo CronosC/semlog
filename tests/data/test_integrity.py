@@ -1,113 +1,20 @@
-"""
-Tests for OCEDStore referential integrity and name normalization.
-
-Invariants verified:
-  - Every object ID referenced in an e2o relation exists in the object store
-  - Every event ID referenced in an e2o relation exists in the event store
-  - Every from/to ID in an o2o relation exists in the corresponding object store
-  - After clean_oced_data(), all type/relation names match [A-Za-z0-9_]+
-  - get_log() drops zero rows on a clean store
-"""
+"""Finding relations that point at entities the store does not hold."""
 
 import logging
-import os
 import re
 
 import pandas as pd
 import pytest
 
 from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.loading.pm4pyloader import PM4PYLoader
-from semanticlog.data.oced import OCEDStore, RelationKind
+from semanticlog.data.flatten import get_log
+from semanticlog.data.integrity import check_integrity as check_oced_integrity
+from semanticlog.data.oced import OCEDStore
 
 CLEAN_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
-OCEL_DIR = "data/ocel"
-_EXCLUDE = {"AOE2.sqlite", "AOE2_small.json", "blockchain.xmlocel"}
-_SIZE_LIMIT = 100 * 1024 * 1024  # 100 MB
-
-OCEL_FILES = [
-    f
-    for f in os.listdir(OCEL_DIR)
-    if f not in _EXCLUDE and os.path.getsize(os.path.join(OCEL_DIR, f)) < _SIZE_LIMIT
-]
-
-
-# ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
-
-
-def check_oced_integrity(oced: OCEDStore) -> list[str]:
-    """
-    Check referential integrity of an OCEDStore.
-    Returns a list of human-readable violation descriptions; empty list = clean.
-    """
-    violations = []
-
-    all_event_ids: set = set()
-    for activity in oced.get_activities():
-        entry = oced.get_events(activity)
-        all_event_ids.update(entry.data[entry.id].unique())
-
-    object_ids_by_type: dict[str, set] = {}
-    for obj_type, entry in oced.get_objects().items():
-        object_ids_by_type[obj_type] = set(entry.data[entry.id].unique())
-
-    for rel_name in oced.get_relation_types(RelationKind.E2O):
-        rel = oced.get_relation(rel_name)
-        df = rel.data
-        from_col = rel.from_id
-        to_col = rel.to_id
-
-        missing_events = set(df[from_col].unique()) - all_event_ids
-        if missing_events:
-            sample = sorted(str(x) for x in missing_events)[:5]
-            violations.append(
-                f"E2O '{rel_name}': {len(missing_events)} event IDs not in event store "
-                f"(sample: {sample})"
-            )
-
-        # Each to_id must exist in at least one of the referenced types (union check)
-        all_known: set = set()
-        for to_type in rel.to_type:
-            all_known |= object_ids_by_type.get(to_type, set())
-        missing = set(df[to_col].unique()) - all_known
-        if missing:
-            sample = sorted(str(x) for x in missing)[:5]
-            violations.append(
-                f"E2O '{rel_name}' → {rel.to_type}: {len(missing)} object IDs not in "
-                f"any referenced object type (sample: {sample})"
-            )
-
-    for rel_name in oced.get_relation_types(RelationKind.O2O):
-        rel = oced.get_relation(rel_name)
-        df = rel.data
-        for id_col, types, label in [
-            (rel.from_id, rel.from_type, "from"),
-            (rel.to_id, rel.to_type, "to"),
-        ]:
-            all_known = set()
-            for obj_type in types:
-                all_known |= object_ids_by_type.get(obj_type, set())
-            missing = set(df[id_col].unique()) - all_known
-            if missing:
-                sample = sorted(str(x) for x in missing)[:5]
-                violations.append(
-                    f"O2O '{rel_name}' {label} → {types}: {len(missing)} IDs "
-                    f"not in any referenced object type (sample: {sample})"
-                )
-
-    return violations
-
-
-# ---------------------------------------------------------------------------
-# Synthetic unit tests
-# ---------------------------------------------------------------------------
-
 
 def _consistent_oced() -> OCEDStore:
-    """Build a minimal OCEDStore with no integrity violations."""
     oced = OCEDStore()
     events = pd.DataFrame(
         {"eid": ["e1", "e2", "e3"], "ts": pd.date_range("2024-01-01", periods=3)}
@@ -126,7 +33,6 @@ def test_clean_store_has_no_violations():
 
 def test_detects_missing_object_id_in_e2o():
     oced = _consistent_oced()
-    # Add a relation row pointing to an object ID that doesn't exist
     bad_rel = pd.DataFrame({"eid": ["e1"], "oid": ["DOES_NOT_EXIST"]})
     oced.add_event_to_object_relation(
         "bad_rel", "eid", "oid", ["thing"], bad_rel, overwrite=False
@@ -151,21 +57,18 @@ def test_detects_missing_id_in_o2o():
     oced.add_event("ev", "eid", "ts", events)
     oced.add_object("A", "oid", pd.DataFrame({"oid": ["a1", "a2"]}))
     oced.add_object("B", "oid", pd.DataFrame({"oid": ["b1"]}))
-    # from_id "a99" not in A, to_id "b99" not in B
     bad_o2o = pd.DataFrame({"from_id": ["a99"], "to_id": ["b99"]})
     oced.add_object_to_object_relation("rel", "from_id", ["A"], "to_id", ["B"], bad_o2o)
     violations = check_oced_integrity(oced)
-    assert len(violations) == 2  # one for from side, one for to side
+    assert len(violations) == 2
 
 
 def test_clean_oced_normalizes_ids_symmetrically():
-    """After clean_oced_data(), integrity must hold even if IDs had special chars."""
     oced = OCEDStore()
     events = pd.DataFrame(
         {"eid": ["ev-001", "ev-002"], "ts": pd.date_range("2024-01-01", periods=2)}
     )
     objects = pd.DataFrame({"oid": ["obj/A", "obj/B"]})
-    # Relations use the same raw IDs — cleaning must be symmetric
     relations = pd.DataFrame({"eid": ["ev-001", "ev-002"], "oid": ["obj/A", "obj/B"]})
     oced.add_event("act-type", "eid", "ts", events)
     oced.add_object("obj-type", "oid", objects)
@@ -186,51 +89,176 @@ def test_all_names_clean_after_normalization_synthetic():
     oced.add_object("obj type", "oid", objects)
     oced = clean_oced_data(oced)
     for name in (
-        oced.get_activities() + oced.get_object_types() + oced.get_relation_types()
+        oced.get_event_types() + oced.get_object_types() + oced.get_relation_types()
     ):
         assert CLEAN_RE.match(name), f"Unclean name after normalization: {name!r}"
 
 
-# ---------------------------------------------------------------------------
-# Real OCEL integration tests
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("file_name", OCEL_FILES)
-def test_no_integrity_violations_after_load_and_clean(file_name):
-    oced = PM4PYLoader(os.path.join(OCEL_DIR, file_name), {}).get_oced()
-    oced = clean_oced_data(oced)
-    violations = check_oced_integrity(oced)
-    assert violations == [], "\n".join(violations)
-
-
 def test_get_log_drops_no_rows_on_clean_single_type_store(caplog):
-    """get_log must not drop rows when all e2o relations are single-type and consistent."""
     oced = _consistent_oced()
     with caplog.at_level(logging.WARNING):
-        oced.get_log("thing")
+        get_log(oced, "thing")
     drop_msgs = [r for r in caplog.records if "dropped" in r.message]
     assert drop_msgs == [], "\n".join(r.message for r in drop_msgs)
 
 
-@pytest.mark.parametrize("file_name", OCEL_FILES)
-def test_get_log_emits_no_warning(file_name, caplog):
-    oced = PM4PYLoader(os.path.join(OCEL_DIR, file_name), {}).get_oced()
-    oced = clean_oced_data(oced)
+def _mixed_dtypes() -> OCEDStore:
+    oced = OCEDStore()
+    oced.add_event(
+        "place order",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {
+                "eid": ["e1", "e2", "e3"],
+                "ts": ["2024-01-01T09:00:00Z", "2024-01-02T09:00:00Z", None],
+                "clerk": ["ann", "bo", "ann"],
+                "amount": ["10.5", "20", "30.25"],
+                "urgent": ["true", "false", "true"],
+                "count": ["1", "2", "3"],
+            }
+        ),
+    )
+    oced.add_object(
+        "order",
+        "oid",
+        pd.DataFrame(
+            {"oid": ["o1", "o2"], "channel": ["web", None], "weight": ["1.5", "2.5"]}
+        ),
+    )
+    oced.add_event_to_object_relation(
+        "concerns",
+        "eid",
+        "oid",
+        ["order"],
+        pd.DataFrame({"eid": ["e1", "e2", "e3"], "oid": ["o1", "o1", "o2"]}),
+    )
+    return oced
+
+
+def _awkward_names() -> OCEDStore:
+    oced = OCEDStore()
+    oced.add_event(
+        "Place Order (retail)",
+        "event id",
+        "time:timestamp",
+        pd.DataFrame(
+            {
+                "event id": ["ev-1", "ev-2"],
+                "time:timestamp": pd.date_range("2024-01-01", periods=2, tz="UTC"),
+                "unit price": ["1.0", "2.0"],
+            }
+        ),
+    )
+    oced.add_object(
+        "order/type",
+        "object-id",
+        pd.DataFrame({"object-id": ["obj A", "obj/B"], "Käufer": ["ann", "bo"]}),
+    )
+    oced.add_event_to_object_relation(
+        "relates to",
+        "event id",
+        "object-id",
+        ["order/type"],
+        pd.DataFrame({"event id": ["ev-1", "ev-2"], "object-id": ["obj A", "obj/B"]}),
+    )
+    return oced
+
+
+def _multi_type_relations() -> OCEDStore:
+    oced = OCEDStore()
+    oced.add_event(
+        "ship",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {
+                "eid": ["e1", "e2", "e3"],
+                "ts": pd.date_range("2024-01-01", periods=3, tz="UTC"),
+            }
+        ),
+    )
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1", "o2"]}))
+    oced.add_object("item", "oid", pd.DataFrame({"oid": ["i1"]}))
+    oced.add_event_to_object_relation(
+        "touches",
+        "eid",
+        "oid",
+        ["order", "item"],
+        pd.DataFrame({"eid": ["e1", "e2", "e3"], "oid": ["o1", "o2", "i1"]}),
+    )
+    oced.add_object_to_object_relation(
+        "contains",
+        "from_id",
+        ["order"],
+        "to_id",
+        ["item"],
+        pd.DataFrame({"from_id": ["o1"], "to_id": ["i1"]}),
+    )
+    return oced
+
+
+def _sparse() -> OCEDStore:
+    oced = OCEDStore()
+    oced.add_event(
+        "act",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {
+                "eid": ["e1", "e2"],
+                "ts": pd.date_range("2024-01-01", periods=2, tz="UTC"),
+                "always_null": [None, None],
+                "sometimes": ["x", None],
+            }
+        ),
+    )
+    oced.add_object(
+        "thing",
+        "oid",
+        pd.DataFrame({"oid": ["t1", "t2"], "blank": [None, None]}),
+    )
+    oced.add_event_to_object_relation(
+        "on",
+        "eid",
+        "oid",
+        ["thing"],
+        pd.DataFrame({"eid": ["e1", "e2"], "oid": ["t1", "t2"]}),
+    )
+    return oced
+
+
+AWKWARD_STORES = {
+    "mixed_dtypes": _mixed_dtypes,
+    "awkward_names": _awkward_names,
+    "multi_type_relations": _multi_type_relations,
+    "sparse": _sparse,
+}
+
+
+@pytest.mark.parametrize("shape", sorted(AWKWARD_STORES))
+def test_no_integrity_violations_after_clean(shape):
+    oced = clean_oced_data(AWKWARD_STORES[shape]())
+    violations = check_oced_integrity(oced)
+    assert violations == [], "\n".join(violations)
+
+
+@pytest.mark.parametrize("shape", sorted(AWKWARD_STORES))
+def test_all_names_clean_after_normalization(shape):
+    oced = clean_oced_data(AWKWARD_STORES[shape]())
+    for name in (
+        oced.get_event_types() + oced.get_object_types() + oced.get_relation_types()
+    ):
+        assert CLEAN_RE.match(name), f"Unclean name in '{shape}': {name!r}"
+
+
+@pytest.mark.parametrize("shape", sorted(AWKWARD_STORES))
+def test_get_log_emits_no_drop_warning(shape, caplog):
+    oced = clean_oced_data(AWKWARD_STORES[shape]())
     case_concept = oced.get_most_common_objects(n=1)[0]
     with caplog.at_level(logging.WARNING):
-        oced.get_log(case_concept)
+        get_log(oced, case_concept)
     drop_msgs = [
         r for r in caplog.records if "not found in any object store" in r.message
     ]
     assert drop_msgs == [], "\n".join(r.message for r in drop_msgs)
-
-
-@pytest.mark.parametrize("file_name", OCEL_FILES)
-def test_all_names_clean_after_normalization(file_name):
-    oced = PM4PYLoader(os.path.join(OCEL_DIR, file_name), {}).get_oced()
-    oced = clean_oced_data(oced)
-    for name in (
-        oced.get_activities() + oced.get_object_types() + oced.get_relation_types()
-    ):
-        assert CLEAN_RE.match(name), f"Unclean name in '{file_name}': {name!r}"

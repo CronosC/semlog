@@ -1,16 +1,14 @@
+"""The store: adding, reading, renaming and flattening."""
+
 import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
-from semanticlog.data.oced import EntityKind, OCEDStore
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+from semanticlog.data.flatten import get_log, get_logs
+from semanticlog.data.oced import EntityKind, OCEDStore, RelationKind
 
 
 def _make_oced_with_e2o():
-    """Minimal OCEDStore: one event type, one object type, one e2o relation."""
     oced = OCEDStore()
     oced.add_object("A", "oid", pd.DataFrame({"oid": [1, 2]}))
     ev = pd.DataFrame(
@@ -26,15 +24,10 @@ def _make_oced_with_e2o():
     return oced
 
 
-# ---------------------------------------------------------------------------
-# add_event / get_event / get_activities
-# ---------------------------------------------------------------------------
-
-
 def test_add_event_stores_metadata_and_data(event_df_1):
     oced = OCEDStore()
     oced.add_event("type1", "event", "timestamp", event_df_1)
-    ev = oced.get_events("type1")
+    ev = oced.get_event_table("type1")
     assert ev.id == "event"
     assert ev.time == "timestamp"
     assert_frame_equal(ev.data, event_df_1)
@@ -58,18 +51,13 @@ def test_add_event_overwrites_existing_when_flag_set(event_df_2):
     oced = OCEDStore()
     oced.add_event("type2", "event", "timestamp", event_df_2)
     oced.add_event("type2", "event", "timestamp", event_df_2, overwrite=True)
-    assert_frame_equal(oced.get_events("type2").data, event_df_2)
-
-
-# ---------------------------------------------------------------------------
-# add_object / get_object / get_object_types
-# ---------------------------------------------------------------------------
+    assert_frame_equal(oced.get_event_table("type2").data, event_df_2)
 
 
 def test_add_object_stores_metadata_and_data(object_df_a):
     oced = OCEDStore()
     oced.add_object("A", "object", object_df_a)
-    obj = oced.get_object("A")
+    obj = oced.get_object_table("A")
     assert obj.id == "object"
     assert_frame_equal(obj.data, object_df_a)
 
@@ -92,7 +80,7 @@ def test_add_object_overwrite_replaces_data():
     oced.add_object("A", "oid", pd.DataFrame({"oid": [1, 2]}))
     replacement = pd.DataFrame({"oid": [10, 20]})
     oced.add_object("A", "oid", replacement, overwrite=True)
-    result_ids = list(oced.get_object("A").data["oid"])
+    result_ids = list(oced.get_object_table("A").data["oid"])
     assert result_ids == [10, 20]
 
 
@@ -105,21 +93,16 @@ def test_get_object_types_returns_all_added_types(object_df_a, object_df_b):
 
 def test_get_most_common_objects_returns_sorted_by_size(object_df_a, object_df_b):
     oced = OCEDStore()
-    oced.add_object("A", "object", object_df_a)  # 3 rows
-    oced.add_object("B", "object", object_df_b)  # 2 rows
+    oced.add_object("A", "object", object_df_a)
+    oced.add_object("B", "object", object_df_b)
     assert oced.get_most_common_objects(n=1) == ["A"]
     assert oced.get_most_common_objects(n=2) == ["A", "B"]
 
 
-# ---------------------------------------------------------------------------
-# rename_activity / rename_object / rename_relation
-# ---------------------------------------------------------------------------
-
-
 def test_rename_activity_updates_key(minimal_oced):
     minimal_oced.rename_activity("type1", "type1_new")
-    assert "type1_new" in minimal_oced.get_activities()
-    assert "type1" not in minimal_oced.get_activities()
+    assert "type1_new" in minimal_oced.get_event_types()
+    assert "type1" not in minimal_oced.get_event_types()
 
 
 def test_rename_activity_raises_for_nonexistent(minimal_oced):
@@ -135,10 +118,10 @@ def test_rename_object_updates_key(minimal_oced):
 
 def test_rename_object_propagates_type_in_relations(minimal_oced):
     minimal_oced.rename_object("A", "C")
-    for rel in minimal_oced.get_relations("e2o").values():
+    for rel in minimal_oced.get_e2o().values():
         assert "A" not in rel.to_type
         assert "C" in rel.to_type
-    for rel in minimal_oced.get_relations("o2o").values():
+    for rel in minimal_oced.get_o2o().values():
         assert "A" not in rel.from_type
         assert "A" not in rel.to_type
 
@@ -181,15 +164,14 @@ def test_rename_object_leaves_object_changes_intact_when_no_entry():
     oced.add_event_to_object_relation(
         "rel", "eid", "oid", ["order"], pd.DataFrame({"eid": ["e1"], "oid": ["o1"]})
     )
-    # no add_object_changes for "order"
     oced.rename_object("order", "purchase_order")
     assert oced.get_object_change_types() == []
 
 
 def test_rename_relation_updates_key(minimal_oced):
     minimal_oced.rename_relation("rel1", "rel1_new")
-    assert "rel1_new" in minimal_oced.get_relations("e2o")
-    assert "rel1" not in minimal_oced.get_relations("e2o")
+    assert "rel1_new" in minimal_oced.get_e2o()
+    assert "rel1" not in minimal_oced.get_e2o()
 
 
 def test_rename_relation_raises_for_nonexistent(minimal_oced):
@@ -198,14 +180,8 @@ def test_rename_relation_raises_for_nonexistent(minimal_oced):
 
 
 def test_rename_relation_raises_when_target_name_exists(minimal_oced):
-    # "rel2" already exists; renaming "rel1" to "rel2" should fail
     with pytest.raises(ValueError):
         minimal_oced.rename_relation("rel1", "rel2")
-
-
-# ---------------------------------------------------------------------------
-# add_event_to_object_relation / add_object_to_object_relation
-# ---------------------------------------------------------------------------
 
 
 def test_add_e2o_relation_stores_metadata_and_data(object_df_a, e2o_data):
@@ -252,7 +228,6 @@ def test_add_e2o_relation_raises_when_to_id_col_missing(object_df_a):
 
 
 def test_add_e2o_relation_raises_if_name_exists_as_o2o(minimal_oced):
-    # "rel2" is already an o2o relation; adding an e2o with the same name must fail
     new_data = pd.DataFrame({"from_id": ["e1"], "to_id": [1]})
     with pytest.raises(ValueError):
         minimal_oced.add_event_to_object_relation(
@@ -300,7 +275,6 @@ def test_add_o2o_relation_raises_for_unknown_object_type(object_df_a, o2o_data):
 
 
 def test_add_o2o_relation_raises_if_name_exists_as_e2o(minimal_oced):
-    # "rel1" is already an e2o relation; adding an o2o with same name must fail
     with pytest.raises(ValueError):
         minimal_oced.add_object_to_object_relation(
             "rel1",
@@ -312,60 +286,39 @@ def test_add_o2o_relation_raises_if_name_exists_as_e2o(minimal_oced):
         )
 
 
-# ---------------------------------------------------------------------------
-# get_relations / get_relation_types
-# ---------------------------------------------------------------------------
-
-
-def test_get_relations_filter_e2o_only(minimal_oced):
-    result = minimal_oced.get_relations("e2o")
+def test_get_e2o_returns_only_event_to_object(minimal_oced):
+    result = minimal_oced.get_e2o()
     assert "rel1" in result
     assert "rel2" not in result
 
 
-def test_get_relations_filter_o2o_only(minimal_oced):
-    result = minimal_oced.get_relations("o2o")
+def test_get_o2o_returns_only_object_to_object(minimal_oced):
+    result = minimal_oced.get_o2o()
     assert "rel2" in result
     assert "rel1" not in result
 
 
-def test_get_relations_all_contains_both(minimal_oced):
-    result = minimal_oced.get_relations("all")
-    assert "event_to_object" in result
-    assert "object_to_object" in result
-
-
-def test_get_relations_invalid_type_raises(minimal_oced):
-    with pytest.raises(ValueError):
-        minimal_oced.get_relations("bad")
+def test_the_two_families_are_separate_maps(minimal_oced):
+    assert set(minimal_oced.get_e2o()) == {"rel1"}
+    assert set(minimal_oced.get_o2o()) == {"rel2"}
 
 
 def test_get_relation_types_all_returns_both(minimal_oced):
-    types = minimal_oced.get_relation_types("all")
+    types = minimal_oced.get_relation_types(RelationKind.ALL)
     assert "rel1" in types
     assert "rel2" in types
 
 
 def test_get_relation_types_e2o_returns_only_e2o(minimal_oced):
-    types = minimal_oced.get_relation_types("e2o")
+    types = minimal_oced.get_relation_types(RelationKind.E2O)
     assert "rel1" in types
     assert "rel2" not in types
 
 
 def test_get_relation_types_o2o_returns_only_o2o(minimal_oced):
-    types = minimal_oced.get_relation_types("o2o")
+    types = minimal_oced.get_relation_types(RelationKind.O2O)
     assert "rel2" in types
     assert "rel1" not in types
-
-
-def test_get_relation_types_invalid_raises(minimal_oced):
-    with pytest.raises(ValueError):
-        minimal_oced.get_relation_types("bad")
-
-
-# ---------------------------------------------------------------------------
-# get_types
-# ---------------------------------------------------------------------------
 
 
 def test_get_types_returns_object_type_for_known_object_id():
@@ -385,22 +338,17 @@ def test_get_types_returns_empty_for_unknown_id():
     assert oced.get_types(["nonexistent"]) == []
 
 
-# ---------------------------------------------------------------------------
-# get_ids
-# ---------------------------------------------------------------------------
-
-
 def test_get_ids_event_returns_correct_ids(event_df_1):
     oced = OCEDStore()
     oced.add_event("type1", "event", "timestamp", event_df_1)
-    ids = set(oced.get_ids("event", "type1"))
+    ids = set(oced.get_ids(EntityKind.EVENT, "type1"))
     assert ids == {"e1", "e2", "e5"}
 
 
 def test_get_ids_object_returns_correct_ids(object_df_a):
     oced = OCEDStore()
     oced.add_object("A", "object", object_df_a)
-    ids = set(oced.get_ids("object", "A"))
+    ids = set(oced.get_ids(EntityKind.OBJECT, "A"))
     assert ids == {1, 2, 3}
 
 
@@ -413,18 +361,13 @@ def test_get_ids_invalid_of_raises():
 def test_get_ids_unknown_activity_raises():
     oced = OCEDStore()
     with pytest.raises(ValueError):
-        oced.get_ids("event", "no_such_activity")
+        oced.get_ids(EntityKind.EVENT, "no_such_activity")
 
 
 def test_get_ids_unknown_object_raises():
     oced = OCEDStore()
     with pytest.raises(ValueError):
-        oced.get_ids("object", "no_such_type")
-
-
-# ---------------------------------------------------------------------------
-# ID uniqueness constraints
-# ---------------------------------------------------------------------------
+        oced.get_ids(EntityKind.OBJECT, "no_such_type")
 
 
 def test_add_event_raises_when_ids_already_used_by_object():
@@ -440,140 +383,9 @@ def test_add_event_raises_when_ids_already_used_by_object():
         oced.add_event("E_bad", "event", "timestamp", ev_bad)
 
 
-# ---------------------------------------------------------------------------
-# change_ids / change_event_ids / change_object_ids
-# ---------------------------------------------------------------------------
-
-
-def test_change_ids_dispatcher_routes_to_event():
-    oced = OCEDStore()
-    ev = pd.DataFrame(
-        {"eid": ["e1", "e2"], "ts": pd.date_range("2022-01-01", periods=2)}
-    )
-    oced.add_event("act", "eid", "ts", ev)
-    oced.change_ids("event", "act", lambda s: s.str.upper())
-    assert set(oced.get_ids("event", "act")) == {"E1", "E2"}
-
-
-def test_change_ids_dispatcher_routes_to_object():
-    oced = OCEDStore()
-    oced.add_object("A", "oid", pd.DataFrame({"oid": [1, 2]}))
-    oced.change_ids("object", "A", lambda s: s.astype(str).map(lambda x: f"A-{x}"))
-    assert set(oced.get_ids("object", "A")) == {"A-1", "A-2"}
-
-
-def test_change_ids_invalid_of_raises():
-    oced = OCEDStore()
-    with pytest.raises(ValueError):
-        oced.change_ids("bad", "A", lambda s: s)
-
-
-def test_change_object_ids_propagates_to_e2o_and_o2o():
-    oced = OCEDStore()
-    oced.add_object("A", "object", pd.DataFrame({"object": [1, 2, 3]}))
-    oced.add_object("B", "object", pd.DataFrame({"object": [10, 11]}))
-    ev = pd.DataFrame(
-        {
-            "event": ["e1", "e2", "e3"],
-            "timestamp": pd.date_range("2022-01-01", periods=3, freq="D"),
-        }
-    )
-    oced.add_event("E", "event", "timestamp", ev)
-    e2o = pd.DataFrame({"from_id": ["e1", "e2", "e3"], "to_id": [1, 2, 3]})
-    oced.add_event_to_object_relation("rel_e2o", "from_id", "to_id", ["A"], e2o)
-    o2o = pd.DataFrame({"from_id": [1, 2, 3, 1], "to_id": [2, 3, 1, 10]})
-    oced.add_object_to_object_relation(
-        "rel_o2o", "from_id", ["A"], "to_id", ["A", "B"], o2o
-    )
-
-    def change_fn(series):
-        return series.astype(str).map(lambda x: f"A-{x}")
-
-    oced.change_object_ids("A", change_fn)
-
-    a_table = oced.get_object("A").data
-    assert set(a_table["object"].tolist()) == {"A-1", "A-2", "A-3"}
-
-    rel_e2o = oced.get_relation("rel_e2o")
-    assert set(rel_e2o.data["to_id"].tolist()) == {"A-1", "A-2", "A-3"}
-
-    rel_o2o = oced.get_relation("rel_o2o")
-    assert set(rel_o2o.data["from_id"].tolist()) == {"A-1", "A-2", "A-3", "A-1"}
-    # B-side id (10) must be unchanged
-    assert 10 in rel_o2o.data["to_id"].tolist()
-
-
-def test_change_object_ids_rolls_back_on_error():
-    oced = OCEDStore()
-    oced.add_object("A", "oid", pd.DataFrame({"oid": [1, 2, 3]}))
-    original_ids = set(oced.get_ids("object", "A"))
-
-    def bad_fn(series):
-        raise RuntimeError("deliberate failure")
-
-    with pytest.raises(RuntimeError):
-        oced.change_object_ids("A", bad_fn)
-
-    assert set(oced.get_ids("object", "A")) == original_ids
-
-
-def test_change_event_ids_propagates_to_e2o_for_target_activity_only():
-    oced = OCEDStore()
-    oced.add_object("A", "object", pd.DataFrame({"object": [1, 2]}))
-    pay_df = pd.DataFrame(
-        {
-            "event": ["e1", "e2"],
-            "timestamp": pd.date_range("2022-01-01", periods=2, freq="D"),
-        }
-    )
-    ship_df = pd.DataFrame(
-        {
-            "event": ["s1", "s2"],
-            "timestamp": pd.date_range("2022-01-03", periods=2, freq="D"),
-        }
-    )
-    oced.add_event("Pay", "event", "timestamp", pay_df)
-    oced.add_event("Ship", "event", "timestamp", ship_df)
-    e2o = pd.DataFrame({"from_id": ["e1", "e2", "s1"], "to_id": [1, 2, 1]})
-    oced.add_event_to_object_relation("rel_e2o", "from_id", "to_id", ["A"], e2o)
-
-    oced.change_event_ids("Pay", lambda s: s.astype(str).map(lambda x: f"P-{x}"))
-
-    pay_after = oced.get_events("Pay").data
-    ship_after = oced.get_events("Ship").data
-    assert set(pay_after["event"].tolist()) == {"P-e1", "P-e2"}
-    assert set(ship_after["event"].tolist()) == {"s1", "s2"}
-
-    rel = oced.get_relation("rel_e2o").data
-    assert set(rel.from_id.tolist()) == {"P-e1", "P-e2", "s1"}
-
-
-def test_used_ids_updated_after_change_object_ids():
-    oced = OCEDStore()
-    oced.add_object("A", "object", pd.DataFrame({"object": [1, 2]}))
-
-    oced.change_object_ids("A", lambda s: s.astype(str).map(lambda x: f"A-{x}"))
-
-    # Old IDs (1, 2) should no longer be reserved — adding them to new type is allowed
-    oced.add_object("C", "cid", pd.DataFrame({"cid": [1]}))
-    oced.add_event(
-        "E2",
-        "event",
-        "ts",
-        pd.DataFrame({"event": ["2"], "ts": pd.date_range("2022-01-03", periods=1)}),
-    )
-    assert "C" in oced.get_object_types()
-    assert "E2" in oced.get_activities()
-
-
-# ---------------------------------------------------------------------------
-# get_log
-# ---------------------------------------------------------------------------
-
-
 def test_get_log_raises_for_unknown_case_concept(minimal_oced):
     with pytest.raises(ValueError, match="Unknown object type"):
-        minimal_oced.get_log("no_such_type")
+        get_log(minimal_oced, "no_such_type")
 
 
 def test_get_log_raises_when_no_e2o_references_case_concept():
@@ -582,16 +394,15 @@ def test_get_log_raises_when_no_e2o_references_case_concept():
     oced.add_object("A", "oid", pd.DataFrame({"oid": [1]}))
     ev = pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2022-01-01"], utc=True)})
     oced.add_event("E", "eid", "ts", ev)
-    # e2o points to A only, not B
     oced.add_event_to_object_relation(
         "rel", "eid", "oid", ["A"], pd.DataFrame({"eid": ["e1"], "oid": [1]})
     )
     with pytest.raises(ValueError, match="No event-to-object relations"):
-        oced.get_log("B")
+        get_log(oced, "B")
 
 
 def test_get_log_returns_dataframe_with_pm4py_columns(minimal_oced):
-    log = minimal_oced.get_log("A")
+    log = get_log(minimal_oced, "A")
     assert isinstance(log, pd.DataFrame)
     assert "case:concept:name" in log.columns
     assert "concept:name" in log.columns
@@ -599,9 +410,7 @@ def test_get_log_returns_dataframe_with_pm4py_columns(minimal_oced):
 
 
 def test_get_log_row_count_and_activity_column(minimal_oced):
-    # minimal_oced: 5 events (e1,e2,e5 of type1; e3,e4 of type2)
-    # e2o maps all 5 events to A objects
-    log = minimal_oced.get_log("A")
+    log = get_log(minimal_oced, "A")
     assert len(log) == 5
     activity_counts = log["concept:name"].value_counts()
     assert activity_counts["type1"] == 3
@@ -631,25 +440,20 @@ def test_get_logs_matches_get_log_per_case_concept():
         "rel_b", "eid", "bid", ["B"], pd.DataFrame({"eid": ["e1"], "bid": ["b1"]})
     )
 
-    logs = oced.get_logs(["A", "B"])
+    logs = get_logs(oced, ["A", "B"])
 
     assert set(logs) == {"A", "B"}
-    assert_frame_equal(logs["A"], oced.get_log("A"))
-    assert_frame_equal(logs["B"], oced.get_log("B"))
+    assert_frame_equal(logs["A"], get_log(oced, "A"))
+    assert_frame_equal(logs["B"], get_log(oced, "B"))
 
 
 def test_get_logs_empty_input_returns_empty_dict(minimal_oced):
-    assert minimal_oced.get_logs([]) == {}
+    assert get_logs(minimal_oced, []) == {}
 
 
 def test_get_logs_propagates_unknown_case_concept(minimal_oced):
     with pytest.raises(ValueError, match="Unknown object type"):
-        minimal_oced.get_logs(["A", "no_such_type"])
-
-
-# ---------------------------------------------------------------------------
-# ocel_mode
-# ---------------------------------------------------------------------------
+        get_logs(minimal_oced, ["A", "no_such_type"])
 
 
 def _make_object_changes_df():
@@ -666,12 +470,12 @@ def _make_object_changes_df():
 
 def test_ocel_mode_default_is_false():
     oced = OCEDStore()
-    assert oced.has_ocel_mode() is False
+    assert oced.ocel_mode is False
 
 
 def test_ocel_mode_true_when_set():
     oced = OCEDStore(ocel_mode=True)
-    assert oced.has_ocel_mode() is True
+    assert oced.ocel_mode is True
 
 
 def test_add_object_changes_raises_when_ocel_mode_false():
@@ -720,16 +524,6 @@ def test_get_object_changes_raises_for_unknown_type():
         oced.get_object_changes("nonexistent")
 
 
-def test_get_object_change_types_empty_when_nothing_added():
-    oced = OCEDStore(ocel_mode=True)
-    assert oced.get_object_change_types() == []
-
-
-# ---------------------------------------------------------------------------
-# id_backmap / get_original / get_originals
-# ---------------------------------------------------------------------------
-
-
 def test_id_backmap_empty_by_default():
     assert OCEDStore().backmap == {}
 
@@ -760,89 +554,28 @@ def test_get_original_id_strips_custom_base_iri():
     assert result == "Order #123"
 
 
-def test_get_original_ids_preserves_order_and_nones():
-    oced = OCEDStore()
-    oced.backmap = {"a_b": "A B", "c_d": "C D"}
-    assert oced.get_originals(["a_b", "unknown", "c_d"]) == ["A B", None, "C D"]
-
-
-# ---------------------------------------------------------------------------
-# save / load / save_backmap / load_backmap
-# ---------------------------------------------------------------------------
-
-
-def test_save_load_roundtrip(tmp_path):
-    oced = _make_oced_with_e2o()
-    oced.backmap = {"a_b": "A B"}
-    path = tmp_path / "store.pkl"
-    oced.save(path)
-    loaded = OCEDStore.load(path)
-    assert loaded.get_activities() == oced.get_activities()
-    assert loaded.get_object_types() == oced.get_object_types()
-    assert loaded.backmap == {"a_b": "A B"}
-
-
-def test_save_load_preserves_dataframes(tmp_path):
-    oced = _make_oced_with_e2o()
-    path = tmp_path / "store.pkl"
-    oced.save(path)
-    loaded = OCEDStore.load(path)
-    assert_frame_equal(
-        loaded.get_object("A").data.reset_index(drop=True),
-        oced.get_object("A").data.reset_index(drop=True),
-    )
-
-
-def test_save_id_backmap_json_roundtrip(tmp_path):
-    oced = OCEDStore()
-    oced.backmap = {"order__123": "Order #123", "e0": "e0"}
-    path = tmp_path / "backmap.json"
-    oced.save_backmap(path)
-    loaded = OCEDStore()
-    loaded.load_backmap(path)
-    assert loaded.backmap == {"order__123": "Order #123", "e0": "e0"}
-
-
-def test_load_id_backmap_overwrites_existing(tmp_path):
-    oced = OCEDStore()
-    oced.backmap = {"old_key": "old_val"}
-    path = tmp_path / "backmap.json"
-    oced.save_backmap(path)
-    oced.backmap = {"other": "value"}
-    oced.load_backmap(path)
-    assert oced.backmap == {"old_key": "old_val"}
-    assert "other" not in oced.backmap
-
-
 def test_get_types_can_be_restricted_to_one_kind(event_df_1):
-    """Callers that need object types should not receive activity names.
-
-    Unrestricted, the search spans both, so an o2o relation could be given an
-    activity as one of its endpoint types.
-    """
     oced = OCEDStore()
     oced.add_event("an_activity", "event", "timestamp", event_df_1)
     oced.add_object("A", "object", pd.DataFrame({"object": ["o1"]}))
     mixed = ["e1", "o1"]
 
     assert oced.get_types(mixed) == ["A", "an_activity"]
-    assert oced.get_types(mixed, of=EntityKind.OBJECT) == ["A"]
-    assert oced.get_types(mixed, of=EntityKind.EVENT) == ["an_activity"]
+    assert oced.get_types(mixed, kind=EntityKind.OBJECT) == ["A"]
+    assert oced.get_types(mixed, kind=EntityKind.EVENT) == ["an_activity"]
 
 
-def test_get_types_rejects_an_invalid_kind():
-    with pytest.raises(ValueError, match="Valid entity kinds"):
-        OCEDStore().get_types(["x"], of="neither")
-
-
-def test_failed_id_change_restores_relation_tables(minimal_oced):
-    """Rollback must cover the relations that were rewritten, not just the objects."""
-    before = minimal_oced.get_relation("rel1").data.copy()
-
-    def explode(series):
-        raise RuntimeError("boom")
-
-    with pytest.raises(RuntimeError):
-        minimal_oced.change_object_ids("A", explode)
-
-    pd.testing.assert_frame_equal(minimal_oced.get_relation("rel1").data, before)
+def test_the_store_takes_enums_not_strings(minimal_oced):
+    every_event_id = [
+        i
+        for a in minimal_oced.get_event_types()
+        for i in minimal_oced.get_ids(EntityKind.EVENT, a)
+    ]
+    assert minimal_oced.get_types(every_event_id, kind=EntityKind.EVENT) == (
+        minimal_oced.get_event_types()
+    )
+    assert set(minimal_oced.get_relation_types(RelationKind.E2O)) <= set(
+        minimal_oced.get_relation_types(RelationKind.ALL)
+    )
+    assert minimal_oced.get_e2o().keys() == minimal_oced.get_e2o().keys()
+    assert minimal_oced.get_o2o().keys() == minimal_oced.get_o2o().keys()

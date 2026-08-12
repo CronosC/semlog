@@ -1,71 +1,90 @@
-"""The builder facade over an :class:`~semanticlog.onto.sink.AxiomSink`.
+"""The build itself: emitters, in the order they have to run.
 
-Axiom construction itself lives in :mod:`semanticlog.onto.sink`. What remains
-here is the state a build carries around it: which sink to write to, the
-settings, the annotation writer, the annotation document, and the guarantee that
-one builder produces one ontology.
-
-The emission methods are kept as delegating wrappers so that the builder still
-satisfies the ``AnnotationSink`` protocol and so that code holding a builder can
-reach the sink without knowing it exists.
+`OCEDOntoBuilder` owns a sink and a set of emitters and drives them over one
+store. It decides the order and nothing else, so what each step produces stays
+in the emitter that produces it.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import logging
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
-import pandas as pd
-
+from semanticlog.data.oced import OCEDStore, RelationKind
 from semanticlog.onto.annotations import AnnotationWriter
+from semanticlog.onto.audit import audit_build
+from semanticlog.onto.emitters import (
+    AttributeEmitter,
+    EventEmitter,
+    HistoryEmitter,
+    ObjectEmitter,
+    OrderEmitter,
+    ProvenanceEmitter,
+    RelationEmitter,
+    TBoxEmitter,
+    TimeEmitter,
+)
+from semanticlog.onto.emitters.attributes import (
+    attribute_owners,
+    report_conflated_attributes,
+)
+from semanticlog.onto.result import BuildResult
 from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sink import AxiomSink, InMemorySink
+from semanticlog.onto.sinks import AxiomSink, InMemorySink
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from owlapy.owl_ontology import Ontology
 
 
-class OCEDBaseBuilder:
-    """Carries the sink, settings and annotation state shared by every build step.
+class OCEDOntoBuilder:
+    """Runs the emitters over a store, in the order a build needs.
 
-    Subclassed by :class:`~semanticlog.onto.upper.OCEDUpperOntoBuilder` (TBox)
-    and :class:`~semanticlog.onto.instantiate.OCEDOntoBuilder` (full pipeline).
+    The order is not arbitrary. The schema comes first so that everything else
+    has something to hang below, classes are declared before the individuals
+    that would collide with them, and the annotation document is applied last,
+    once every name it could refer to exists.
+
+    Attributes:
+        sink: Where the axioms go.
+        iri: Base IRI of the ontology, as the sink normalized it.
+        annotations: Writer for derived labels and comments.
     """
 
     def __init__(
         self,
         iri: str,
         settings: OntoBuildSettings,
-        load: bool = False,
         sink: AxiomSink | None = None,
-    ):
-        """Create a builder over a new or existing ontology.
+    ) -> None:
+        """Prepare a builder and its emitters.
 
         Args:
-            iri: Ontology IRI, or a resolvable document IRI when ``load`` is True.
-                A trailing ``#`` is appended if missing.
-            settings: Build configuration.
-            load: Read an existing ontology from ``iri`` instead of starting empty.
-                Off by default: resolving a non-document IRI makes owlapy attempt a
-                network fetch.
-            sink: Where axioms go. Defaults to an in-memory owlapy ontology.
-                ``iri`` and ``load`` are ignored when a sink is supplied, since the
-                sink already owns them.
+            iri: Base IRI for the ontology.
+            settings: Settings for this build.
+            sink: Where to write. Defaults to an in-memory sink.
         """
-        self.sink: AxiomSink = (
-            sink if sink is not None else InMemorySink(iri, settings, load)
-        )
+        self.sink: AxiomSink = sink if sink is not None else InMemorySink(iri, settings)
         self.iri = self.sink.iri
-        self.settings = settings
+        self._settings = settings
         self._annotation_doc: dict[str, dict[str, str]] = settings.annotation_data or {}
-        self.annotations = AnnotationWriter(self, settings)
+        self.annotations = AnnotationWriter(self.sink, settings)
         self._claimed = False
+        self._make_emitters()
+
+    @property
+    def settings(self) -> OntoBuildSettings:
+        """The settings this build runs with."""
+        return self._settings
 
     @property
     def onto(self) -> Ontology:
-        """The ontology being built.
+        """The ontology under construction.
 
-        Only meaningful for a sink that keeps one in memory. A sink that streams
-        straight to disk has no ontology object to hand back.
+        Raises:
+            AttributeError: If the sink keeps no ontology in memory.
         """
         onto = getattr(self.sink, "onto", None)
         if onto is None:
@@ -74,12 +93,34 @@ class OCEDBaseBuilder:
             )
         return onto
 
-    def _claim_single_use(self) -> None:
-        """Reserve this builder for one build.
+    def _make_emitters(self) -> None:
+        """Create the emitters, sharing the sink, settings and annotations."""
+        parts = (self.sink, self.settings, self.annotations)
+        self.tbox = TBoxEmitter(*parts)
+        self.attributes = AttributeEmitter(*parts)
+        self.events = EventEmitter(*parts, self.attributes)
+        self.objects = ObjectEmitter(*parts, self.attributes)
+        self.times = TimeEmitter(*parts)
+        self.order = OrderEmitter(*parts)
+        self.relations = RelationEmitter(*parts)
+        self.history = HistoryEmitter(*parts, self.attributes, self.times)
+        self.provenance = ProvenanceEmitter(*parts)
 
-        Axioms accumulate in a single ontology object, so a second build on the
-        same instance merges two unrelated logs into one file without any error.
-        """
+    def _result(self) -> BuildResult:
+        """Package the finished build, closing a streaming sink on the way."""
+        onto = getattr(self.sink, "onto", None)
+        if onto is not None:
+            return BuildResult(onto=onto, settings=self.settings, iri=self.iri)
+        self.sink.close()
+        return BuildResult(
+            onto=None,
+            settings=self.settings,
+            iri=self.iri,
+            path=getattr(self.sink, "path", None),
+        )
+
+    def _claim_single_use(self) -> None:
+        """Refuse a second build, which would merge two logs into one ontology."""
         if self._claimed:
             raise ValueError(
                 "This builder has already produced an ontology. Axioms accumulate "
@@ -88,96 +129,127 @@ class OCEDBaseBuilder:
             )
         self._claimed = True
 
-    def apply_annotation_document(self) -> None:
-        """Annotate all entities listed in the annotation document that exist here."""
+    def _apply_annotation_document(self) -> None:
+        """Apply the supplied annotations, reporting entries that match nothing.
+
+        A document written for another log, or for names as they appear before
+        cleaning, would otherwise annotate nothing without saying so.
+        """
+        skipped = []
         for name, ann in self._annotation_doc.items():
-            self.annotate_entity(
+            if not self.sink.is_declared(name):
+                skipped.append(name)
+                continue
+            self.sink.annotate_entity(
                 name, label=ann.get("label"), comment=ann.get("comment")
             )
+        if skipped:
+            logger.warning(
+                f"annotation_document: {len(skipped)} entry(s) name nothing this "
+                f"build declared, and were skipped: {', '.join(sorted(skipped))}"
+            )
 
-    # ------------------------------------------------------------------
-    # Delegation to the sink
-    # ------------------------------------------------------------------
-
-    def annotate_entity(
+    def build_ontology(
         self,
-        iri_fragment: str,
-        label: str | None = None,
-        comment: str | None = None,
-    ) -> None:
-        """Add rdfs:label and/or rdfs:comment to a class or property."""
-        self.sink.annotate_entity(iri_fragment, label, comment)
+        data: OCEDStore,
+        source: str | None = None,
+        run: Mapping[str, Any] | None = None,
+    ) -> BuildResult:
+        """Build the ontology for one store.
 
-    def annotate_individuals_bulk(self, pairs: list[tuple[str, str]]) -> None:
-        """Emit rdfs:label for each (iri_fragment, label) pair in one batch."""
-        self.sink.annotate_individuals_bulk(pairs)
+        The settings and the data are checked before anything is emitted, so
+        a build that cannot work fails before it has written half an ontology.
 
-    def add_classes(
-        self, class_list: list[str], superclasses: list[str] | str | None = None
-    ) -> None:
-        """Add multiple OWL classes, optionally with a shared or per-class superclass."""
-        self.sink.add_classes(class_list, superclasses)
+        Args:
+            data: Store to build from. It has to have been cleaned already.
+            source: Path of the log, recorded as provenance.
+            run: Anything else to record about this run, such as the input
+                checksum and the command.
 
-    def add_class(self, class_name: str, superclass: str | None = None) -> None:
-        """Declare a single OWL class, optionally as a subclass of another."""
-        self.sink.add_class(class_name, superclass)
+        Returns:
+            The finished build.
 
-    def add_property(
-        self,
-        prop_name: str,
-        domain_class: str | None = None,
-        range_class: str | None = None,
-        superprop: str | None = None,
-        create_inverse: bool = False,
-        inverse_name: str | None = None,
-        data_prop: bool = False,
-    ) -> None:
-        """Add a property with optional domain, range, super-property, and inverse."""
-        self.sink.add_property(
-            prop_name,
-            domain_class,
-            range_class,
-            superprop,
-            create_inverse,
-            inverse_name,
-            data_prop,
+        Raises:
+            ValueError: If the settings are unusable, the store fails a
+                pre-build check, or this builder has already been used.
+        """
+        self.settings.validate()
+        audit_build(data, self.settings)
+        self._claim_single_use()
+
+        attribute_history = self.settings.emits_attribute_history
+        if attribute_history and not data.ocel_mode:
+            logger.warning(
+                "ATTRIBUTE_HISTORY extension enabled but OCEDStore was not "
+                "created with ocel_mode=True. Skipping attribute history."
+            )
+            attribute_history = False
+
+        self.tbox.emit(attribute_history=attribute_history)
+        self.provenance.emit(source, run)
+
+        self.annotations.bind(data.backmap)
+        owners = attribute_owners(data)
+        report_conflated_attributes(owners)
+        self.attributes.bind_owners(owners)
+
+        logger.info("Instantiating ontology..")
+        logger.info(
+            f"Instantiating event data ({len(data.get_event_types())} activities).."
         )
+        self.events.emit(data)
+        logger.info(
+            f"Instantiating event order via the strategy: {self.settings.order_representations}.."
+        )
+        self.order.emit(data)
+        logger.info("Instantiating time data..")
+        self.times.emit(data)
+        logger.info(
+            f"Instantiating object data ({len(data.get_object_types())} objects).."
+        )
+        self.objects.emit(data)
+        logger.info(
+            f"Instantiating event to object relation data ({len(data.get_relation_types(RelationKind.E2O))} relation types).."
+        )
+        self.relations.emit_event_to_object(data)
+        logger.info(
+            f"Instantiating object to object relation data ({len(data.get_relation_types(RelationKind.O2O))} relation types).."
+        )
+        self.relations.emit_object_to_object(data)
 
-    def assert_individual(self, individual: str, class_name: str) -> None:
-        """Assert that a single named individual belongs to a class."""
-        self.sink.assert_individual(individual, class_name)
+        if attribute_history:
+            logger.info("Instantiating object attribute change history..")
+            self.history.emit(data)
 
-    def assert_individuals(self, individuals: list[str], class_name: str) -> None:
-        """Assert that a list of named individuals all belong to a class."""
-        self.sink.assert_individuals(individuals, class_name)
+        self._apply_annotation_document()
+        logger.info("done.")
+        return self._result()
 
-    def assert_relation(
-        self,
-        prop_name: str,
-        from_name: str,
-        to: str | int | bool | float,
-        data_prop: bool = False,
-        inverse_name: str | None = None,
-    ) -> None:
-        """Assert a single property between two individuals or a literal."""
-        self.sink.assert_relation(prop_name, from_name, to, data_prop, inverse_name)
 
-    def assert_relations(
-        self,
-        df: pd.DataFrame,
-        prop: str,
-        from_key: str,
-        to_key: str,
-        data_prop: bool = False,
-        inverse_name: str | None = None,
-    ) -> None:
-        """Assert property relations from a DataFrame, dropping nulls and duplicates."""
-        self.sink.assert_relations(df, prop, from_key, to_key, data_prop, inverse_name)
+def construct_tbox(
+    iri: str,
+    settings: OntoBuildSettings,
+    path: str | None = None,
+    attribute_history: bool | None = None,
+    sink: AxiomSink | None = None,
+) -> BuildResult:
+    """Build only the upper schema, with no data in it.
 
-    def generate_inverse_property_name(self, prop: str) -> str:
-        """Return the inverse property name for ``prop``."""
-        return self.sink.inverse_name(prop)
+    Useful for inspecting or publishing the schema on its own.
 
-    def save_onto(self, path: str) -> None:
-        """Save the current ontology to an OWL file."""
-        self.sink.save(path)
+    Args:
+        iri: Base IRI for the ontology.
+        settings: Settings for this build.
+        path: Where to save it. Nothing is written when this is None.
+        attribute_history: Whether to include the attribute change schema.
+            Defaults to what the settings ask for.
+        sink: Where to write. Defaults to an in-memory sink.
+
+    Returns:
+        The finished build.
+    """
+    builder = OCEDOntoBuilder(iri, settings, sink=sink)
+    builder.tbox.emit(attribute_history)
+    if path is not None:
+        builder.sink.save(path)
+    return builder._result()

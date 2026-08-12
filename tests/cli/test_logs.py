@@ -6,7 +6,6 @@ from semanticlog.cli.logs import FileLog, setup_console_logging
 
 
 def test_console_setup_leaves_pre_existing_handlers_alone():
-    """Importing the CLI must not discard a host process's logging setup."""
     root = logging.getLogger()
     theirs = logging.NullHandler()
     root.addHandler(theirs)
@@ -19,10 +18,16 @@ def test_console_setup_leaves_pre_existing_handlers_alone():
 
 def test_console_setup_is_idempotent():
     root = logging.getLogger()
-    setup_console_logging()
-    before = len(root.handlers)
-    setup_console_logging()
-    assert len(root.handlers) == before
+    before_handlers = list(root.handlers)
+    before_level = root.level
+    try:
+        setup_console_logging()
+        after_one = len(root.handlers)
+        setup_console_logging()
+        assert len(root.handlers) == after_one
+    finally:
+        root.handlers[:] = before_handlers
+        root.setLevel(before_level)
 
 
 def test_file_logging_is_disabled_without_a_directory():
@@ -32,12 +37,13 @@ def test_file_logging_is_disabled_without_a_directory():
 
 def test_switching_writes_a_log_and_prunes_old_ones(tmp_path):
     with FileLog(tmp_path, keep=2) as log:
-        for i in range(4):
+        for day in range(1, 5):
             assert log.switch_to("stem") is not None
-            # Timestamps have second resolution; make each name distinct.
-            (tmp_path / f"2000010{i}_000000_stem.log").write_text("")
+            (tmp_path / f"2000010{day}_000000_stem.log").write_text("")
 
-    assert len(list(tmp_path.glob("*_stem.log"))) <= 3
+    kept = sorted(p.name for p in tmp_path.glob("2000010*_stem.log"))
+    assert len(kept) == 2, f"keep=2 left {len(kept)}: {kept}"
+    assert kept == ["20000103_000000_stem.log", "20000104_000000_stem.log"]
 
 
 def test_close_is_idempotent(tmp_path):

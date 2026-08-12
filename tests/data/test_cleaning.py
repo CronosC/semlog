@@ -1,25 +1,20 @@
+"""Making names safe to emit, and recording what changed."""
+
 import pandas as pd
 import pytest
 
 from semanticlog.data.cleaning import (
+    RenameKind,
     RenameLog,
     _collect_schema_names,
-    apply_function_to_value,
-    clean_column_values,
-    clean_dataframe,
-    clean_object_changes_df,
+    clean_object_changes,
     clean_oced_data,
     clean_string,
     clean_value,
     fix_duplicate_names,
     is_timestamp,
-    null_check,
 )
 from semanticlog.data.oced import OCEDStore
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _oced_with_event(activity: str, attr_col: str = "status", attr_val: str = "ok"):
@@ -36,11 +31,6 @@ def _oced_with_event(activity: str, attr_col: str = "status", attr_val: str = "o
     return oced
 
 
-# ---------------------------------------------------------------------------
-# is_timestamp
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "s",
     ["2023-03-15T12:45:00Z", "2022-01-01", "2023-03-15 12:45:00"],
@@ -54,11 +44,6 @@ def test_is_timestamp_false_for_plain_words(s):
     assert is_timestamp(s) is False
 
 
-# ---------------------------------------------------------------------------
-# clean_string
-# ---------------------------------------------------------------------------
-
-
 def test_clean_string_replaces_special_chars_with_underscore():
     assert clean_string("Hello World!", casefold=False) == "Hello_World_"
 
@@ -69,11 +54,6 @@ def test_clean_string_casefold_lowercases_result():
 
 def test_clean_string_preserves_alphanumeric_and_underscore():
     assert clean_string("abc_123", casefold=False) == "abc_123"
-
-
-# ---------------------------------------------------------------------------
-# clean_value
-# ---------------------------------------------------------------------------
 
 
 def test_clean_value_cleans_plain_string():
@@ -121,126 +101,6 @@ def test_clean_value_passes_through_timestamp_object():
     assert clean_value(ts) == ts
 
 
-# ---------------------------------------------------------------------------
-# clean_dataframe
-# ---------------------------------------------------------------------------
-
-
-def test_clean_dataframe_cleans_columns_and_string_values():
-    df = pd.DataFrame(
-        {"Column One!": ["Hello World!", "Goodbye?"], "Column Two$": [1, 2]}
-    )
-    cleaned = clean_dataframe(df)
-    assert "column_one_" in cleaned.columns
-    assert "column_two_" in cleaned.columns
-    assert cleaned["column_one_"].iloc[0] == "hello_world_"
-    assert cleaned["column_two_"].iloc[0] == 1
-
-
-# ---------------------------------------------------------------------------
-# apply_function_to_value
-# ---------------------------------------------------------------------------
-
-
-def test_apply_function_to_value_transforms_string():
-    assert apply_function_to_value("hello", str.upper) == "HELLO"
-
-
-def test_apply_function_to_value_skips_timestamp_string():
-    ts = "2023-03-15T12:45:00Z"
-    # Timestamp strings are left unchanged regardless of function
-    assert apply_function_to_value(ts, str.upper) == ts
-
-
-def test_apply_function_to_value_recurses_into_dict():
-    result = apply_function_to_value(
-        {"A": 1, "B": {"C": "hello", "D": 2}},
-        lambda x: x.upper() if isinstance(x, str) else x,
-    )
-    assert result == {"A": 1, "B": {"C": "HELLO", "D": 2}}
-
-
-def test_apply_function_to_value_transforms_dataframe_columns_and_values():
-    df = pd.DataFrame({"col1": ["a", "b"], "col2": [1, 2]})
-    result = apply_function_to_value(df, lambda x: str(x).upper())
-    expected = pd.DataFrame({"COL1": ["A", "B"], "COL2": ["1", "2"]})
-    pd.testing.assert_frame_equal(result, expected)
-
-
-def test_apply_function_to_value_rename_df_columns_false_leaves_columns_untouched():
-    df = pd.DataFrame({"col": ["a", "b"]})
-    result = apply_function_to_value(df, str.upper, rename_df_columns=False)
-    assert list(result.columns) == ["col"]
-    assert result["col"].tolist() == ["A", "B"]
-
-
-def test_apply_function_to_value_replace_df_values_false_leaves_values_untouched():
-    df = pd.DataFrame({"col": ["a", "b"]})
-    result = apply_function_to_value(df, str.upper, replace_df_values=False)
-    assert list(result.columns) == ["COL"]
-    assert result["COL"].tolist() == ["a", "b"]
-
-
-def test_apply_function_to_value_transforms_list_elements():
-    result = apply_function_to_value(["hello", "world"], str.upper)
-    assert result == ["HELLO", "WORLD"]
-
-
-def test_apply_function_to_value_passes_through_int():
-    assert apply_function_to_value(42, str.upper) == 42
-
-
-def test_apply_function_to_value_passes_through_float():
-    assert apply_function_to_value(3.14, str.upper) == 3.14
-
-
-def test_apply_function_to_value_passes_through_timestamp():
-    ts = pd.Timestamp("2022-01-01", tz="UTC")
-    assert apply_function_to_value(ts, str.upper) == ts
-
-
-# ---------------------------------------------------------------------------
-# clean_column_values
-# ---------------------------------------------------------------------------
-
-
-def test_clean_column_values_applies_function_to_column():
-    df = pd.DataFrame({"A": [1, 2, 3], "B": ["x", "y", "z"]})
-    result = clean_column_values(df.copy(), {"A": lambda x: x * 2})
-    assert list(result["A"]) == [2, 4, 6]
-    assert list(result["B"]) == ["x", "y", "z"]
-
-
-def test_clean_column_values_raises_for_missing_column():
-    df = pd.DataFrame({"A": [1, 2, 3]})
-    with pytest.raises(ValueError):
-        clean_column_values(df.copy(), {"B": lambda x: x})
-
-
-# ---------------------------------------------------------------------------
-# null_check
-# ---------------------------------------------------------------------------
-
-
-def test_null_check_runs_without_error_on_clean_store():
-    oced = OCEDStore()
-    ev = pd.DataFrame(
-        {
-            "eid": ["e1", "e2"],
-            "ts": pd.date_range("2022-01-01", periods=2, tz="UTC"),
-        }
-    )
-    oced.add_event("act", "eid", "ts", ev)
-    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
-    # Should not raise
-    null_check(oced)
-
-
-# ---------------------------------------------------------------------------
-# fix_duplicate_names
-# ---------------------------------------------------------------------------
-
-
 def test_fix_duplicate_names_renames_reserved_relation():
     oced = OCEDStore()
     oced.add_object("A", "oid", pd.DataFrame({"oid": [1, 2]}))
@@ -248,7 +108,6 @@ def test_fix_duplicate_names_renames_reserved_relation():
         {"eid": ["e1", "e2"], "ts": pd.date_range("2022-01-01", periods=2, tz="UTC")}
     )
     oced.add_event("act", "eid", "ts", ev)
-    # "df" is a reserved OWL property name
     oced.add_event_to_object_relation(
         "df", "eid", "oid", ["A"], pd.DataFrame({"eid": ["e1", "e2"], "oid": [1, 2]})
     )
@@ -264,21 +123,16 @@ def test_fix_duplicate_names_renames_reserved_activity():
     ev = pd.DataFrame(
         {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
     )
-    oced.add_event("observes", "eid", "ts", ev)  # reserved name
+    oced.add_event("observes", "eid", "ts", ev)
     oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
 
     result = fix_duplicate_names(oced)
 
-    assert "observes_" in result.get_activities()
-    assert "observes" not in result.get_activities()
+    assert "observes_" in result.get_event_types()
+    assert "observes" not in result.get_event_types()
 
 
 def test_fix_duplicate_names_renames_activity_colliding_with_derived_property():
-    """An activity named ``has_price`` claims the property derived from ``price``.
-
-    A class and an object property under one IRI is punning that owlready2
-    rejects mid-build, so the activity has to be renamed here instead.
-    """
     oced = OCEDStore()
     ev = pd.DataFrame(
         {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
@@ -288,16 +142,11 @@ def test_fix_duplicate_names_renames_activity_colliding_with_derived_property():
 
     result = fix_duplicate_names(oced)
 
-    assert "has_price_" in result.get_activities()
-    assert "has_price" not in result.get_activities()
+    assert "has_price_" in result.get_event_types()
+    assert "has_price" not in result.get_event_types()
 
 
 def test_fix_duplicate_names_renames_object_colliding_with_case_concept_property():
-    """``df_{object_type}`` is reserved for every object type, not just case concepts.
-
-    Cleaning runs once per store while the same store may be built under several
-    configurations, so it cannot know which object types become case concepts.
-    """
     oced = OCEDStore()
     ev = pd.DataFrame(
         {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
@@ -307,11 +156,10 @@ def test_fix_duplicate_names_renames_object_colliding_with_case_concept_property
 
     result = fix_duplicate_names(oced)
 
-    assert "df_order_" in result.get_activities()
+    assert "df_order_" in result.get_event_types()
 
 
 def test_fix_duplicate_names_leaves_unrelated_derived_lookalikes_alone():
-    """Only names a build would actually derive are reserved."""
     oced = OCEDStore()
     ev = pd.DataFrame(
         {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
@@ -321,19 +169,16 @@ def test_fix_duplicate_names_leaves_unrelated_derived_lookalikes_alone():
 
     result = fix_duplicate_names(oced)
 
-    assert "has_weight" in result.get_activities()
+    assert "has_weight" in result.get_event_types()
 
 
 def test_fix_duplicate_names_renames_object_colliding_with_activity():
-    # Object type shares a name with the activity — object gets the "_" suffix
     oced = OCEDStore()
     ev = pd.DataFrame(
         {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
     )
     oced.add_event("my_activity", "eid", "ts", ev)
-    oced.add_object(
-        "my_activity", "oid", pd.DataFrame({"oid": ["o1"]})
-    )  # same name as activity
+    oced.add_object("my_activity", "oid", pd.DataFrame({"oid": ["o1"]}))
 
     result = fix_duplicate_names(oced)
 
@@ -342,7 +187,6 @@ def test_fix_duplicate_names_renames_object_colliding_with_activity():
 
 
 def test_fix_duplicate_names_renames_attribute_col_colliding_with_object_type():
-    # Object's attribute column has the same name as the object type itself
     oced = OCEDStore()
     oced.add_object(
         "TypeA",
@@ -352,25 +196,19 @@ def test_fix_duplicate_names_renames_attribute_col_colliding_with_object_type():
 
     result = fix_duplicate_names(oced)
 
-    obj_df = result.get_object("TypeA").data
+    obj_df = result.get_object_table("TypeA").data
     assert "TypeA_attr" in obj_df.columns
     assert "TypeA" not in obj_df.columns
 
 
 def test_fix_duplicate_names_renames_attribute_value_colliding_with_reserved():
-    # An event attribute cell value equals a reserved OWL name → gets "_attr_val" suffix
     oced = _oced_with_event("activity", attr_col="status", attr_val="is_a")
 
     result = fix_duplicate_names(oced)
 
-    status_vals = list(result.get_events("activity").data["status"])
+    status_vals = list(result.get_event_table("activity").data["status"])
     assert "is_a_attr_val" in status_vals
     assert "normal_value" in status_vals
-
-
-# ---------------------------------------------------------------------------
-# clean_oced_data
-# ---------------------------------------------------------------------------
 
 
 def test_clean_oced_data_raises_on_colliding_activity_names():
@@ -432,7 +270,7 @@ def test_clean_oced_data_no_raise_when_names_are_distinct_after_cleaning():
     )
     oced.add_event("Place Order", "eid", "ts", ev)
     oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
-    clean_oced_data(oced)  # must not raise
+    clean_oced_data(oced)
 
 
 def test_clean_oced_data_sanitizes_special_chars_in_all_strings():
@@ -458,10 +296,10 @@ def test_clean_oced_data_sanitizes_special_chars_in_all_strings():
 
     result = clean_oced_data(oced)
 
-    assert "activity_type_" in result.get_activities()
+    assert "activity_type_" in result.get_event_types()
     assert "obj_type_" in result.get_object_types()
     assert "rel_name_" in result.get_relation_types()
-    ev_data = result.get_events("activity_type_").data
+    ev_data = result.get_event_table("activity_type_").data
     assert "some_attr_" in ev_data.columns
     assert "val_" in ev_data["some_attr_"].values
 
@@ -471,18 +309,13 @@ def test_clean_oced_data_applies_fix_duplicate_names():
     ev = pd.DataFrame(
         {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
     )
-    oced.add_event("df", "eid", "ts", ev)  # "df" is reserved
+    oced.add_event("df", "eid", "ts", ev)
     oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
 
     result = clean_oced_data(oced)
 
-    assert "df_" in result.get_activities()
-    assert "df" not in result.get_activities()
-
-
-# ---------------------------------------------------------------------------
-# clean_oced_data — id_backmap population
-# ---------------------------------------------------------------------------
+    assert "df_" in result.get_event_types()
+    assert "df" not in result.get_event_types()
 
 
 def test_clean_oced_data_backmap_maps_special_chars_to_original():
@@ -539,7 +372,6 @@ def test_clean_oced_data_backmap_maps_attr_value_to_original():
 
     result = clean_oced_data(oced)
 
-    # Keyed by the value-individual local name: {cleaned_column}_{cleaned_value}.
     assert result.backmap["notes_Hello_World_"] == "Hello World!"
 
 
@@ -571,11 +403,6 @@ def test_clean_oced_data_backmap_catches_reserved_name_collision():
     result = clean_oced_data(oced)
 
     assert result.backmap.get("is_a_attr_val") == "is_a"
-
-
-# ---------------------------------------------------------------------------
-# clean_oced_data — name_backmap population
-# ---------------------------------------------------------------------------
 
 
 def test_collect_schema_names_returns_activity_and_object_type():
@@ -611,46 +438,49 @@ def test_collect_schema_names_includes_attribute_columns():
 
 def test_rename_log_maps_a_final_name_to_its_original():
     log = RenameLog()
-    log.record("activity", "Order Execution", "Order_Execution")
+    log.record(RenameKind.ACTIVITY, "Order Execution", "Order_Execution")
 
     assert log.flat()["Order_Execution"] == "Order Execution"
 
 
 def test_rename_log_composes_successive_renames():
-    """Cleaning then de-collision must map the end back to the start, not the middle."""
     log = RenameLog()
-    log.record("activity", "Has Price", "Has_Price")
-    log.record("activity", "Has_Price", "Has_Price_")
+    log.record(RenameKind.ACTIVITY, "Has Price", "Has_Price")
+    log.record(RenameKind.ACTIVITY, "Has_Price", "Has_Price_")
 
     assert log.flat() == {"Has_Price_": "Has Price"}
 
 
 def test_rename_log_omits_names_it_did_not_change():
     log = RenameLog()
-    log.record("activity", "act", "act")
+    log.record(RenameKind.ACTIVITY, "act", "act")
 
     assert log.flat() == {}
 
 
 def test_rename_log_keeps_kinds_apart():
-    """An id and an activity cleaning to one string must not overwrite each other."""
     log = RenameLog()
-    log.record("id", "o 1", "o_1")
-    log.record("activity", "o.1", "o_1")
+    log.record(RenameKind.ID, "o 1", "o_1")
+    log.record(RenameKind.ACTIVITY, "o.1", "o_1")
 
-    assert log.of_kind("id") == {"o_1": "o 1"}
-    assert log.of_kind("activity") == {"o_1": "o.1"}
+    assert log.of_kind(RenameKind.ID) == {"o_1": "o 1"}
+    assert log.of_kind(RenameKind.ACTIVITY) == {"o_1": "o.1"}
 
 
-def test_rename_log_rejects_an_unknown_kind():
-    with pytest.raises(ValueError, match="Unknown rename kind"):
-        RenameLog().record("nonsense", "a", "b")
+def test_rename_log_kinds_are_an_enum_rather_than_free_strings():
+    assert {k.value for k in RenameKind} == {
+        "activity",
+        "object_type",
+        "relation",
+        "attribute",
+        "id",
+        "value",
+    }
 
 
 def test_rename_log_takes_an_explicit_original():
-    """A value individual maps back to its cell value, not to its previous name."""
     log = RenameLog()
-    log.record("value", "status_df", "status_df_attr_val", original="df")
+    log.record(RenameKind.VALUE, "status_df", "status_df_attr_val", original="df")
 
     assert log.flat()["status_df_attr_val"] == "df"
 
@@ -720,12 +550,7 @@ def test_clean_oced_data_name_backmap_maps_attribute_columns():
     assert result.backmap["total_cost"] == "total cost"
 
 
-# ---------------------------------------------------------------------------
-# clean_object_changes_df
-# ---------------------------------------------------------------------------
-
-
-def test_clean_object_changes_df_cleans_ocel_type():
+def test_clean_object_changes_cleans_ocel_type():
     df = pd.DataFrame(
         {
             "ocel:oid": ["o1"],
@@ -735,11 +560,11 @@ def test_clean_object_changes_df_cleans_ocel_type():
             "status": ["pending"],
         }
     )
-    result = clean_object_changes_df(df)
+    result = clean_object_changes(df)
     assert result["ocel:type"].iloc[0] == "order_item"
 
 
-def test_clean_object_changes_df_preserves_ocel_columns():
+def test_clean_object_changes_preserves_ocel_columns():
     df = pd.DataFrame(
         {
             "ocel:oid": ["o1"],
@@ -749,17 +574,11 @@ def test_clean_object_changes_df_preserves_ocel_columns():
             "status": ["pending"],
         }
     )
-    result = clean_object_changes_df(df)
-    # ocel:* column names are never renamed
+    result = clean_object_changes(df)
     assert "ocel:oid" in result.columns
     assert "ocel:type" in result.columns
     assert "ocel:field" in result.columns
     assert "ocel:timestamp" in result.columns
-
-
-# ---------------------------------------------------------------------------
-# clean_oced_data — _object_changes dict key cleaning
-# ---------------------------------------------------------------------------
 
 
 def _make_oced_with_changes(obj_type: str) -> OCEDStore:
@@ -795,3 +614,147 @@ def test_clean_oced_data_cleans_ocel_type_in_object_changes():
     result = clean_oced_data(oced)
     changes = result.get_object_changes("order_item")
     assert (changes["ocel:type"] == "order_item").all()
+
+
+def _store_with_colliding_object_id() -> OCEDStore:
+    oced = OCEDStore()
+    oced.add_event(
+        "act",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {"eid": ["e1"], "ts": pd.to_datetime(["2024-01-01"], utc=True)},
+        ),
+    )
+    oced.add_object(
+        "order", "oid", pd.DataFrame({"oid": ["Event", "o2"], "attr": ["x", "y"]})
+    )
+    oced.add_event_to_object_relation(
+        "modifies",
+        "eid",
+        "oid",
+        ["order"],
+        pd.DataFrame({"eid": ["e1"], "oid": ["Event"]}),
+    )
+    return oced
+
+
+def test_a_renamed_object_id_is_rewritten_in_the_relation_table_too():
+    oced = clean_oced_data(_store_with_colliding_object_id())
+
+    object_ids = set(oced.get_object_table("order").data["oid"])
+    relation = oced.get_relation("modifies")
+    referenced = set(relation.data[relation.to_id])
+
+    assert "Event" not in object_ids, "the colliding id should have been renamed"
+    assert referenced <= object_ids, (
+        f"relation references {referenced - object_ids} which no object table holds"
+    )
+
+
+def test_object_change_tables_are_rewritten_by_the_same_map():
+    oced = OCEDStore(ocel_mode=True)
+    oced.add_event(
+        "act",
+        "eid",
+        "ts",
+        pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2024-01-01"], utc=True)}),
+    )
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["Event"], "status": ["new"]}))
+    oced.add_event_to_object_relation(
+        "modifies",
+        "eid",
+        "oid",
+        ["order"],
+        pd.DataFrame({"eid": ["e1"], "oid": ["Event"]}),
+    )
+    oced.replace_object_changes(
+        {
+            "order": pd.DataFrame(
+                {
+                    "ocel:oid": ["Event"],
+                    "ocel:type": ["order"],
+                    "ocel:field": ["status"],
+                    "ocel:timestamp": pd.to_datetime(["2024-01-02"], utc=True),
+                    "status": ["shipped"],
+                }
+            )
+        }
+    )
+
+    cleaned = clean_oced_data(oced)
+
+    object_ids = set(cleaned.get_object_table("order").data["oid"])
+    changes = cleaned.get_object_changes("order")
+    assert set(changes["ocel:oid"]) <= object_ids
+    assert set(changes["ocel:type"]) == {"order"}
+    assert set(changes["ocel:field"]) == {"status"}
+
+
+def test_two_attribute_columns_cleaning_to_one_name_are_named():
+    oced = OCEDStore()
+    oced.add_event(
+        "act",
+        "eid",
+        "ts",
+        pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2024-01-01"], utc=True)}),
+    )
+    oced.add_object(
+        "order",
+        "oid",
+        pd.DataFrame({"oid": ["o1"], "unit price": [1.0], "unit-price": [2.0]}),
+    )
+
+    with pytest.raises(ValueError, match="unit_price") as excinfo:
+        clean_oced_data(oced)
+
+    message = str(excinfo.value)
+    assert "unit price" in message
+    assert "unit-price" in message
+    assert "order" in message
+
+
+def test_the_same_attribute_on_two_tables_is_not_a_collision():
+    oced = OCEDStore()
+    oced.add_event(
+        "act",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {
+                "eid": ["e1"],
+                "ts": pd.to_datetime(["2024-01-01"], utc=True),
+                "channel": ["web"],
+            }
+        ),
+    )
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1"], "channel": ["shop"]}))
+
+    clean_oced_data(oced)
+
+
+def test_a_rename_never_discards_an_existing_type():
+    oced = OCEDStore()
+    oced.add_event(
+        "act",
+        "eid",
+        "ts",
+        pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2024-01-01"], utc=True)}),
+    )
+    oced.add_object("Event", "oid", pd.DataFrame({"oid": ["a1"]}))
+    oced.add_object("Event_", "oid2", pd.DataFrame({"oid2": ["b1"]}))
+
+    fix_duplicate_names(oced)
+
+    kept = oced.get_object_tables()
+    assert len(kept) == 2, f"an object type was discarded: {sorted(kept)}"
+    assert all(len(table.data) == 1 for table in kept.values())
+
+
+def test_renaming_onto_an_existing_type_is_refused_outright():
+    oced = OCEDStore()
+    oced.add_object("a", "oid", pd.DataFrame({"oid": ["a1"]}))
+    oced.add_object("b", "oid", pd.DataFrame({"oid": ["b1"]}))
+
+    with pytest.raises(ValueError, match="already exists"):
+        oced.rename_object("a", "b")

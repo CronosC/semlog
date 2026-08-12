@@ -1,3 +1,5 @@
+"""Test suite for semlog."""
+
 import warnings
 
 warnings.filterwarnings(

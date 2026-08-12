@@ -1,31 +1,33 @@
-from semanticlog.onto.builder import OCEDBaseBuilder
-from semanticlog.onto.instantiate import OCEDOntoBuilder
+"""Turning stored event data into an OWL 2 ontology.
+
+`OntoBuildSettings` says what to emit, `OCEDOntoBuilder` emits it through a
+sink, and the result is a `BuildResult` that can be written out or reasoned
+over.
+"""
+
+from semanticlog.onto.builder import OCEDOntoBuilder, construct_tbox
 from semanticlog.onto.reason import Reasoner
-from semanticlog.onto.semlog import SemanticLog
+from semanticlog.onto.result import BuildResult
 from semanticlog.onto.settings import (
     DEFAULT_IRI,
     DataRepresentation,
     EventOrderRepresentation,
     InverseRepresentation,
-    OcelExtension,
+    OCELExtension,
     OntoBuildSettings,
-    OwlProfile,
+    OWLProfile,
 )
-from semanticlog.onto.transform import parse_manchester
-from semanticlog.onto.upper import OCEDUpperOntoBuilder
 
 __all__ = [
     "DEFAULT_IRI",
     "DataRepresentation",
     "EventOrderRepresentation",
     "InverseRepresentation",
-    "OCEDBaseBuilder",
     "OCEDOntoBuilder",
-    "OCEDUpperOntoBuilder",
-    "OcelExtension",
+    "OCELExtension",
     "OntoBuildSettings",
-    "OwlProfile",
+    "OWLProfile",
     "Reasoner",
-    "SemanticLog",
-    "parse_manchester",
+    "BuildResult",
+    "construct_tbox",
 ]

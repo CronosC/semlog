@@ -3139,6 +3139,7 @@ dev = [
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "rdflib" },
     { name = "ruff" },
 ]
 
@@ -3153,6 +3154,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=15" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
+    { name = "rdflib", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "scipy", specifier = "<2" },
 ]

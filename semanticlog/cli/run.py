@@ -1,12 +1,14 @@
-"""The pipelines behind each subcommand, with no argparse in sight.
+"""What each subcommand does.
 
-Every function here takes plain values or a :class:`~semanticlog.cli.config.RunConfig`
-and returns a result object, so the same steps can be driven from a test, a
-notebook, or the command line.
+These functions take already-resolved values, so a command can be run and
+tested without a command line. `build` loads, cleans, chooses case concepts,
+builds, writes, and records what it did.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import logging
 import time
 from collections.abc import Sequence
@@ -17,22 +19,42 @@ from typing import Any
 
 from semanticlog.cli.config import RunConfig
 from semanticlog.cli.logs import FileLog
-from semanticlog.cli.manifest import RunManifest
 from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.loading.pm4pyloader import PM4PYLoader
+from semanticlog.data.loading.pm4py_loader import PM4PyLoader
 from semanticlog.data.oced import OCEDStore, RelationKind
-from semanticlog.onto.instantiate import OCEDOntoBuilder
+from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.reason import Reasoner
-from semanticlog.onto.semlog import SemanticLog
-from semanticlog.onto.settings import DEFAULT_IRI, OcelExtension, OwlProfile
+from semanticlog.onto.result import BuildResult
+from semanticlog.onto.settings import (
+    DEFAULT_IRI,
+    OCELExtension,
+    OntoBuildSettings,
+    OWLProfile,
+)
+from semanticlog.onto.sinks import AxiomSink, InMemorySink, StreamingSink
 
 logger = logging.getLogger("semlog.run")
 
 _MB = 1024 * 1024
+_HASH_CHUNK = 1 << 20
+
+
+def file_digest(path: Path) -> str:
+    """Return the SHA-256 of a file, read in chunks.
+
+    This identifies the exact input behind a result, and is what lets a build
+    notice DECLARE constraints mined from a different file.
+    """
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(_HASH_CHUNK):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @contextmanager
 def _timed(timings: dict[str, float], stage: str):
+    """Record how long one stage took, even if it fails."""
     started = time.perf_counter()
     try:
         yield
@@ -40,25 +62,29 @@ def _timed(timings: dict[str, float], stage: str):
         timings[stage] = time.perf_counter() - started
 
 
-# ---------------------------------------------------------------------------
-# build
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class BuildReport:
-    """What a ``semlog build`` invocation did, per input file."""
+    """What happened to each input of a build.
+
+    Attributes:
+        built: Inputs that produced an ontology.
+        skipped: Inputs that were not attempted, with the reason.
+        failed: Inputs that were attempted and failed, with the reason.
+        records: The provenance record of each successful build.
+    """
 
     built: list[Path] = field(default_factory=list)
     skipped: list[tuple[Path, str]] = field(default_factory=list)
     failed: list[tuple[Path, str]] = field(default_factory=list)
-    manifests: list[dict[str, Any]] = field(default_factory=list)
+    records: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
+        """Whether every attempted build succeeded. A skip is not a failure."""
         return not self.failed
 
     def summary(self) -> str:
+        """Return a one-line count of what happened."""
         parts = [f"{len(self.built)} built"]
         if self.skipped:
             parts.append(f"{len(self.skipped)} skipped")
@@ -67,47 +93,57 @@ class BuildReport:
         return ", ".join(parts)
 
 
-def load_and_clean(path: Path, extensions: Sequence[OcelExtension]) -> OCEDStore:
-    """Read an OCEL file and sanitise every name so it is safe in an IRI."""
-    store = PM4PYLoader(str(path), {}, ocel_extensions=list(extensions)).get_oced()
-    return clean_oced_data(store)
+def load_and_clean(path: Path, extensions: Sequence[OCELExtension]) -> OCEDStore:
+    """Read one OCEL file and make its names safe to emit."""
+    data = PM4PyLoader(str(path), {}, ocel_extensions=list(extensions)).get_oced()
+    return clean_oced_data(data)
 
 
-def choose_case_concepts(cfg: RunConfig, store: OCEDStore) -> tuple[list[str], str]:
-    """Return the case concepts for one input and where they came from.
+def choose_case_concepts(cfg: RunConfig, data: OCEDStore) -> tuple[list[str], str]:
+    """Take the configured case concepts, or pick the most common object types.
 
-    The source string ends up in the manifest, because auto-selection is a
-    modelling decision and a reader of the result needs to know it was made.
+    Returns:
+        The chosen types and where the choice came from, which is recorded as
+        provenance so a result says whether it was chosen or given.
     """
     if cfg.case_concepts is not None:
         return list(cfg.case_concepts), "config"
-    chosen = store.get_most_common_objects(n=cfg.auto_case_concepts)
+    chosen = data.get_most_common_objects(n=cfg.auto_case_concepts)
     return chosen, f"auto(n={cfg.auto_case_concepts})"
 
 
-def _relation_rows(store: OCEDStore, kind: RelationKind) -> int:
+def _relation_rows(data: OCEDStore, kind: RelationKind) -> int:
+    """Count the rows across one relation family."""
     return sum(
-        len(store.get_relation(name).data) for name in store.get_relation_types(kind)
+        len(data.get_relation(name).data) for name in data.get_relation_types(kind)
     )
 
 
-def _store_stats(store: OCEDStore) -> dict[str, int]:
+def _store_stats(data: OCEDStore) -> dict[str, int]:
+    """Measure the loaded log, for the provenance record."""
     return {
-        "activities": len(store.get_activities()),
-        "events": sum(len(store.get_events(a).data) for a in store.get_activities()),
-        "object_types": len(store.get_object_types()),
-        "objects": sum(len(table.data) for table in store.get_objects().values()),
-        "event_to_object_relations": _relation_rows(store, RelationKind.E2O),
-        "object_to_object_relations": _relation_rows(store, RelationKind.O2O),
+        "activities": len(data.get_event_types()),
+        "events": sum(
+            len(data.get_event_table(a).data) for a in data.get_event_types()
+        ),
+        "object_types": len(data.get_object_types()),
+        "objects": sum(len(table.data) for table in data.get_object_tables().values()),
+        "event_to_object_relations": _relation_rows(data, RelationKind.E2O),
+        "object_to_object_relations": _relation_rows(data, RelationKind.O2O),
     }
 
 
-def _ontology_stats(semlog: SemanticLog) -> dict[str, int]:
-    """Signature sizes of the built ontology.
+def _ontology_stats(semlog: BuildResult, sink: AxiomSink) -> dict[str, int]:
+    """Measure the built ontology, however it was built.
 
-    Signature counts rather than axiom counts: owlapy's in-memory ``Ontology``
-    raises ``NotImplementedError`` from ``get_tbox_axioms``/``get_abox_axioms``.
+    A streamed build has nothing to count entities in, so it reports what the
+    sink wrote instead.
     """
+    if semlog.onto is None:
+        return {
+            "axioms": getattr(sink, "axiom_count", 0),
+            "declared_entities": sink.declared_count,
+        }
     onto = semlog.require_onto()
     return {
         "classes": sum(1 for _ in onto.classes_in_signature()),
@@ -117,48 +153,121 @@ def _ontology_stats(semlog: SemanticLog) -> dict[str, int]:
     }
 
 
+def run_record(
+    cfg: RunConfig,
+    input_path: Path,
+    digest: str,
+    case_concept_source: str,
+    data: OCEDStore,
+) -> dict[str, Any]:
+    """Assemble what to record about this run.
+
+    The result is annotated onto the ontology, so it has to say everything
+    needed to identify the input and reproduce the run.
+
+    Args:
+        cfg: The resolved run.
+        input_path: Log being built.
+        digest: Checksum of that log.
+        case_concept_source: Whether the case concepts were given or chosen.
+        data: The loaded log, measured for the record.
+
+    Returns:
+        The record, keyed by annotation name.
+    """
+    outputs = {}
+    if cfg.save_backmap:
+        outputs["backmap"] = str(cfg.backmap_path(input_path))
+    if cfg.save_store:
+        outputs["store"] = str(cfg.store_path(input_path))
+
+    return {
+        "sourceLogSha256": digest,
+        "sourceLogBytes": input_path.stat().st_size,
+        "caseConceptSource": case_concept_source,
+        "buildCommand": cfg.command,
+        "buildConfigFile": None if cfg.config_file is None else str(cfg.config_file),
+        "buildInputStatistics": _store_stats(data),
+        "buildOutputs": outputs or None,
+        "materialized": cfg.materialize,
+    }
+
+
+def warn_on_foreign_declare(settings: OntoBuildSettings, digest: str) -> None:
+    """Warn when the DECLARE constraints were mined from a different file.
+
+    The build continues, because the trace ids still resolve and a filtered
+    copy of a log is a reasonable thing to mine from. It is worth saying so.
+    """
+    result = settings.declare_result
+    if result is None or result.source_sha256 is None:
+        return
+    if result.source_sha256 != digest:
+        logger.warning(
+            f"DECLARE constraints were mined from {result.source_log!r} "
+            f"(sha256 {result.source_sha256[:12]}), which is not the file being "
+            f"built (sha256 {digest[:12]}). The trace ids still resolve, so the "
+            "build continues."
+        )
+
+
 def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
-    """Build one ontology and its manifest, returning the manifest contents."""
+    """Build one input, from loading the log to writing the ontology.
+
+    The provenance record is assembled before the build, so the ontology
+    carries it from the start.
+
+    Args:
+        cfg: The resolved run.
+        input_path: Log to build.
+
+    Returns:
+        The provenance record of this build.
+    """
     onto_path = cfg.ontology_path(input_path)
     timings: dict[str, float] = {}
 
     logger.info(f"Input:  {input_path}")
     logger.info(f"Output: {onto_path}")
 
+    digest = file_digest(input_path)
+
     logger.info("Loading OCEL data..")
     with _timed(timings, "load"):
-        store = load_and_clean(input_path, cfg.settings.ocel_extensions)
+        data = load_and_clean(input_path, cfg.settings.ocel_extensions)
 
-    case_concepts, source = choose_case_concepts(cfg, store)
+    case_concepts, source = choose_case_concepts(cfg, data)
     logger.info(f"Case concepts ({source}): {case_concepts or 'none'}")
     settings = cfg.settings_for(case_concepts)
+    warn_on_foreign_declare(settings, digest)
 
     logger.info("Building ontology..")
+    onto_path.parent.mkdir(parents=True, exist_ok=True)
+    sink: AxiomSink
+    if cfg.streaming:
+        sink = StreamingSink(str(onto_path), DEFAULT_IRI, settings)
+    else:
+        sink = InMemorySink(DEFAULT_IRI, settings)
+
+    record = run_record(cfg, input_path, digest, source, data)
+
     with _timed(timings, "build"):
-        semlog = OCEDOntoBuilder(DEFAULT_IRI, settings).build_ontology(
-            store, source=str(input_path)
+        semlog = OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
+            data, source=str(input_path), run=record
         )
 
     with _timed(timings, "write"):
-        onto_path.parent.mkdir(parents=True, exist_ok=True)
-        semlog.write_ontology(str(onto_path))
+        if semlog.onto is not None:
+            semlog.save(str(onto_path))
     logger.info(f"Ontology saved: {onto_path}")
 
-    outputs: dict[str, str | None] = {
-        "ontology": str(onto_path),
-        "manifest": str(cfg.manifest_path(input_path)),
-        "backmap": None,
-        "store": None,
-    }
     if cfg.save_backmap:
         backmap_path = cfg.backmap_path(input_path)
-        store.save_backmap(backmap_path)
-        outputs["backmap"] = str(backmap_path)
+        data.save_backmap(backmap_path)
         logger.info(f"Name backmap saved: {backmap_path}")
     if cfg.save_store:
         store_path = cfg.store_path(input_path)
-        store.write(store_path)
-        outputs["store"] = str(store_path)
+        data.write(store_path)
         logger.info(f"OCED store saved: {store_path}")
 
     if cfg.materialize:
@@ -171,25 +280,25 @@ def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
             ).materialize()
         logger.info("Materialization complete.")
 
-    stats = {**_store_stats(store), **_ontology_stats(semlog)}
-    manifest = RunManifest(
-        input_path=input_path,
-        settings=settings,
-        case_concept_source=source,
-        outputs=outputs,
-        stats=stats,
-        timings=timings,
-        config_file=cfg.config_file,
-        command=cfg.command,
-        materialized=cfg.materialize,
-    )
-    record = manifest.write(cfg.manifest_path(input_path))
-    logger.info(f"Manifest saved: {cfg.manifest_path(input_path)}")
+    stats = _ontology_stats(semlog, sink)
+    logger.info("Ontology: " + ", ".join(f"{k}={v:,}" for k, v in stats.items()))
+    logger.info("Timings:  " + ", ".join(f"{k}={v:.2f}s" for k, v in timings.items()))
     return record
 
 
-def run_build(cfg: RunConfig) -> BuildReport:
-    """Build every input in ``cfg``, continuing past a file that fails."""
+def build_all(cfg: RunConfig) -> BuildReport:
+    """Build every input of a run.
+
+    One input failing does not stop the others, since a run over a directory
+    is usually worth finishing. Every failure is recorded and reported at the
+    end.
+
+    Args:
+        cfg: The resolved run.
+
+    Returns:
+        What happened to each input.
+    """
     for message in cfg.warnings:
         logger.warning(message)
 
@@ -201,9 +310,9 @@ def run_build(cfg: RunConfig) -> BuildReport:
         for input_path in cfg.inputs:
             size = input_path.stat().st_size
             if limit and size > limit:
-                reason = f"exceeds the {cfg.size_limit_mb} MB limit ({size // _MB} MB)"
-                logger.info(f"Skipping {input_path.name}: {reason}")
-                report.skipped.append((input_path, reason))
+                skipped = f"exceeds the {cfg.size_limit_mb} MB limit ({size // _MB} MB)"
+                logger.info(f"Skipping {input_path.name}: {skipped}")
+                report.skipped.append((input_path, skipped))
                 continue
 
             log_path = file_log.switch_to(cfg.output_stem(input_path))
@@ -212,7 +321,7 @@ def run_build(cfg: RunConfig) -> BuildReport:
                 logger.info(f"Log:    {log_path}")
 
             try:
-                report.manifests.append(build_one(cfg, input_path))
+                report.records.append(build_one(cfg, input_path))
                 report.built.append(input_path)
                 logger.info(f"=== Finished {input_path.name} ===")
             except Exception as exc:
@@ -222,14 +331,19 @@ def run_build(cfg: RunConfig) -> BuildReport:
     return report
 
 
-# ---------------------------------------------------------------------------
-# inspect
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class InspectReport:
-    """A read-only summary of one OCEL file, as ``semlog inspect`` prints it."""
+    """What one log contains, as `semlog inspect` reports it.
+
+    Attributes:
+        input_path: The log this describes.
+        activities: Activity name and event count, most events first.
+        object_types: Object type and object count, most objects first.
+        relations: Relation name and row count, most rows first.
+        time_range: Earliest and latest timestamp, or None if there are none.
+        suggested_case_concepts: What a build would choose as case concepts.
+        renamed: Names cleaning changed, as cleaned name to source name.
+    """
 
     input_path: Path
     activities: list[tuple[str, int]]
@@ -240,6 +354,7 @@ class InspectReport:
     renamed: dict[str, str]
 
     def render(self) -> str:
+        """Return the report as the text the command prints."""
         lines = [f"{self.input_path}", ""]
         lines.append(f"activities ({len(self.activities)})")
         lines += [f"  {n:>9,}  {name}" for name, n in self.activities]
@@ -270,39 +385,46 @@ class InspectReport:
 
 def inspect_input(
     path: Path,
-    extensions: Sequence[OcelExtension] = (),
+    extensions: Sequence[OCELExtension] = (),
     suggest: int = 3,
 ) -> InspectReport:
-    """Summarise an OCEL file without building anything.
+    """Summarize one log without building anything.
 
-    Names are reported in their cleaned form, because that is what
-    ``--case-concepts`` matches against, with the original shown alongside
-    whenever cleaning changed it.
+    The log is cleaned first, so the names shown are the ones a build would
+    use and the ones `--case-concepts` expects.
+
+    Args:
+        path: Log to summarize.
+        extensions: OCEL extensions to load as well.
+        suggest: How many case concepts to suggest.
+
+    Returns:
+        The summary.
     """
-    store = load_and_clean(path, extensions)
+    data = load_and_clean(path, extensions)
 
     activities = sorted(
-        ((a, len(store.get_events(a).data)) for a in store.get_activities()),
+        ((a, len(data.get_event_table(a).data)) for a in data.get_event_types()),
         key=lambda item: item[1],
         reverse=True,
     )
     object_types = sorted(
-        ((t, len(table.data)) for t, table in store.get_objects().items()),
+        ((t, len(table.data)) for t, table in data.get_object_tables().items()),
         key=lambda item: item[1],
         reverse=True,
     )
     relations = sorted(
         (
-            (name, len(store.get_relation(name).data))
-            for name in store.get_relation_types()
+            (name, len(data.get_relation(name).data))
+            for name in data.get_relation_types()
         ),
         key=lambda item: item[1],
         reverse=True,
     )
 
     stamps = [
-        store.get_events(a).data[store.get_events(a).time]
-        for a in store.get_activities()
+        data.get_event_table(a).data[data.get_event_table(a).time]
+        for a in data.get_event_types()
     ]
     non_empty = [s for s in stamps if len(s)]
     time_range = (
@@ -315,7 +437,7 @@ def inspect_input(
     renamed = {
         name: original
         for name in schema_names
-        if (original := store.get_original(name)) is not None and original != name
+        if (original := data.get_original(name)) is not None and original != name
     }
 
     return InspectReport(
@@ -324,14 +446,9 @@ def inspect_input(
         object_types=object_types,
         relations=relations,
         time_range=time_range,
-        suggested_case_concepts=store.get_most_common_objects(n=suggest),
+        suggested_case_concepts=data.get_most_common_objects(n=suggest),
         renamed=renamed,
     )
-
-
-# ---------------------------------------------------------------------------
-# mine-declare
-# ---------------------------------------------------------------------------
 
 
 def mine_declare(
@@ -342,35 +459,50 @@ def mine_declare(
     constraint_support: float,
     itemset_support: float,
     auto_case_concepts: int = 3,
-    extensions: Sequence[OcelExtension] = (),
+    extensions: Sequence[OCELExtension] = (),
 ) -> Path:
-    """Mine DECLARE constraints from one OCEL file into a CSV.
+    """Mine DECLARE constraints from a log and write them to a CSV.
 
-    Kept out of ``build`` on purpose: mining needs the Lydia backend, is far
-    slower than a build, and its output is worth keeping as an artifact in its
-    own right rather than recomputing per ontology.
+    The origin of the constraints is recorded with them, so a later build can
+    tell whether they belong to the log it is building.
+
+    Args:
+        input_path: Log to mine.
+        output_path: CSV to write.
+        case_concepts: Object types to project onto, or None to choose them.
+        constraints: Constraint templates to restrict discovery to.
+        constraint_support: Share of traces a constraint has to hold in.
+        itemset_support: Share of traces an activity set has to occur in.
+        auto_case_concepts: How many case concepts to choose when choosing.
+        extensions: OCEL extensions to load as well.
 
     Returns:
-        The path the constraints CSV was written to.
+        The file written.
+
+    Raises:
+        ImportError: If declare4py or its solver is not installed.
     """
     from semanticlog.enrich.declare import DeclareEnricher
 
     logger.info(f"Loading OCEL data from {input_path}..")
-    store = load_and_clean(input_path, extensions)
+    data = load_and_clean(input_path, extensions)
 
     chosen = (
         list(case_concepts)
         if case_concepts is not None
-        else store.get_most_common_objects(n=auto_case_concepts)
+        else data.get_most_common_objects(n=auto_case_concepts)
     )
     logger.info(f"Case concepts: {chosen}")
 
     logger.info("Mining DECLARE constraints via discovery..")
-    result = DeclareEnricher(store).get_constraints_via_discovery(
+    result = DeclareEnricher(data).get_constraints_via_discovery(
         case_concepts=chosen,
         constraint_set=list(constraints) if constraints else None,
         constraint_support_threshold=constraint_support,
         itemset_support_threshold=itemset_support,
+    )
+    result = dataclasses.replace(
+        result, source_log=str(input_path), source_sha256=file_digest(input_path)
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result.write(str(output_path))
@@ -378,22 +510,27 @@ def mine_declare(
     return output_path
 
 
-# ---------------------------------------------------------------------------
-# reason
-# ---------------------------------------------------------------------------
-
-
 def reason(
     onto_path: Path,
-    profile: OwlProfile,
+    profile: OWLProfile,
     backend: str = "HermiT",
     output_path: Path | None = None,
     check_only: bool = False,
 ) -> bool:
-    """Materialise or consistency-check an existing ontology file.
+    """Run a reasoner over an ontology that already exists.
+
+    Args:
+        onto_path: Ontology to read.
+        profile: Profile it was built for, which decides what is asked of the
+            reasoner.
+        backend: Reasoner to use.
+        output_path: Where to write the materialized result. Without one, the
+            input file is overwritten.
+        check_only: Only report consistency, changing nothing.
 
     Returns:
-        ``True`` unless ``check_only`` found the ontology inconsistent.
+        Whether the ontology is consistent under `check_only`, and True
+        otherwise.
     """
     reasoner = Reasoner(str(onto_path), backend=backend, profile=profile)
     if check_only:
@@ -405,6 +542,6 @@ def reason(
     reasoner.materialize(overwrite_old=output_path is None)
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        reasoner.save_onto(str(output_path))
+        reasoner.save(str(output_path))
     logger.info(f"Materialization complete: {output_path or onto_path}")
     return True

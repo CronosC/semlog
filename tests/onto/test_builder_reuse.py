@@ -1,5 +1,6 @@
-"""A builder produces one ontology, and says so rather than merging two."""
+"""A builder produces one ontology and refuses a second."""
 
+from dataclasses import FrozenInstanceError
 from datetime import datetime
 
 import pandas as pd
@@ -7,8 +8,13 @@ import pytest
 
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.oced import OCEDStore
-from semanticlog.onto.instantiate import OCEDOntoBuilder
-from semanticlog.onto.settings import DEFAULT_IRI, OntoBuildSettings, OwlProfile
+from semanticlog.onto.builder import OCEDOntoBuilder
+from semanticlog.onto.settings import (
+    DEFAULT_IRI,
+    EventOrderRepresentation,
+    OntoBuildSettings,
+    OWLProfile,
+)
 
 NS = DEFAULT_IRI
 
@@ -43,76 +49,91 @@ def test_second_build_is_refused():
 
 
 def test_second_build_does_not_merge_the_two_logs():
-    """The refusal is the point: without it both logs land in one ontology."""
     builder = OCEDOntoBuilder(NS, OntoBuildSettings())
     builder.build_ontology(_store("a"))
 
     with pytest.raises(ValueError):
         builder.build_ontology(_store("b"))
 
-    names = {c.iri.get_remainder() for c in builder.onto.classes_in_signature()}
+    names = {c.iri.remainder for c in builder.onto.classes_in_signature()}
     assert "actb" not in names
     assert "acta" in names
 
 
-def test_a_rejected_build_leaves_the_builder_usable():
-    """Nothing was written, so the instance is not spent."""
-    settings = OntoBuildSettings(profile=OwlProfile.OWL2EL)
-    settings.order_representation = list(settings.order_representation)
+def test_a_build_rejected_on_its_input_leaves_the_builder_usable():
+    settings = OntoBuildSettings(
+        case_concepts=["order"],
+        order_representations=[EventOrderRepresentation.DECLARE],
+    )
     builder = OCEDOntoBuilder(NS, settings)
 
-    # Force a validation failure, then repair it.
-    settings.bin_labels = ["only_one"]
-    with pytest.raises(ValueError, match="bin_labels"):
+    with pytest.raises(ValueError, match="no DECLARE constraints are available"):
         builder.build_ontology(_store("a"))
 
-    settings.bins = 1
-    semlog = builder.build_ontology(_store("a"))
-
-    assert list(semlog.onto.classes_in_signature())
+    usable = OCEDOntoBuilder(NS, OntoBuildSettings())
+    assert list(usable.build_ontology(_store("a")).onto.classes_in_signature())
 
 
-def test_settings_mutated_mid_build_do_not_change_the_result():
-    """Everything reads settings live, so a build has to take its own copy."""
-    settings = OntoBuildSettings()
-    builder = OCEDOntoBuilder(NS, settings)
-    semlog = builder.build_ontology(_store("a"))
+def test_a_build_rejected_on_a_name_spends_the_builder():
+    builder = OCEDOntoBuilder(NS, OntoBuildSettings(profile=OWLProfile.OWL2EL))
 
-    settings.derive_annotations = True
-    settings.case_concepts.append("sneaky")
+    dirty = OCEDStore()
+    dirty.add_event(
+        "bad name",
+        id_col="eid",
+        time_col="t",
+        data=pd.DataFrame({"eid": ["e1"], "t": [datetime(2024, 1, 1)]}),
+    )
+    with pytest.raises(ValueError, match="cannot be an IRI local name"):
+        builder.build_ontology(dirty)
+
+    with pytest.raises(ValueError, match="already produced an ontology"):
+        builder.build_ontology(_store("a"))
+
+
+def test_settings_cannot_be_changed_after_a_build():
+    settings = OntoBuildSettings(case_concepts=["order"])
+    semlog = OCEDOntoBuilder(NS, settings).build_ontology(_store("a"))
+
+    with pytest.raises(FrozenInstanceError):
+        semlog.settings.derive_annotations = True
+    with pytest.raises(AttributeError):
+        semlog.settings.case_concepts.append("sneaky")
 
     assert semlog.settings.derive_annotations is False
-    assert semlog.settings.case_concepts == []
+    assert semlog.settings.case_concepts == ("order",)
 
 
-def test_snapshot_is_independent_of_the_original():
+def test_replace_leaves_the_original_alone():
     settings = OntoBuildSettings(case_concepts=["order"])
-    clone = settings.snapshot()
 
-    settings.case_concepts.append("item")
-    settings.profile = OwlProfile.OWL2EL
+    changed = settings.replace(profile=OWLProfile.OWL2EL, case_concepts=["item"])
 
-    assert clone.case_concepts == ["order"]
-    assert clone.profile is OwlProfile.OWL2DL
+    assert settings.case_concepts == ("order",)
+    assert settings.profile is OWLProfile.OWL2DL
+    assert changed.case_concepts == ("item",)
+
+
+def test_a_sequence_passed_in_is_not_shared_with_the_settings():
+    concepts = ["order"]
+    settings = OntoBuildSettings(case_concepts=concepts)
+
+    concepts.append("item")
+
+    assert settings.case_concepts == ("order",)
 
 
 def test_to_dict_does_not_read_from_disk(tmp_path):
-    """Serialising must not depend on when it happens."""
-    missing = tmp_path / "absent.json"
-    settings = OntoBuildSettings(annotation_document=str(missing))
-
-    # No FileNotFoundError: to_dict reports what is resolved, it does not resolve.
-    assert settings.to_dict()["annotation_data"] is None
-    assert settings.to_dict()["annotation_document"] == str(missing)
-
-
-def test_resolve_is_what_reads_the_files(tmp_path):
     import json
 
     document = tmp_path / "annotations.json"
     document.write_text(json.dumps({"Event": {"label": "Occurrence"}}))
     settings = OntoBuildSettings(annotation_document=str(document))
+    document.unlink()
 
-    assert settings.to_dict()["annotation_data"] is None
-    settings.resolve()
     assert settings.to_dict()["annotation_data"] == {"Event": {"label": "Occurrence"}}
+
+
+def test_a_missing_annotation_document_fails_at_construction(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        OntoBuildSettings(annotation_document=str(tmp_path / "absent.json"))

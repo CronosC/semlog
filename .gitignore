@@ -26,7 +26,7 @@ htmlcov/
 logs/
 
 # Generated / temporary data
-data/*
+datasets/*
 examples/out/
 simulated.csv
 *.semlog
@@ -34,6 +34,7 @@ simulated.csv
 # Project-specific
 cache/
 results/
+# Scratch notebooks.
 experiments/
 KGs/
 synthetic_problems.json
@@ -47,3 +48,5 @@ components/RDFox/RDFox.lic
 # Local run configs (dataset-specific, not shared).
 # examples/ holds the one config that is meant to be shared.
 runs/
+
+# Local machine setup, not part of the library.

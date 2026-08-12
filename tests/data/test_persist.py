@@ -1,10 +1,4 @@
-"""An OCEDStore survives a write/read round trip, dtypes and all.
-
-The format exists so a stored log outlives the code that wrote it, which means
-the things worth asserting are that nothing is lost, that dtypes come back
-exactly, and that a store from a newer semlog is refused rather than
-misinterpreted.
-"""
+"""Writing a store to disk and reading it back unchanged."""
 
 import json
 
@@ -72,23 +66,22 @@ def test_round_trip_preserves_the_whole_store(store, tmp_path):
     store.write(tmp_path / "s.oced")
     loaded = OCEDStore.read(tmp_path / "s.oced")
 
-    assert loaded.get_activities() == store.get_activities()
+    assert loaded.get_event_types() == store.get_event_types()
     assert loaded.get_object_types() == store.get_object_types()
     assert loaded.get_relation_types(RelationKind.ALL) == store.get_relation_types(
         RelationKind.ALL
     )
     assert loaded.backmap == store.backmap
-    assert loaded.has_ocel_mode() is True
+    assert loaded.ocel_mode is True
     assert loaded.get_object_change_types() == store.get_object_change_types()
 
 
 def test_round_trip_preserves_dtypes(store, tmp_path):
-    """The reason for Parquet over CSV: no schema has to be reconstructed."""
     store.write(tmp_path / "s.oced")
     loaded = OCEDStore.read(tmp_path / "s.oced")
 
-    before = store.get_events("place_order").data.dtypes
-    after = loaded.get_events("place_order").data.dtypes
+    before = store.get_event_table("place_order").data.dtypes
+    after = loaded.get_event_table("place_order").data.dtypes
     pd.testing.assert_series_equal(before, after)
 
 
@@ -97,7 +90,8 @@ def test_round_trip_preserves_table_contents(store, tmp_path):
     loaded = OCEDStore.read(tmp_path / "s.oced")
 
     pd.testing.assert_frame_equal(
-        store.get_events("place_order").data, loaded.get_events("place_order").data
+        store.get_event_table("place_order").data,
+        loaded.get_event_table("place_order").data,
     )
     pd.testing.assert_frame_equal(
         store.get_relation("concerns").data, loaded.get_relation("concerns").data
@@ -116,7 +110,6 @@ def test_relation_typing_survives(store, tmp_path):
 
 
 def test_identifiers_are_usable_after_reading(store, tmp_path):
-    """update_used_ids runs on read, so the store is ready to be added to."""
     store.write(tmp_path / "s.oced")
     loaded = OCEDStore.read(tmp_path / "s.oced")
 
@@ -152,7 +145,6 @@ def test_a_newer_format_version_is_refused(store, tmp_path):
 
 
 def test_table_names_that_are_not_valid_filenames_still_round_trip(tmp_path):
-    """Table names come from source data, so they cannot be used as filenames."""
     data = OCEDStore()
     data.add_event(
         "pay/invoice: step 1",
@@ -165,16 +157,5 @@ def test_table_names_that_are_not_valid_filenames_still_round_trip(tmp_path):
     data.write(tmp_path / "s.oced")
     loaded = OCEDStore.read(tmp_path / "s.oced")
 
-    assert loaded.get_activities() == ["pay/invoice: step 1"]
+    assert loaded.get_event_types() == ["pay/invoice: step 1"]
     assert loaded.get_object_types() == ["a/b"]
-
-
-def test_pickle_save_still_loads_but_warns(store, tmp_path):
-    """Stores written by earlier versions must keep opening for one release."""
-    path = tmp_path / "legacy.pkl"
-
-    with pytest.warns(DeprecationWarning, match="OCEDStore.write"):
-        store.save(path)
-
-    loaded = OCEDStore.load(path)
-    assert loaded.get_activities() == store.get_activities()

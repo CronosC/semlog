@@ -1,163 +1,92 @@
-"""All human-facing ``rdfs:label`` and ``rdfs:comment`` text emitted by a build.
+"""The human-readable text attached to an ontology.
 
-The builders call an :class:`AnnotationWriter` unconditionally; the writer itself
-decides whether anything is emitted, so axiom construction never branches on
-``settings.derive_annotations``.  Keeping every template in one module means the
-wording of the ontology can be reviewed without reading the build logic.
+Cleaning makes names safe at the cost of making them uglier, and an ontology
+of `place_order` and `AttrChange_o_1_status_20240101T000000_000000` is hard to
+read. Labels and comments put the original wording back, without letting it
+into an IRI.
+
+Two sources feed this. The fixed text for the upper schema lives in
+`tbox_annotations.json` beside this module, and everything else is derived
+from the log through the store backmap. All of it is optional and only written
+when a build asks for it.
 """
 
 from __future__ import annotations
 
 import functools
+import json
 from collections.abc import Callable, Iterable, Sequence
+from importlib import resources
 from typing import Any, Protocol
 
 import pandas as pd
 
 from semanticlog.onto.settings import OntoBuildSettings
 
-# Static schema-level annotations for the upper ontology (TBox).
-TBOX_ANNOTATIONS: dict[str, dict[str, str]] = {
-    "Object": {
-        "label": "Object",
-        "comment": "An entity that participates in the process, such as an order, "
-        "invoice, or product. Each object is of exactly one object type "
-        "and may carry attributes whose values can change over time.",
-    },
-    "Event": {
-        "label": "Event",
-        "comment": "An atomic, timestamped occurrence of an activity in the process, "
-        "such as creating an order or inserting a payment. Each event is of "
-        "exactly one event type and may relate to any number of objects.",
-    },
-    "Attribute": {
-        "label": "Attribute",
-        "comment": "A named, typed value associated with an event or object.",
-    },
-    "Time": {
-        "label": "Time point",
-        "comment": "A point in time, used as an event timestamp or to date an object "
-        "attribute value.",
-    },
-    "ObjectAttribute": {
-        "label": "Object attribute",
-        "comment": "An attribute defined for an object type. Its value is recorded "
-        "with a timestamp and may change over the object's lifetime.",
-    },
-    "EventAttribute": {
-        "label": "Event attribute",
-        "comment": "An attribute defined for an event type, carrying a single value "
-        "fixed at the time of the event.",
-    },
-    "AttributeChange": {
-        "label": "Object attribute change",
-        "comment": "A timestamped record of an object attribute taking a new value, "
-        "capturing the history of dynamic object attribute values.",
-    },
-    "observed_at": {
-        "label": "observed at",
-        "comment": "Relates an event to the time point of its timestamp.",
-    },
-    "observes": {
-        "label": "observes",
-        "comment": "Inverse of observed at: relates a time point to the events "
-        "timestamped at it.",
-    },
-    "event_object_relation": {
-        "label": "involves object",
-        "comment": "A qualified event-to-object relationship, associating an event "
-        "with an object that takes part in it.",
-    },
-    "object_object_relation": {
-        "label": "is related to object",
-        "comment": "A qualified object-to-object relationship, associating an object "
-        "with another object independently of any event.",
-    },
-    "has_attribute": {
-        "label": "has attribute",
-        "comment": "Relates an event or object to one of its attributes.",
-    },
-    "attribute_of": {
-        "label": "is attribute of",
-        "comment": "Inverse of has attribute: relates an attribute to its owning "
-        "event or object.",
-    },
-    "has_data_value": {
-        "label": "has data value",
-        "comment": "Attaches a literal value to an attribute, attribute change, or "
-        "time individual.",
-    },
-    "inv_event_object_relation": {
-        "label": "is object involved in",
-        "comment": "Inverse of involves object: relates an object to the events it "
-        "participates in.",
-    },
-    "inv_object_object_relation": {
-        "label": "is related from object",
-        "comment": "Inverse of is related to object: the symmetric counterpart of an "
-        "object-to-object relationship.",
-    },
-    "has_attribute_change": {
-        "label": "has attribute change",
-        "comment": "Relates an object to a record of one of its attribute changes.",
-    },
-    "inv_has_attribute_change": {
-        "label": "is attribute change of",
-        "comment": "Inverse of has attribute change: relates an attribute change record "
-        "to the object whose attribute it tracks.",
-    },
-    "attribute_change_value": {
-        "label": "changes value to",
-        "comment": "Relates an attribute change record to the value the attribute "
-        "took at that change.",
-    },
-    "inv_attribute_change_value": {
-        "label": "is new value in change",
-        "comment": "Inverse of changes value to: relates an attribute value to the "
-        "change record in which it became the new value.",
-    },
-    "changed_at": {
-        "label": "changed at",
-        "comment": "Relates an attribute change record to the time point at which the "
-        "change took effect.",
-    },
-    "inv_changed_at": {
-        "label": "is change time of",
-        "comment": "Inverse of changed at: relates a time point to the attribute change "
-        "records that took effect at it.",
-    },
-}
+TBOX_ANNOTATION_DOCUMENT = "tbox_annotations.json"
+
+
+@functools.cache
+def tbox_annotations() -> dict[str, dict[str, str]]:
+    """Return the fixed labels and comments of the upper schema.
+
+    Read once from the JSON document shipped with the package, so the wording
+    can be reviewed and changed without touching Python.
+    """
+    text = (
+        resources.files("semanticlog.onto")
+        .joinpath(TBOX_ANNOTATION_DOCUMENT)
+        .read_text(encoding="utf-8")
+    )
+    document: dict[str, dict[str, str]] = json.loads(text)
+    return document
+
 
 _TIMESTAMP_LABEL_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def timestamp_labels(values: pd.Series) -> pd.Series:
-    """Format a timestamp column as human-readable labels, falling back to str()."""
+    """Render timestamps for display. Not safe as part of a name."""
     if pd.api.types.is_datetime64_any_dtype(values):
         return values.dt.strftime(_TIMESTAMP_LABEL_FORMAT)
     return values.astype(str)
 
 
 def _format_value(value: Any) -> str:
+    """Render one attribute value as its label."""
     if isinstance(value, pd.Timestamp):
         return value.strftime(_TIMESTAMP_LABEL_FORMAT)
     return str(value)
 
 
 class AnnotationSink(Protocol):
-    """The two axiom-emitting calls an annotation writer needs from a builder."""
+    """The part of a sink an annotation writer needs.
+
+    Stated as a protocol so the writer can be tested against anything that
+    records these four calls.
+    """
 
     def annotate_entity(
         self, iri_fragment: str, label: str | None = ..., comment: str | None = ...
-    ) -> None: ...
+    ) -> None:
+        """Attach a label and a comment to a declared class or property."""
+        ...
 
-    def annotate_individuals_bulk(self, pairs: list[tuple[str, str]]) -> None: ...
+    def annotate_individuals_bulk(self, pairs: list[tuple[str, str]]) -> None:
+        """Label many individuals at once."""
+        ...
 
-    def generate_inverse_property_name(self, prop: str) -> str: ...
+    def inverse_name(self, prop: str) -> str:
+        """Return the name of the inverse of a property."""
+        ...
+
+    def is_declared(self, name: str) -> bool:
+        """Report whether a class or property of this name has been declared."""
+        ...
 
 
 def _when_enabled(fn: Callable) -> Callable:
-    """Skip the decorated method (and the label building it does) when disabled."""
+    """Make a method do nothing unless the build asked for annotations."""
 
     @functools.wraps(fn)
     def wrapper(self: AnnotationWriter, *args: Any, **kwargs: Any) -> None:
@@ -168,12 +97,10 @@ def _when_enabled(fn: Callable) -> Callable:
 
 
 class AnnotationWriter:
-    """Writes derived labels and comments for the entities an ABox build creates.
+    """Writes the labels and comments that go with the axioms.
 
-    Args:
-        sink: The builder emitting the annotation axioms.
-        settings: Build settings; ``derive_annotations`` and ``has_inverses`` are read
-            live, so mutating them between build steps takes effect immediately.
+    Every method here does nothing unless the build asked for derived
+    annotations, so emitters can call them unconditionally.
     """
 
     def __init__(self, sink: AnnotationSink, settings: OntoBuildSettings) -> None:
@@ -183,39 +110,35 @@ class AnnotationWriter:
 
     @property
     def enabled(self) -> bool:
-        """True if derived annotations should be emitted at all."""
+        """Whether this build asked for derived annotations."""
         return self.settings.derive_annotations
 
     @property
     def has_inverses(self) -> bool:
-        """True if named inverse properties exist and should be annotated too."""
+        """Whether inverse properties exist and so need annotating too."""
         return self.settings.has_inverses
 
     def bind(self, backmap: dict[str, str]) -> None:
-        """Point the writer at the cleaned-to-original name map of the store being built."""
+        """Supply the map from cleaned names back to what the log called them."""
         self._backmap = backmap
 
     def original(self, name: str) -> str:
-        """Return the pre-cleaning form of ``name``, or ``name`` itself if unchanged."""
+        """Return what the log called a name, or the name if it never changed."""
         return self._backmap.get(name, name)
 
-    # ------------------------------------------------------------------
-    # Schema (TBox)
-    # ------------------------------------------------------------------
-
     @_when_enabled
-    def upper_ontology(self) -> None:
-        for name, ann in TBOX_ANNOTATIONS.items():
+    def tbox(self) -> None:
+        """Annotate the parts of the TBox this build declared."""
+        for name, ann in tbox_annotations().items():
+            if not self.sink.is_declared(name):
+                continue
             self.sink.annotate_entity(
                 name, label=ann.get("label"), comment=ann.get("comment")
             )
 
-    # ------------------------------------------------------------------
-    # Events and objects
-    # ------------------------------------------------------------------
-
     @_when_enabled
     def activity_class(self, activity: str) -> None:
+        """Label an activity class with the activity name from the log."""
         orig = self.original(activity)
         self.sink.annotate_entity(
             activity, label=orig, comment=f"Events of type '{orig}'."
@@ -223,6 +146,7 @@ class AnnotationWriter:
 
     @_when_enabled
     def object_class(self, obj_type: str) -> None:
+        """Label an object type class with the type name from the log."""
         orig = self.original(obj_type)
         self.sink.annotate_entity(
             obj_type, label=orig, comment=f"Objects of type '{orig}'."
@@ -230,18 +154,15 @@ class AnnotationWriter:
 
     @_when_enabled
     def entity_individuals(self, entity_type: str, ids: Iterable[Any]) -> None:
-        """Label each event/object individual as ``Type (original id)``."""
+        """Label events or objects with their type and their id from the log."""
         orig_type = self.original(entity_type)
         self.sink.annotate_individuals_bulk(
             [(str(eid), f"{orig_type} ({self.original(str(eid))})") for eid in ids]
         )
 
-    # ------------------------------------------------------------------
-    # Event order
-    # ------------------------------------------------------------------
-
     @_when_enabled
     def order_superproperties(self, include_ef: bool) -> None:
+        """Annotate the order properties that every case concept sits below."""
         self._pair(
             "df",
             "directly followed by",
@@ -267,6 +188,7 @@ class AnnotationWriter:
     def trace_boundary_classes(
         self, case_concept: str, start_cls: str, end_cls: str
     ) -> None:
+        """Annotate the start and end event classes of one case concept."""
         cc = self.original(case_concept)
         self.sink.annotate_entity(
             start_cls,
@@ -281,6 +203,7 @@ class AnnotationWriter:
 
     @_when_enabled
     def df_property(self, case_concept: str, prop: str) -> None:
+        """Annotate the directly-follows property of one case concept."""
         cc = self.original(case_concept)
         self._pair(
             prop,
@@ -294,6 +217,7 @@ class AnnotationWriter:
 
     @_when_enabled
     def ef_property(self, case_concept: str, prop: str) -> None:
+        """Annotate the eventually-follows property of one case concept."""
         cc = self.original(case_concept)
         self._pair(
             prop,
@@ -306,27 +230,14 @@ class AnnotationWriter:
             f"(via {cc}) by'.",
         )
 
-    # ------------------------------------------------------------------
-    # Time
-    # ------------------------------------------------------------------
-
     @_when_enabled
     def time_individuals(self, ids: pd.Series, labels: pd.Series) -> None:
-        self.sink.annotate_individuals_bulk(list(zip(ids, labels)))
-
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
+        """Label time individuals with a readable timestamp."""
+        self.sink.annotate_individuals_bulk(list(zip(ids, labels, strict=True)))
 
     @_when_enabled
     def attribute(self, attr: str, prop: str, owner: str) -> None:
-        """Annotate an attribute class and its ``has_attribute`` sub-property.
-
-        Args:
-            attr: Attribute class name.
-            prop: The ``has_{attr}`` property name.
-            owner: ``"event"`` or ``"object"``, used in the comment text.
-        """
+        """Annotate an attribute class and the property that reaches its values."""
         orig = self.original(attr)
         self.sink.annotate_entity(
             attr, label=orig, comment=f"Attribute '{orig}' of a {owner}."
@@ -341,7 +252,7 @@ class AnnotationWriter:
 
     @_when_enabled
     def attribute_values(self, value_to_name: dict[Any, str]) -> None:
-        """Label attribute-value individuals with their original (pre-clean) text."""
+        """Label value individuals with the value as the log wrote it."""
         self.sink.annotate_individuals_bulk(
             [
                 (name, self._backmap.get(name, _format_value(value)))
@@ -349,16 +260,12 @@ class AnnotationWriter:
             ]
         )
 
-    # ------------------------------------------------------------------
-    # Relations
-    # ------------------------------------------------------------------
-
     @_when_enabled
     def relation(
         self, relation: str, from_types: Sequence[str], to_types: Sequence[str]
     ) -> None:
+        """Annotate a relation property with the types it connects."""
         orig = self.original(relation)
-        # e2o relations carry no explicit source type; the domain is always an event.
         source = " or ".join(self.original(t) for t in from_types) or "event"
         target = " or ".join(self.original(t) for t in to_types)
         self._pair(
@@ -369,20 +276,12 @@ class AnnotationWriter:
             f"Inverse of '{orig}': relates '{target}' back to '{source}'.",
         )
 
-    # ------------------------------------------------------------------
-    # Attribute change history
-    # ------------------------------------------------------------------
-
     @_when_enabled
     def attribute_change_schema(
         self, attr: str, change_class: str, change_prop: str
     ) -> None:
+        """Annotate the change class and change property of one attribute."""
         orig = self.original(attr)
-        self.sink.annotate_entity(
-            attr,
-            label=orig,
-            comment=f"Attribute '{orig}' of an object, tracking changes over time.",
-        )
         self.sink.annotate_entity(
             change_class,
             label=f"{orig} Change",
@@ -406,11 +305,10 @@ class AnnotationWriter:
         object_ids: pd.Series,
         timestamps: pd.Series,
     ) -> None:
+        """Label change records with the attribute, the object and the moment."""
         owners = obj_type + " (" + object_ids.astype(str) + ")"
         labels = f"{attr} Change for " + owners + " at " + timestamp_labels(timestamps)
-        self.sink.annotate_individuals_bulk(list(zip(change_ids, labels)))
-
-    # ------------------------------------------------------------------
+        self.sink.annotate_individuals_bulk(list(zip(change_ids, labels, strict=True)))
 
     def _pair(
         self,
@@ -420,11 +318,11 @@ class AnnotationWriter:
         inverse_label: str,
         inverse_comment: str,
     ) -> None:
-        """Annotate a property and, when inverses are active, its named inverse."""
+        """Annotate a property and its inverse, when the build has inverses."""
         self.sink.annotate_entity(prop, label=label, comment=comment)
         if self.has_inverses:
             self.sink.annotate_entity(
-                self.sink.generate_inverse_property_name(prop),
+                self.sink.inverse_name(prop),
                 label=inverse_label,
                 comment=inverse_comment,
             )

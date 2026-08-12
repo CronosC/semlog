@@ -1,3 +1,5 @@
+"""Small event, object and relation tables shared by the data tests."""
+
 import pandas as pd
 import pytest
 

@@ -1,14 +1,9 @@
-"""Reading and writing an :class:`~semanticlog.data.oced.OCEDStore` on disk.
+"""The on-disk form of an OCED store.
 
-A store is written as a directory: one Parquet file per table, plus a JSON
-manifest describing what each file is and how the tables fit together.
-
-This replaces pickling the live object. A pickle records the class layout as much
-as the data, so it stops loading the moment a dataclass gains a field, and only
-semlog can read it at all. For a research artifact that is the wrong trade: the
-stored log outlives the code that wrote it, and other tools should be able to
-open it. Parquet keeps the dtypes exactly as written, which CSV would force us to
-reconstruct from a recorded schema.
+A store is a directory of Parquet tables plus a JSON manifest naming them.
+Parquet is used so that the dtypes come back exactly as written, and the
+manifest carries what a DataFrame cannot: which column is an id, which is a
+timestamp, and which types each relation connects.
 """
 
 from __future__ import annotations
@@ -16,14 +11,20 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
-if TYPE_CHECKING:
-    from semanticlog.data.oced import OCEDStore, RelationTable
+from semanticlog.data.tables import (
+    EventTable,
+    ObjectTable,
+    Relations,
+    RelationTable,
+)
 
-#: Bumped when the on-disk layout changes in a way older readers cannot handle.
+if TYPE_CHECKING:
+    from semanticlog.data.oced import OCEDStore
+
 FORMAT = "semlog-oced"
 FORMAT_VERSION = 1
 
@@ -31,30 +32,43 @@ MANIFEST_NAME = "manifest.json"
 
 
 def _table_path(root: Path, folder: str, index: int) -> tuple[Path, str]:
-    """Return the absolute path and its manifest-relative form.
-
-    Numbered rather than named after the table: table names come from source data
-    and may contain characters that are not valid in a filename. The manifest
-    carries the real name.
-    """
+    """Return the absolute path of one table and the path to record for it."""
     relative = f"{folder}/{index}.parquet"
     return root / relative, relative
 
 
+def _refuse_unless_a_store(root: Path) -> None:
+    """Raise unless the directory is empty or holds a store to overwrite."""
+    if not any(root.iterdir()):
+        return
+    if (root / MANIFEST_NAME).is_file():
+        return
+    raise ValueError(
+        f"{root} is not empty and has no {MANIFEST_NAME}, so it is not a semlog "
+        "store. Refusing to delete it. Choose an empty or non-existent directory, "
+        "or remove it yourself if that is what you meant."
+    )
+
+
 def write_store(data: OCEDStore, path: str | Path) -> Path:
-    """Write ``data`` to a directory at ``path``, replacing anything already there.
+    """Write a store as Parquet tables plus a manifest.
 
     Args:
-        data: The store to write.
-        path: Destination directory. Created if missing.
+        data: Store to write.
+        path: Directory to write into. An existing store there is replaced.
 
     Returns:
-        The directory written to.
+        The directory written.
+
+    Raises:
+        ValueError: If the directory is not empty and holds no manifest, which
+            means it is not a store and will not be deleted.
     """
     from semanticlog.data.oced import RelationKind
 
     root = Path(path)
     if root.exists():
+        _refuse_unless_a_store(root)
         shutil.rmtree(root)
     for folder in ("events", "objects", "e2o", "o2o", "changes"):
         (root / folder).mkdir(parents=True, exist_ok=True)
@@ -62,7 +76,7 @@ def write_store(data: OCEDStore, path: str | Path) -> Path:
     manifest: dict[str, Any] = {
         "format": FORMAT,
         "version": FORMAT_VERSION,
-        "ocel_mode": data.has_ocel_mode(),
+        "ocel_mode": data.ocel_mode,
         "backmap": data.backmap,
         "events": [],
         "objects": [],
@@ -71,8 +85,8 @@ def write_store(data: OCEDStore, path: str | Path) -> Path:
         "object_changes": [],
     }
 
-    for index, activity in enumerate(data.get_activities()):
-        table = data.get_events(activity)
+    for index, activity in enumerate(data.get_event_types()):
+        table = data.get_event_table(activity)
         target, relative = _table_path(root, "events", index)
         table.data.to_parquet(target, index=False)
         manifest["events"].append(
@@ -85,7 +99,7 @@ def write_store(data: OCEDStore, path: str | Path) -> Path:
         )
 
     for index, obj_type in enumerate(data.get_object_types()):
-        obj = data.get_object(obj_type)
+        obj = data.get_object_table(obj_type)
         target, relative = _table_path(root, "objects", index)
         obj.data.to_parquet(target, index=False)
         manifest["objects"].append({"type": obj_type, "id": obj.id, "file": relative})
@@ -94,7 +108,7 @@ def write_store(data: OCEDStore, path: str | Path) -> Path:
         ("event_to_object", RelationKind.E2O, "e2o"),
         ("object_to_object", RelationKind.O2O, "o2o"),
     ):
-        family = cast("dict[str, RelationTable]", data.get_relations(kind))
+        family = data.get_e2o() if kind is RelationKind.E2O else data.get_o2o()
         for index, (name, relation) in enumerate(family.items()):
             target, relative = _table_path(root, folder, index)
             relation.data.to_parquet(target, index=False)
@@ -113,7 +127,7 @@ def write_store(data: OCEDStore, path: str | Path) -> Path:
                 }
             )
 
-    if data.has_ocel_mode():
+    if data.ocel_mode:
         for index, obj_type in enumerate(data.get_object_change_types()):
             target, relative = _table_path(root, "changes", index)
             data.get_object_changes(obj_type).to_parquet(target, index=False)
@@ -126,25 +140,19 @@ def write_store(data: OCEDStore, path: str | Path) -> Path:
 
 
 def read_store(path: str | Path) -> OCEDStore:
-    """Read a store written by :func:`write_store`.
+    """Read a store written by `write_store`.
 
     Args:
-        path: The directory to read.
+        path: Directory holding the store.
 
     Returns:
-        A reconstructed :class:`~semanticlog.data.oced.OCEDStore`.
+        The store, with its name backmap and used-id set restored.
 
     Raises:
-        ValueError: If the directory is not a semlog store, or was written by a
-            newer format version than this code understands.
+        ValueError: If the directory holds no manifest, the manifest is for
+            another format, or it was written by a newer semlog.
     """
-    from semanticlog.data.oced import (
-        EventTable,
-        ObjectTable,
-        OCEDStore,
-        Relations,
-        RelationTable,
-    )
+    from semanticlog.data.oced import OCEDStore
 
     root = Path(path)
     manifest_path = root / MANIFEST_NAME

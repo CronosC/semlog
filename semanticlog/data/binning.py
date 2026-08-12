@@ -1,95 +1,101 @@
+"""Turning numeric columns into a handful of labelled bins.
+
+A named individual per distinct number is rarely useful to reason over, so a
+numeric attribute can be reduced to a few ordered classes instead. Two
+strategies are available: equal-frequency bins, and bins cut from a fitted
+distribution so that the labels mean the same thing across differently shaped
+columns. Columns with too few distinct values are left as text, because
+binning them would invent an order that the data does not support.
+"""
+
 import logging
 
 import numpy as np
 import pandas as pd
-from pm4py.statistics.variants.pandas.get import get_variants_count
 from scipy import stats
 
-from semanticlog.data.oced import OCEDStore
+logger = logging.getLogger(__name__)
 
+_DISTRIBUTIONS = ("norm", "lognorm", "expon", "gamma")
 
-def get_weighted_variant_mapping(
-    log,
-    case_column="case:concept:name",
-    activity_column="concept:name",
-    time_column="time:timestamp",
-    event_column="event",
-):
-    """Gets variant weights from a classical event log"""
-    log = log.sort_values(by=[case_column, time_column, activity_column, event_column])
-    variant_weights = get_variants_count(log)
-
-    return variant_weights
-
-
-def _bin_numeric_columns(df: pd.DataFrame, exclude_cols: set[str]) -> pd.DataFrame:
-    df = df.copy()
-    for col in df.columns:
-        if pd.api.types.is_numeric_dtype(df[col]) and col not in exclude_cols:
-            df[col] = bin_series(df[col])
-    return df
-
-
-def bin_attributes(data: OCEDStore) -> OCEDStore:
-    """Bin all numeric attributes in an OCEDStore using distribution-fitted or equal binning."""
-    for object_type in data.get_object_types():
-        obj = data.get_object(object_type)
-        data.set_object_data(object_type, _bin_numeric_columns(obj.data, {obj.id}))
-
-    for activity in data.get_activities():
-        table = data.get_events(activity)
-        data.set_event_data(
-            activity, _bin_numeric_columns(table.data, {table.id, table.time})
-        )
-    return data
-
-
-_DIST_NEEDS_POSITIVE = {"lognorm", "gamma"}
+_FIT_FAILURES = (stats.FitError, ValueError, FloatingPointError, RuntimeError)
+_DIST_NEEDS_POSITIVE = frozenset({"lognorm", "gamma"})
 _Z_EDGE_LOW = -3
 _Z_EDGE_HIGH = 3
-_DEFAULT_LABELS_5 = ["very_low", "low", "average", "high", "very_high"]
-_DEFAULT_LABELS_3 = ["Low", "Average", "High"]
+
+DEFAULT_BINS = 5
+DEFAULT_BIN_LABELS = ("very_low", "low", "average", "high", "very_high")
 
 
-def bin_series(
+def _check_labels(bins: int, labels) -> None:
+    """Raise unless there is exactly one label per bin."""
+    if len(labels) != bins:
+        raise ValueError(
+            f"bins={bins} needs exactly {bins} labels, got {len(labels)}: "
+            f"{list(labels)}. Values in the unlabelled bins would be silently "
+            "dropped."
+        )
+
+
+def dist_bin_series(
     series,
-    bins=5,
-    labels=_DEFAULT_LABELS_5,
+    bins=DEFAULT_BINS,
+    labels=DEFAULT_BIN_LABELS,
     min_values=10,
 ):
-    """Bin a numeric series using distribution fitting, falling back to equal-frequency binning.
+    """Bin a numeric column using the distribution that fits it best.
 
-    For low-cardinality series (unique values ≤ max(bins, min_values)), converts to strings directly.
+    The candidate distributions are the normal, log-normal, exponential and
+    gamma. When none of them fits, this falls back to equal-frequency bins.
+
+    Args:
+        series: Numeric column to bin.
+        bins: Number of bins.
+        labels: One label per bin, in order from low to high.
+        min_values: Cardinality below which the column is left as text
+            instead of being binned.
+
+    Returns:
+        A column of bin labels, or the values as text when the column has too
+        few distinct values to bin.
+
+    Raises:
+        ValueError: If the number of labels does not match the number of bins.
     """
+    _check_labels(bins, labels)
     if series.nunique() <= max(bins, min_values):
-        logging.warning(
-            f"bin_series: low cardinality ({series.nunique()} unique values) — "
-            "converting numeric column to string labels instead of binning."
+        logger.warning(
+            f"dist_bin_series: low cardinality ({series.nunique()} unique values). "
+            "Converting numeric column to string labels instead of binning."
         )
         return series.astype(str)
     best_fit = get_best_fit_distribution(series)[1]
-    if best_fit in ("norm", "lognorm", "expon", "gamma"):
-        return _dist_bin_series(series, best_fit, bins=bins, labels=labels)
+    if best_fit in _DISTRIBUTIONS:
+        return _cut_by_distribution(series, best_fit, bins=bins, labels=labels)
     return equal_bin_series(series, bins=bins, labels=labels)
 
 
 def get_best_fit_distribution(x, candidates=None, p=0.0):
-    """Fit candidate distributions to a Series and return the best by AIC.
+    """Find which candidate distribution fits a column best.
+
+    Fits are compared by AIC, and a distribution that needs positive values is
+    skipped for a column that has any that are not. A failed fit is skipped
+    without raising, since a column may fit nothing at all.
 
     Args:
-        x: Numeric pandas Series to fit.
-        candidates: Distribution names to try (default: ``["norm", "lognorm", "expon", "gamma"]``).
-        p: Minimum KS-test p-value required to accept a fit. Distributions below
-           this threshold are rejected. Default ``0.0`` accepts any fit.
+        x: Values to fit. Missing values are dropped.
+        candidates: Distribution names to try, defaulting to the four this
+            module supports.
+        p: Minimum Kolmogorov-Smirnov p-value the winner must reach. Zero
+            accepts any fit.
 
     Returns:
-        Tuple ``(aic, name, params, pval)`` for the best-fitting distribution,
-        or ``(None, None, None, None)`` if the Series is empty or no distribution
-        passes the p-value gate.
+        A tuple of AIC, distribution name, fitted parameters and p-value.
+        All four are None when nothing fit.
     """
     x = x.dropna().to_numpy()
     if candidates is None:
-        candidates = ["norm", "lognorm", "expon", "gamma"]
+        candidates = list(_DISTRIBUTIONS)
     best = None
     for dist_name in candidates:
         dist = getattr(stats, dist_name)
@@ -99,22 +105,23 @@ def get_best_fit_distribution(x, candidates=None, p=0.0):
             with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
                 params = dist.fit(x)
                 loglik = np.sum(dist.logpdf(x, *params))
-                aic = 2 * len(params) - 2 * loglik  # Akaike Information Criterion
-                logging.debug(f"{dist_name} fits with aic {aic}")
-                ks_stat, p_val = stats.kstest(x, dist_name, args=params)
+                aic = 2 * len(params) - 2 * loglik
+                logger.debug(f"{dist_name} fits with aic {aic}")
+                _, p_val = stats.kstest(x, dist_name, args=params)
                 if best is None or aic < best[0]:
                     best = (aic, dist_name, params, p_val)
-        except Exception as e:
-            logging.debug(f"Distribution fit failed for {dist_name}: {e}")
+        except _FIT_FAILURES as exc:
+            logger.debug(f"Distribution fit failed for {dist_name}: {exc}")
             continue
     if best is None:
         return (None, None, None, None)
     if best[3] < p:
-        best = (None, None, None, None)
-    return best  # (aic, name, params, pval)
+        return (None, None, None, None)
+    return best
 
 
 def _select_labels(labels: list, n: int) -> list:
+    """Take n labels from the middle outwards, for when fewer bins survive."""
     N = len(labels)
     if n >= N:
         return list(labels)
@@ -130,8 +137,26 @@ def _select_labels(labels: list, n: int) -> list:
     return left + right
 
 
-def equal_bin_series(series, bins=3, labels=_DEFAULT_LABELS_3):
-    """Bin a series into equal-frequency bins using pd.qcut."""
+def equal_bin_series(series, bins=DEFAULT_BINS, labels=DEFAULT_BIN_LABELS):
+    """Bin a numeric column so that each bin holds roughly as many values.
+
+    Repeated values can make fewer bins than requested, in which case labels
+    are taken from the middle of the list outwards so that the extremes are
+    not used for bins that are no longer extreme.
+
+    Args:
+        series: Numeric column to bin.
+        bins: Number of bins.
+        labels: One label per bin, in order from low to high.
+
+    Returns:
+        A column of bin labels, or the values as text when there are fewer
+        than two distinct values or the cut fails.
+
+    Raises:
+        ValueError: If the number of labels does not match the number of bins.
+    """
+    _check_labels(bins, labels)
     n_unique = series.dropna().nunique()
     effective_bins = min(bins, n_unique)
     if effective_bins < 2:
@@ -145,8 +170,17 @@ def equal_bin_series(series, bins=3, labels=_DEFAULT_LABELS_3):
         return series.astype(str)
 
 
-def _dist_bin_series(series, dist_name, bins=3, labels=_DEFAULT_LABELS_3):
-    """Fit a named scipy distribution and bin the series using normal-equivalent deviates."""
+def _cut_by_distribution(
+    series, dist_name, bins=DEFAULT_BINS, labels=DEFAULT_BIN_LABELS
+):
+    """Bin a column by cutting the fitted distribution at fixed z-scores.
+
+    Values are mapped onto a standard normal scale first, so the same bin
+    label means the same distance from the centre whatever the shape of the
+    original column. The outermost edges are unbounded, so no value falls
+    outside the bins.
+    """
+    _check_labels(bins, labels)
     x = series.dropna()
     if len(x) == 0:
         return pd.Series([np.nan] * len(series), index=series.index)

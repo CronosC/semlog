@@ -1,5 +1,0 @@
-case_concept,trace_id,constraintA,constraintB
-thing1,o1,True,False
-thing2,o2,False,True
-thing1,o3,True,False
-thing2,o4,False,True

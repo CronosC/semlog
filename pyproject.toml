@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "semlog"
 version = "0.4.0"
-description = "Convert OCEL process mining event logs to OWL 2 ontologies. The [declare] extra requires the Lydia solver (not on PyPI) — see README."
+description = "Convert OCEL process mining event logs to OWL 2 ontologies. The [declare] extra requires the Lydia solver, which is not on PyPI. See README."
 authors = [{ name = "Christian Dormagen", email = "christian.dormagen@oth-regensburg.de" }]
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -15,8 +15,7 @@ dependencies = [
     "owlapy>=1.6,<2",
     "scipy<2",
     "pandas>=2.2",
-    # Parquet engine for OCEDStore.write/read. Chosen over CSV so the stored
-    # dtypes come back exactly as written, without a schema-guessing step.
+    # Parquet engine for OCEDStore.write/read.
     "pyarrow>=15",
 ]
 
@@ -24,8 +23,8 @@ dependencies = [
 semlog = "semanticlog.cli:main"
 
 [project.optional-dependencies]
-# Note: [declare] also requires the Lydia LTLf/LDLf solver (not on PyPI).
-# Install it separately with: sudo bash scripts/install_lydia.sh
+# [declare] also requires the Lydia LTLf/LDLf solver, which is not on PyPI and
+# has to be built from source. See the DECLARE section of the README.
 declare = [
     "declare4py",
 ]
@@ -35,6 +34,9 @@ dev = [
     "ruff",
     "mypy",
     "pre-commit",
+    # Used by tests/onto/test_reason.py to read a materialised ontology back
+    # as triples.
+    "rdflib",
 ]
 
 [tool.setuptools.packages.find]
@@ -43,9 +45,23 @@ include = ["semanticlog*"]
 
 [tool.setuptools.package-data]
 semanticlog = ["py.typed"]
+# The schema-level labels and comments a build emits. See
+# semanticlog/onto/annotations.py.
+"semanticlog.onto" = ["tbox_annotations.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "reasoner: needs a JVM and the OWL API",
+]
+filterwarnings = [
+    "error::DeprecationWarning",
+    # Third-party.
+    "default::DeprecationWarning:pm4py.*",
+    "default::DeprecationWarning:owlready2.*",
+    "default::DeprecationWarning:pkg_resources.*",
+    "default::DeprecationWarning:importlib.*",
+]
 
 [tool.coverage.run]
 source = ["semanticlog"]
@@ -58,11 +74,21 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "N"]
-ignore = ["E501", "N802", "N803", "N806", "UP042"]
+select = ["E", "F", "W", "I", "UP", "N", "S", "B", "PT"]
+ignore = [
+    "E501",
+    "N802",
+    "N803",
+    "N806",
+    "UP042",
+    "S101",   # assert is how tests are written
+    "S311",   # no cryptographic randomness here
+    "PT011",  # broad pytest.raises
+]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+# S314: the tests parse ontology files they wrote themselves, not untrusted input.
+"tests/**" = ["S101", "S108", "S314"]
 
 [tool.mypy]
 python_version = "3.12"

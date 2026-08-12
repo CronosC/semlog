@@ -1,4 +1,4 @@
-"""Tests for :mod:`semanticlog.data.dtypes`."""
+"""Giving loaded columns the dtype their content implies."""
 
 import numpy as np
 import pandas as pd
@@ -6,10 +6,6 @@ import pytest
 from pandas.testing import assert_series_equal
 
 from semanticlog.data.dtypes import infer_dtypes
-
-# ---------------------------------------------------------------------------
-# infer_dtypes
-# ---------------------------------------------------------------------------
 
 
 def test_infer_dtypes_passes_through_numeric_and_bool():
@@ -23,17 +19,20 @@ def test_infer_dtypes_passes_through_numeric_and_bool():
     assert_series_equal(out["bools"], before["bools"], check_dtype=True)
 
 
-def test_infer_dtypes_normalizes_datetime_to_seconds_floored():
+def test_infer_dtypes_normalizes_datetime_to_utc_without_truncating():
     ts = pd.to_datetime(
         [
-            "2022-01-01 12:00:00.987654321+00:00",
-            "2022-01-01 12:00:01.123456789+00:00",
+            "2022-01-01 12:00:00.987654+00:00",
+            "2022-01-01 13:00:01.123456+01:00",
         ],
         utc=True,
     )
     out = infer_dtypes(pd.DataFrame({"dt": ts}), min_parse_ratio=1.0)
     assert pd.api.types.is_datetime64_any_dtype(out["dt"])
-    expected = pd.to_datetime(["2022-01-01 12:00:00", "2022-01-01 12:00:01"], utc=True)
+    expected = pd.to_datetime(
+        ["2022-01-01 12:00:00.987654+00:00", "2022-01-01 12:00:01.123456+00:00"],
+        utc=True,
+    )
     assert_series_equal(out["dt"], pd.Series(expected, name="dt"), check_dtype=False)
 
 
@@ -79,13 +78,58 @@ def test_infer_dtypes_drops_all_na_rows_and_columns():
     assert out["mix"].tolist() == [1, 3]
 
 
-def test_infer_dtypes_coerces_zero_one_strings_to_boolean():
+def test_infer_dtypes_leaves_zero_one_strings_numeric():
     df = pd.DataFrame({"flag": ["0", "1", "0", "1"]})
     out = infer_dtypes(df)
-    assert str(out["flag"].dtype) == "boolean"
+    assert str(out["flag"].dtype) == "Int64"
 
 
 def test_infer_dtypes_coerces_whole_number_strings_to_int64():
     df = pd.DataFrame({"count": ["1", "2", "3", "10"]})
     out = infer_dtypes(df)
     assert str(out["count"].dtype) == "Int64"
+
+
+def test_sub_second_timestamps_keep_their_precision():
+    df = pd.DataFrame(
+        {
+            "eid": ["e1", "e2"],
+            "ts": ["2024-01-01T10:00:00.123456Z", "2024-01-01T10:00:00.789012Z"],
+        }
+    )
+
+    out = infer_dtypes(df, ignore_cols=["eid"])
+
+    assert out["ts"].nunique() == 2
+    assert out["ts"].dt.microsecond.tolist() == [123456, 789012]
+
+
+def test_a_numeric_column_of_zeros_and_ones_stays_numeric():
+    out = infer_dtypes(
+        pd.DataFrame({"oid": ["o1", "o2", "o3"], "count": ["0", "1", "1"]}),
+        ignore_cols=["oid"],
+    )
+
+    assert str(out["count"].dtype) == "Int64"
+    assert out["count"].tolist() == [0, 1, 1]
+
+
+@pytest.mark.parametrize(
+    "values",
+    [["true", "false"], ["True", "False"], ["yes", "no"], ["TRUE", "false"]],
+)
+def test_boolean_like_strings_still_become_boolean(values):
+    out = infer_dtypes(
+        pd.DataFrame({"oid": ["o1", "o2"], "flag": values}), ignore_cols=["oid"]
+    )
+
+    assert str(out["flag"].dtype) == "boolean"
+    assert out["flag"].tolist() == [True, False]
+
+
+def test_an_integer_column_with_a_null_stays_an_integer():
+    out = infer_dtypes(
+        pd.DataFrame({"oid": ["o1", "o2"], "qty": ["3", None]}), ignore_cols=["oid"]
+    )
+
+    assert str(out["qty"].dtype) == "Int64"

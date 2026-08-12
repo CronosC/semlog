@@ -9,9 +9,27 @@ repos:
       - id: check-json
       - id: check-merge-conflict
 
+  # Keep this rev in step with the ruff pinned by the dev extra.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.13
+    rev: v0.15.17
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: uv run pytest -q
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: no-golden-rebaseline
+        name: golden fixtures not being rewritten
+        entry: >
+          bash -c 'if [ -n "$SEMLOG_UPDATE_GOLDEN" ]; then
+          echo "SEMLOG_UPDATE_GOLDEN is set; unset it before committing."; exit 1; fi'
+        language: system
+        pass_filenames: false
