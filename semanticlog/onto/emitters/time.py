@@ -31,11 +31,15 @@ class TimeEmitter(Emitter):
     def emit_individuals(self, ids: pd.Series, stamps: pd.Series) -> None:
         """Emit the time individuals that have not been emitted yet.
 
+        An entity whose timestamp is missing has no moment to name, so those
+        rows are dropped here and the entity is left without a time.
+
         Args:
             ids: Individual names of the moments.
             stamps: The timestamps themselves, aligned with the ids.
         """
         frame = pd.DataFrame({"time_str": ids.to_numpy(), "time": stamps.to_numpy()})
+        frame = frame[frame["time_str"].notna()]
         fresh = frame[~frame["time_str"].isin(self._written)].drop_duplicates(
             "time_str"
         )

@@ -6,15 +6,16 @@ import pytest
 from semanticlog.data.cleaning import (
     RenameKind,
     RenameLog,
-    _collect_schema_names,
     clean_object_changes,
     clean_oced_data,
     clean_string,
     clean_value,
     fix_duplicate_names,
     is_timestamp,
+    object_type_renames,
 )
 from semanticlog.data.oced import OCEDStore
+from semanticlog.data.tables import RelationKind
 
 
 def _oced_with_event(activity: str, attr_col: str = "status", attr_val: str = "ok"):
@@ -45,19 +46,15 @@ def test_is_timestamp_false_for_plain_words(s):
 
 
 def test_clean_string_replaces_special_chars_with_underscore():
-    assert clean_string("Hello World!", casefold=False) == "Hello_World_"
-
-
-def test_clean_string_casefold_lowercases_result():
-    assert clean_string("Hello World!", casefold=True) == "hello_world_"
+    assert clean_string("Hello World!") == "Hello_World_"
 
 
 def test_clean_string_preserves_alphanumeric_and_underscore():
-    assert clean_string("abc_123", casefold=False) == "abc_123"
+    assert clean_string("abc_123") == "abc_123"
 
 
 def test_clean_value_cleans_plain_string():
-    assert clean_value("Hello World!") == "hello_world_"
+    assert clean_value("Hello World!") == "Hello_World_"
 
 
 def test_clean_value_leaves_timestamp_string_unchanged():
@@ -67,16 +64,16 @@ def test_clean_value_leaves_timestamp_string_unchanged():
 
 def test_clean_value_recursively_cleans_dict():
     result = clean_value({"Hello World!": "Test Value!"})
-    assert result == {"hello_world_": "test_value_"}
+    assert result == {"Hello_World_": "Test_Value_"}
 
 
 def test_clean_value_cleans_dataframe_columns_and_values():
     df = pd.DataFrame({"Name!": ["Alice?", "Bob$"], "Age*": [25, 30]})
     cleaned = clean_value(df)
-    assert "name_" in cleaned.columns
-    assert "age_" in cleaned.columns
-    assert cleaned["name_"].iloc[0] == "alice_"
-    assert cleaned["age_"].iloc[0] == 25
+    assert "Name_" in cleaned.columns
+    assert "Age_" in cleaned.columns
+    assert cleaned["Name_"].iloc[0] == "Alice_"
+    assert cleaned["Age_"].iloc[0] == 25
 
 
 def test_clean_value_passes_through_int():
@@ -93,7 +90,7 @@ def test_clean_value_passes_through_bool():
 
 def test_clean_value_cleans_list_elements():
     result = clean_value(["Hello!", "World?"])
-    assert result == ["hello_", "world_"]
+    assert result == ["Hello_", "World_"]
 
 
 def test_clean_value_passes_through_timestamp_object():
@@ -211,7 +208,7 @@ def test_fix_duplicate_names_renames_attribute_value_colliding_with_reserved():
     assert "normal_value" in status_vals
 
 
-def test_clean_oced_data_raises_on_colliding_activity_names():
+def test_two_activities_cleaning_to_one_name_are_kept_apart():
     oced = OCEDStore()
     ev1 = pd.DataFrame(
         {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
@@ -222,11 +219,15 @@ def test_clean_oced_data_raises_on_colliding_activity_names():
     oced.add_event("Place Order", "eid", "ts", ev1)
     oced.add_event("Place_Order", "eid", "ts", ev2)
     oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
-    with pytest.raises(ValueError, match="activities"):
-        clean_oced_data(oced)
+
+    cleaned = clean_oced_data(oced)
+
+    assert sorted(cleaned.get_event_types()) == ["Place_Order", "Place_Order_2"]
+    assert cleaned.backmap["Place_Order"] == "Place Order"
+    assert cleaned.backmap["Place_Order_2"] == "Place_Order"
 
 
-def test_clean_oced_data_raises_on_colliding_object_type_names():
+def test_two_object_types_cleaning_to_one_name_are_kept_apart():
     oced = OCEDStore()
     ev = pd.DataFrame(
         {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
@@ -234,11 +235,14 @@ def test_clean_oced_data_raises_on_colliding_object_type_names():
     oced.add_event("act", "eid", "ts", ev)
     oced.add_object("Order Item", "oid", pd.DataFrame({"oid": ["o1"]}))
     oced.add_object("Order_Item", "oid2", pd.DataFrame({"oid2": ["o2"]}))
-    with pytest.raises(ValueError, match="object types"):
-        clean_oced_data(oced)
+
+    cleaned = clean_oced_data(oced)
+
+    assert sorted(cleaned.get_object_types()) == ["Order_Item", "Order_Item_2"]
+    assert cleaned.backmap["Order_Item_2"] == "Order_Item"
 
 
-def test_clean_oced_data_raises_on_colliding_relation_names():
+def test_two_relations_cleaning_to_one_name_are_kept_apart():
     oced = OCEDStore()
     ev = pd.DataFrame(
         {"eid": ["e1", "e2"], "ts": pd.date_range("2022-01-01", periods=2, tz="UTC")}
@@ -259,8 +263,11 @@ def test_clean_oced_data_raises_on_colliding_relation_names():
         ["obj"],
         pd.DataFrame({"eid": ["e2"], "oid": ["o1"]}),
     )
-    with pytest.raises(ValueError, match="e2o relations"):
-        clean_oced_data(oced)
+
+    cleaned = clean_oced_data(oced)
+
+    assert sorted(cleaned.get_relation_types()) == ["places_order", "places_order_2"]
+    assert cleaned.backmap["places_order_2"] == "places_order"
 
 
 def test_clean_oced_data_no_raise_when_names_are_distinct_after_cleaning():
@@ -345,19 +352,6 @@ def test_clean_oced_data_backmap_omits_already_clean_ids():
     assert "e2" not in result.backmap
 
 
-def test_clean_oced_data_backmap_respects_casefold():
-    oced = OCEDStore()
-    ev = pd.DataFrame(
-        {"eid": ["E1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
-    )
-    oced.add_event("act", "eid", "ts", ev)
-    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"]}))
-
-    result = clean_oced_data(oced, casefold=True)
-
-    assert result.backmap["e1"] == "E1"
-
-
 def test_clean_oced_data_backmap_maps_attr_value_to_original():
     oced = OCEDStore()
     ev = pd.DataFrame(
@@ -405,37 +399,6 @@ def test_clean_oced_data_backmap_catches_reserved_name_collision():
     assert result.backmap.get("is_a_attr_val") == "is_a"
 
 
-def test_collect_schema_names_returns_activity_and_object_type():
-    oced = OCEDStore()
-    ev = pd.DataFrame(
-        {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
-    )
-    oced.add_event("Order Execution", "eid", "ts", ev)
-    oced.add_object("Purchase Item", "oid", pd.DataFrame({"oid": ["o1"]}))
-    names = _collect_schema_names(oced)
-    assert "Order Execution" in names
-    assert "Purchase Item" in names
-
-
-def test_collect_schema_names_includes_attribute_columns():
-    oced = OCEDStore()
-    ev = pd.DataFrame(
-        {
-            "eid": ["e1"],
-            "ts": pd.date_range("2022-01-01", periods=1, tz="UTC"),
-            "total cost": ["100"],
-        }
-    )
-    oced.add_event("act", "eid", "ts", ev)
-    oced.add_object("obj", "oid", pd.DataFrame({"oid": ["o1"], "item type": ["A"]}))
-    names = _collect_schema_names(oced)
-    assert "total cost" in names
-    assert "item type" in names
-    assert "eid" not in names
-    assert "ts" not in names
-    assert "oid" not in names
-
-
 def test_rename_log_maps_a_final_name_to_its_original():
     log = RenameLog()
     log.record(RenameKind.ACTIVITY, "Order Execution", "Order_Execution")
@@ -458,13 +421,29 @@ def test_rename_log_omits_names_it_did_not_change():
     assert log.flat() == {}
 
 
+def test_rename_log_groups_what_it_renamed_by_kind():
+    log = RenameLog()
+    log.record(RenameKind.ACTIVITY, "Order Execution", "Order_Execution")
+    log.record(RenameKind.ID, "o 1", "o_1")
+    log.record(RenameKind.OBJECT_TYPE, "item", "item")
+    log.record_value("colour", "off_white", "off white")
+
+    assert log.by_kind() == {
+        "activity": ["Order Execution -> Order_Execution"],
+        "id": ["o 1 -> o_1"],
+        "value": ["off white -> colour_off_white"],
+    }
+
+
 def test_rename_log_keeps_kinds_apart():
     log = RenameLog()
     log.record(RenameKind.ID, "o 1", "o_1")
     log.record(RenameKind.ACTIVITY, "o.1", "o_1")
 
-    assert log.of_kind(RenameKind.ID) == {"o_1": "o 1"}
-    assert log.of_kind(RenameKind.ACTIVITY) == {"o_1": "o.1"}
+    assert log.by_kind() == {
+        "id": ["o 1 -> o_1"],
+        "activity": ["o.1 -> o_1"],
+    }
 
 
 def test_rename_log_kinds_are_an_enum_rather_than_free_strings():
@@ -474,15 +453,48 @@ def test_rename_log_kinds_are_an_enum_rather_than_free_strings():
         "relation",
         "attribute",
         "id",
-        "value",
     }
 
 
 def test_rename_log_takes_an_explicit_original():
     log = RenameLog()
-    log.record(RenameKind.VALUE, "status_df", "status_df_attr_val", original="df")
+    log.record(RenameKind.ID, "o 1", "o_1", original="o~1")
 
-    assert log.flat()["status_df_attr_val"] == "df"
+    assert log.flat()["o_1"] == "o~1"
+
+
+def test_rename_log_names_a_value_after_its_column():
+    log = RenameLog()
+    log.record_value("status", "in_progress", "in progress")
+
+    assert log.flat() == {"status_in_progress": "in progress"}
+
+
+def test_rename_log_carries_values_along_when_their_column_is_renamed():
+    """The individual is named after the column, so a renamed column moves it."""
+    log = RenameLog()
+    log.record_value("event", "by_hand", "by hand")
+
+    log.rename_value_column("event", "event_attr")
+
+    assert log.flat() == {"event_attr_by_hand": "by hand"}
+
+
+def test_rename_log_keeps_the_source_value_through_a_second_rewrite():
+    log = RenameLog()
+    log.record_value("status", "df", "d f")
+
+    log.rename_value("status", "df", "df_attr_val")
+
+    assert log.flat() == {"status_df_attr_val": "d f"}
+
+
+def test_rename_log_records_a_suffixed_value_that_cleaning_left_alone():
+    log = RenameLog()
+
+    log.rename_value("status", "df", "df_attr_val")
+
+    assert log.flat() == {"status_df_attr_val": "df"}
 
 
 def test_backmap_records_a_reserved_activity_suffix():
@@ -691,7 +703,100 @@ def test_object_change_tables_are_rewritten_by_the_same_map():
     assert set(changes["ocel:field"]) == {"status"}
 
 
-def test_two_attribute_columns_cleaning_to_one_name_are_named():
+def _store_with_history(
+    field: str,
+    values: list[str],
+    object_values: list[str] | None = None,
+    object_ids: list[str] | None = None,
+) -> OCEDStore:
+    """One object type whose attribute both varies and has a recorded history."""
+    oids = object_ids or ["o1"]
+    oced = OCEDStore(ocel_mode=True)
+    oced.add_event(
+        "act",
+        "eid",
+        "ts",
+        pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2024-01-01"], utc=True)}),
+    )
+    columns: dict = {"oid": oids}
+    if object_values is not None:
+        columns[field] = object_values
+    oced.add_object("order", "oid", pd.DataFrame(columns))
+    oced.add_event_to_object_relation(
+        "modifies",
+        "eid",
+        "oid",
+        ["order"],
+        pd.DataFrame({"eid": ["e1"], "oid": [oids[0]]}),
+    )
+    oced.add_object_changes(
+        "order",
+        pd.DataFrame(
+            {
+                "ocel:oid": oids[: len(values)],
+                "ocel:type": ["order"] * len(values),
+                "ocel:timestamp": pd.to_datetime(
+                    ["2024-01-02"] * len(values), utc=True
+                ),
+                "ocel:field": [field] * len(values),
+                field: values,
+            }
+        ),
+    )
+    return oced
+
+
+def test_a_value_renamed_apart_is_renamed_in_the_history_too():
+    """Otherwise the change records the value of the object it is not about."""
+    oced = _store_with_history(
+        "state",
+        values=["in progress", "in/progress"],
+        object_values=["in progress", "in/progress"],
+        object_ids=["o1", "o2"],
+    )
+
+    cleaned = clean_oced_data(oced)
+
+    assert list(cleaned.get_object_table("order").data["state"]) == list(
+        cleaned.get_object_changes("order")["state"]
+    )
+
+
+def test_an_attribute_renamed_by_kind_stays_one_attribute_in_the_history():
+    """The history would otherwise declare a second class under the old name."""
+    oced = _store_with_history("act", values=["done"], object_values=["open"])
+
+    cleaned = clean_oced_data(oced)
+
+    changes = cleaned.get_object_changes("order")
+    assert "attribute_act" in cleaned.get_object_table("order").data.columns
+    assert "attribute_act" in changes.columns
+    assert set(changes["ocel:field"]) == {"attribute_act"}
+
+
+def test_an_attribute_renamed_off_a_reserved_name_takes_its_history_with_it():
+    oced = _store_with_history("observes", values=["x"], object_values=["x"])
+
+    cleaned = clean_oced_data(oced)
+
+    changes = cleaned.get_object_changes("order")
+    assert "observes_attr" in changes.columns
+    assert set(changes["ocel:field"]) == {"observes_attr"}
+    assert "observes" not in changes.columns
+
+
+def test_an_attribute_only_the_history_carries_is_reserved_like_any_other():
+    """A column empty for every object is dropped on load but still changes."""
+    oced = _store_with_history("act", values=["done"])
+
+    cleaned = clean_oced_data(oced)
+
+    changes = cleaned.get_object_changes("order")
+    assert "act" not in cleaned.get_event_types()
+    assert set(changes["ocel:field"]) == {"attribute_act"}
+
+
+def test_two_attribute_columns_cleaning_to_one_name_are_kept_apart():
     oced = OCEDStore()
     oced.add_event(
         "act",
@@ -702,16 +807,36 @@ def test_two_attribute_columns_cleaning_to_one_name_are_named():
     oced.add_object(
         "order",
         "oid",
-        pd.DataFrame({"oid": ["o1"], "unit price": [1.0], "unit-price": [2.0]}),
+        pd.DataFrame({"oid": ["o1"], "unit price": [1.0], "unit/price": [2.0]}),
     )
 
-    with pytest.raises(ValueError, match="unit_price") as excinfo:
-        clean_oced_data(oced)
+    cleaned = clean_oced_data(oced)
 
-    message = str(excinfo.value)
-    assert "unit price" in message
-    assert "unit-price" in message
-    assert "order" in message
+    columns = list(cleaned.get_object_table("order").data.columns)
+    assert columns == ["oid", "unit_price", "unit_price_2"]
+    assert cleaned.backmap["unit_price"] == "unit price"
+    assert cleaned.backmap["unit_price_2"] == "unit/price"
+
+
+def test_a_hyphen_and_a_dot_are_kept_so_the_names_stay_apart():
+    """Both survive an XML element name, so folding them would merge for nothing."""
+    oced = OCEDStore()
+    oced.add_event(
+        "act",
+        "eid",
+        "ts",
+        pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2024-01-01"], utc=True)}),
+    )
+    oced.add_object(
+        "order",
+        "oid",
+        pd.DataFrame({"oid": ["o1"], "unit-price": [1.0], "unit.price": [2.0]}),
+    )
+
+    cleaned = clean_oced_data(oced)
+
+    columns = list(cleaned.get_object_table("order").data.columns)
+    assert columns == ["oid", "unit-price", "unit.price"]
 
 
 def test_the_same_attribute_on_two_tables_is_not_a_collision():
@@ -758,3 +883,330 @@ def test_renaming_onto_an_existing_type_is_refused_outright():
 
     with pytest.raises(ValueError, match="already exists"):
         oced.rename_object("a", "b")
+
+
+# --------------------------------------------------------------------------
+# Names that would clean to one name are kept apart, not merged
+# --------------------------------------------------------------------------
+
+
+def _store_with_values(*values: str, column: str = "channel") -> OCEDStore:
+    oced = OCEDStore()
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1"]}))
+    oced.add_event(
+        "step",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {
+                "eid": [f"e{i}" for i in range(len(values))],
+                "ts": pd.date_range("2022-01-01", periods=len(values), tz="UTC"),
+                column: list(values),
+            }
+        ),
+    )
+    return oced
+
+
+def test_two_attribute_values_that_clean_alike_are_kept_apart():
+    """Both become one individual otherwise, so one source fact disappears."""
+    oced = _store_with_values("a b", "a_b")
+
+    cleaned = clean_oced_data(oced)
+
+    assert sorted(cleaned.get_event_table("step").data["channel"]) == ["a_b", "a_b_2"]
+    assert cleaned.backmap["channel_a_b"] == "a b"
+    assert cleaned.backmap["channel_a_b_2"] == "a_b"
+
+
+def test_a_value_keeps_its_hyphen_and_stays_its_own_individual():
+    oced = _store_with_values("a b", "a-b", column="channel")
+
+    cleaned = clean_oced_data(oced)
+
+    assert sorted(cleaned.get_event_table("step").data["channel"]) == ["a-b", "a_b"]
+
+
+def test_one_value_repeated_across_rows_is_not_a_collision():
+    assert clean_oced_data(_store_with_values("web", "web", "shop"))
+
+
+def test_the_same_value_under_two_attributes_is_not_a_collision():
+    oced = OCEDStore()
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1"], "channel": ["a b"]}))
+    oced.add_event(
+        "step",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {
+                "eid": ["e1"],
+                "ts": pd.date_range("2022-01-01", periods=1, tz="UTC"),
+                "clerk": ["a b"],
+            }
+        ),
+    )
+
+    assert clean_oced_data(oced)
+
+
+def test_one_attribute_carried_by_two_tables_is_resolved_as_one_pool():
+    """Two tables sharing an attribute name share its value individuals."""
+    oced = OCEDStore()
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1"], "channel": ["a b"]}))
+    oced.add_object("item", "iid", pd.DataFrame({"iid": ["i1"], "channel": ["a_b"]}))
+
+    cleaned = clean_oced_data(oced)
+
+    order = list(cleaned.get_object_table("order").data["channel"])
+    item = list(cleaned.get_object_table("item").data["channel"])
+    assert sorted(order + item) == ["a_b", "a_b_2"]
+
+
+def test_a_numeric_column_is_not_checked_for_value_collisions():
+    oced = OCEDStore()
+    oced.add_object(
+        "order", "oid", pd.DataFrame({"oid": ["o1", "o2"], "price": [1.5, 1.5]})
+    )
+
+    assert clean_oced_data(oced)
+
+
+def test_ids_are_resolved_across_the_whole_store_not_per_table():
+    """The store holds one id namespace, so a cross-table clash is one too."""
+    oced = OCEDStore()
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["a_1"]}))
+    oced.add_event(
+        "step",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {"eid": ["a 1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+        ),
+    )
+
+    cleaned = clean_oced_data(oced)
+
+    object_ids = list(cleaned.get_object_table("order").data["oid"])
+    event_ids = list(cleaned.get_event_table("step").data["eid"])
+    assert sorted(object_ids + event_ids) == ["a_1", "a_1_2"]
+
+
+def test_one_name_claimed_by_three_kinds_is_prefixed_by_kind():
+    """An activity, an object type and an attribute each become a class."""
+    oced = OCEDStore()
+    oced.add_event(
+        "order",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+        ),
+    )
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1"], "order": ["x"]}))
+
+    cleaned = clean_oced_data(oced)
+
+    assert cleaned.get_event_types() == ["event_order"]
+    assert cleaned.get_object_types() == ["object_order"]
+    columns = list(cleaned.get_object_table("object_order").data.columns)
+    assert columns == ["oid", "attribute_order"]
+    assert cleaned.backmap["event_order"] == "order"
+
+
+def test_a_value_follows_the_column_that_a_kind_prefix_renamed():
+    oced = OCEDStore()
+    oced.add_event(
+        "order",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+        ),
+    )
+    oced.add_object(
+        "item",
+        "oid",
+        pd.DataFrame({"oid": ["o1", "o2"], "order": ["a b", "a_b"]}),
+    )
+
+    cleaned = clean_oced_data(oced)
+
+    assert cleaned.backmap["attribute_order_a_b"] == "a b"
+    assert cleaned.backmap["attribute_order_a_b_2"] == "a_b"
+
+
+def test_relations_are_resolved_across_both_families_not_per_family():
+    """Both families become properties of one ontology, so they share a namespace."""
+    oced = OCEDStore()
+    oced.add_event(
+        "act",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+        ),
+    )
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1", "o2"]}))
+    oced.add_event_to_object_relation(
+        "contains x",
+        "eid",
+        "oid",
+        ["order"],
+        pd.DataFrame({"eid": ["e1"], "oid": ["o1"]}),
+    )
+    oced.add_object_to_object_relation(
+        "contains_x",
+        "from_oid",
+        ["order"],
+        "to_oid",
+        ["order"],
+        pd.DataFrame({"from_oid": ["o1"], "to_oid": ["o2"]}),
+    )
+
+    cleaned = clean_oced_data(oced)
+
+    assert cleaned.get_relation_types(RelationKind.E2O) == ["contains_x"]
+    assert cleaned.get_relation_types(RelationKind.O2O) == ["contains_x_2"]
+    assert cleaned.backmap["contains_x"] == "contains x"
+    assert cleaned.backmap["contains_x_2"] == "contains_x"
+
+
+def test_a_relation_cannot_open_a_property_name_with_a_digit():
+    """RDF/XML writes a property as an element, which cannot start with one."""
+    oced = OCEDStore()
+    oced.add_event(
+        "act",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+        ),
+    )
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1"]}))
+    oced.add_event_to_object_relation(
+        "2modifies",
+        "eid",
+        "oid",
+        ["order"],
+        pd.DataFrame({"eid": ["e1"], "oid": ["o1"]}),
+    )
+
+    cleaned = clean_oced_data(oced)
+
+    assert cleaned.get_relation_types() == ["_2modifies"]
+    assert cleaned.backmap["_2modifies"] == "2modifies"
+
+
+def test_an_object_type_gives_way_to_a_relation_of_the_same_name():
+    """A class and an object property cannot share a name in OWL 2 DL."""
+    oced = OCEDStore()
+    oced.add_event(
+        "place order",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+        ),
+    )
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1"]}))
+    oced.add_event_to_object_relation(
+        "order",
+        "eid",
+        "oid",
+        ["order"],
+        pd.DataFrame({"eid": ["e1"], "oid": ["o1"]}),
+    )
+
+    cleaned = clean_oced_data(oced)
+
+    assert cleaned.get_relation_types() == ["order"]
+    assert cleaned.get_object_types() == ["order_"]
+    assert cleaned.get_relation("order").to_type == ["order_"]
+    assert object_type_renames(cleaned) == {"order": "order_"}
+
+
+def test_object_type_renames_leave_out_the_other_kinds_of_name():
+    oced = _oced_with_event("place order")
+
+    cleaned = clean_oced_data(oced)
+
+    assert cleaned.backmap == {"place_order": "place order"}
+    assert object_type_renames(cleaned) == {}
+
+
+def test_an_id_that_carries_a_relation_is_renamed_on_both_sides():
+    oced = OCEDStore()
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["a 1", "a_1"]}))
+    oced.add_event(
+        "step",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {"eid": ["e1"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+        ),
+    )
+    oced.add_event_to_object_relation(
+        "touches",
+        "eid",
+        "oid",
+        ["order"],
+        pd.DataFrame({"eid": ["e1"], "oid": ["a_1"]}),
+    )
+
+    cleaned = clean_oced_data(oced)
+
+    object_ids = set(cleaned.get_object_table("order").data["oid"])
+    related = set(cleaned.get_relation("touches").data["oid"])
+    assert related <= object_ids
+    assert related == {"a_1_2"}
+
+
+def test_a_bin_class_name_in_the_data_is_renamed_out_of_the_way():
+    oced = OCEDStore()
+    oced.add_object(
+        "order",
+        "oid",
+        pd.DataFrame({"oid": ["price_bin_low", "o2"], "price": [1.0, 2.0]}),
+    )
+
+    cleaned = clean_oced_data(oced, bin_labels=["low", "high"])
+
+    assert "price_bin_low" not in set(cleaned.get_object_table("order").data["oid"])
+
+
+def test_bin_labels_are_only_reserved_when_they_are_given():
+    oced = OCEDStore()
+    oced.add_object(
+        "order",
+        "oid",
+        pd.DataFrame({"oid": ["price_bin_low", "o2"], "price": [1.0, 2.0]}),
+    )
+
+    cleaned = clean_oced_data(oced)
+
+    assert "price_bin_low" in set(cleaned.get_object_table("order").data["oid"])
+
+
+def test_a_value_of_a_renamed_attribute_keeps_its_source_label():
+    """`event` is reserved, so the column becomes `event_attr` and its values
+    have to follow, or the backmap names an individual that does not exist."""
+    oced = OCEDStore()
+    oced.add_object("order", "oid", pd.DataFrame({"oid": ["o1"]}))
+    oced.add_event(
+        "step",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {
+                "eid": ["e1"],
+                "ts": pd.date_range("2022-01-01", periods=1, tz="UTC"),
+                "event": ["by hand"],
+            }
+        ),
+    )
+
+    backmap = clean_oced_data(oced).backmap
+
+    assert backmap["event_attr_by_hand"] == "by hand"
+    assert "event_by_hand" not in backmap

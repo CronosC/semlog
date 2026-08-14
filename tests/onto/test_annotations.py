@@ -4,13 +4,11 @@ import json
 
 import pytest
 
+from semanticlog.core.enums import InverseRepresentation
+from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.onto.annotations import TBOX_ANNOTATION_DOCUMENT, tbox_annotations
-from semanticlog.onto.builder import construct_tbox
-from semanticlog.onto.settings import (
-    DEFAULT_IRI,
-    InverseRepresentation,
-    OntoBuildSettings,
-)
+from semanticlog.onto.settings import OntoBuildSettings
+from tests.support.tbox import construct_tbox
 
 
 @pytest.fixture

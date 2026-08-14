@@ -1,12 +1,13 @@
 # tests/fixtures
 
-Committed **input** to the test suite. Recorded **output** lives beside the test that
-records it, in `tests/onto/scenarios/golden/`.
+Committed input to the test suite. The three logs the tests build from are
+assembled in [../support/stores.py](../support/stores.py), and this directory
+holds the one that comes from a file.
 
 ## `pipeline.jsonocel`
 
-The one OCEL 2.0 log the integration and CLI tests build against. Written once with
-`pm4py.write_ocel2_json` and committed. There is no generator in the test suite.
+Written once with `pm4py.write_ocel2_json` and committed. There is no generator
+in the test suite.
 
 Shape, which is what the assertions depend on:
 
@@ -23,6 +24,13 @@ Shape, which is what the assertions depend on:
 
 `weight` is owned by both an event type and an object type, which produces a two-element
 property domain.
+
+Object ids are `ord_1`..`ord_3` and `item_1`..`item_4`. A test that hands the
+build a DECLARE constraints table has to use those, since a build refuses
+constraints whose traces it cannot find in the log.
+
+[tests/data/test_fixture_log.py](../data/test_fixture_log.py) asserts this shape,
+so a change to the file fails there first.
 
 There are no committed DECLARE fixtures. The tests that need one write it into their own
 `tmp_path`.

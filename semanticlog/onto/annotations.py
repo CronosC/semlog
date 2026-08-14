@@ -21,6 +21,8 @@ from typing import Any, Protocol
 
 import pandas as pd
 
+from semanticlog.core import vocabulary as vocab
+from semanticlog.data.tables import EntityKind
 from semanticlog.onto.settings import OntoBuildSettings
 
 TBOX_ANNOTATION_DOCUMENT = "tbox_annotations.json"
@@ -57,6 +59,26 @@ def _format_value(value: Any) -> str:
     if isinstance(value, pd.Timestamp):
         return value.strftime(_TIMESTAMP_LABEL_FORMAT)
     return str(value)
+
+
+def _declare_label(constraint: str, original: Callable[[str], str]) -> str:
+    """Render a mined constraint name as its template and its activities.
+
+    Mining writes `Response[a, b]` as `Response__a__b__`, which is safe in an
+    IRI and hard to read.
+
+    Args:
+        constraint: The constraint as it was mined.
+        original: Resolver for what the log called an activity.
+
+    Returns:
+        The constraint written out, such as `Response (place order, ship)`.
+    """
+    template, _, rest = constraint.partition("__")
+    activities = [original(part) for part in rest.split("__") if part]
+    if not activities:
+        return template
+    return f"{template} ({', '.join(activities)})"
 
 
 class AnnotationSink(Protocol):
@@ -137,44 +159,44 @@ class AnnotationWriter:
             )
 
     @_when_enabled
-    def activity_class(self, activity: str) -> None:
-        """Label an activity class with the activity name from the log."""
-        orig = self.original(activity)
-        self.sink.annotate_entity(
-            activity, label=orig, comment=f"Events of type '{orig}'."
-        )
-
-    @_when_enabled
-    def object_class(self, obj_type: str) -> None:
-        """Label an object type class with the type name from the log."""
-        orig = self.original(obj_type)
-        self.sink.annotate_entity(
-            obj_type, label=orig, comment=f"Objects of type '{orig}'."
-        )
+    def entity_class(self, name: str, kind: EntityKind) -> None:
+        """Label an activity or object type class with its name from the log."""
+        orig = self.original(name)
+        noun = "Events" if kind is EntityKind.EVENT else "Objects"
+        self.sink.annotate_entity(name, label=orig, comment=f"{noun} of type '{orig}'.")
 
     @_when_enabled
     def entity_individuals(self, entity_type: str, ids: Iterable[Any]) -> None:
-        """Label events or objects with their type and their id from the log."""
+        """Label events or objects with their type and their id from the log.
+
+        An entity with no id is not asserted, so it is not labelled either.
+        """
         orig_type = self.original(entity_type)
         self.sink.annotate_individuals_bulk(
-            [(str(eid), f"{orig_type} ({self.original(str(eid))})") for eid in ids]
+            [
+                (str(eid), f"{orig_type} ({self.original(str(eid))})")
+                for eid in ids
+                if pd.notna(eid)
+            ]
         )
 
     @_when_enabled
-    def order_superproperties(self, include_ef: bool) -> None:
+    def order_superproperties(self, include_df: bool, include_ef: bool) -> None:
         """Annotate the order properties that every case concept sits below."""
-        self._pair(
-            "df",
-            "directly followed by",
-            "Holds between two events when one immediately precedes the other within "
-            "any case. Supertype of all case-specific directly-follows properties.",
-            "directly preceded by",
-            "Relates an event to the event that directly precedes it within any case. "
-            "Inverse of 'directly followed by'.",
-        )
+        if include_df:
+            self._pair(
+                vocab.DF,
+                "directly followed by",
+                "Holds between two events when one immediately precedes the other "
+                "within any case. Supertype of all case-specific directly-follows "
+                "properties.",
+                "directly preceded by",
+                "Relates an event to the event that directly precedes it within any "
+                "case. Inverse of 'directly followed by'.",
+            )
         if include_ef:
             self._pair(
-                "ef",
+                vocab.EF,
                 "eventually followed by",
                 "Holds between two events whenever one comes at or before the other "
                 "within any case, including itself. Supertype of all case-specific "
@@ -277,6 +299,30 @@ class AnnotationWriter:
         )
 
     @_when_enabled
+    def declare_constraints(self, hierarchy: str, constraints: Sequence[str]) -> None:
+        """Annotate the constraint hierarchy and every constraint under it.
+
+        Args:
+            hierarchy: Class the mined constraints sit under.
+            constraints: The mined constraint class names.
+        """
+        self.sink.annotate_entity(
+            hierarchy,
+            label="DECLARE constraint",
+            comment=(
+                "A rule about the order of activities within a trace. Its members "
+                "are the traces that satisfy it."
+            ),
+        )
+        for constraint in constraints:
+            written = _declare_label(constraint, self.original)
+            self.sink.annotate_entity(
+                constraint,
+                label=written,
+                comment=f"Traces satisfying the DECLARE constraint '{written}'.",
+            )
+
+    @_when_enabled
     def attribute_change_schema(
         self, attr: str, change_class: str, change_prop: str
     ) -> None:
@@ -306,8 +352,12 @@ class AnnotationWriter:
         timestamps: pd.Series,
     ) -> None:
         """Label change records with the attribute, the object and the moment."""
-        owners = obj_type + " (" + object_ids.astype(str) + ")"
-        labels = f"{attr} Change for " + owners + " at " + timestamp_labels(timestamps)
+        orig_attr = self.original(attr)
+        orig_type = self.original(obj_type)
+        owners = orig_type + " (" + object_ids.astype(str) + ")"
+        labels = (
+            f"{orig_attr} Change for " + owners + " at " + timestamp_labels(timestamps)
+        )
         self.sink.annotate_individuals_bulk(list(zip(change_ids, labels, strict=True)))
 
     def _pair(

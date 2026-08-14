@@ -12,19 +12,16 @@ works the same way with either.
 
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from semanticlog.core import vocabulary as vocab
-from semanticlog.core.vocabulary import NameCollisionError
-from semanticlog.onto.settings import OntoBuildSettings, OWLProfile
-
-logger = logging.getLogger(__name__)
+from semanticlog.core.enums import OWLProfile
+from semanticlog.onto.settings import OntoBuildSettings
+from semanticlog.onto.sinks.ledger import NameLedger
 
 OWL_DATATYPES: frozenset[str] = frozenset({"integer", "double", "boolean", "dateTime"})
 
@@ -59,6 +56,21 @@ def normalize_value(value: Any) -> Any:
     return value
 
 
+def _pairs(rows: pd.DataFrame, reverse: bool = False) -> Iterator[tuple[str, str]]:
+    """Yield the two columns of a table as pairs of names.
+
+    A generator rather than a list, because a relation of a large log holds one
+    pair per row and a backend that writes them out needs to see only one at a
+    time.
+
+    Args:
+        rows: Two columns, the subject and the target.
+        reverse: Swap the two, for asserting the inverse of a property.
+    """
+    for subject, target in rows.itertuples(index=False, name=None):
+        yield (str(target), str(subject)) if reverse else (str(subject), str(target))
+
+
 class AxiomSink(ABC):
     """Accepts build intents, checks them, and writes axioms.
 
@@ -84,76 +96,53 @@ class AxiomSink(ABC):
         """
         self.iri = iri if iri.endswith("#") else iri + "#"
         self.settings = settings
-        self._named_inverse_map: dict[str, str] = dict(vocab.SCHEMA_NAMED_INVERSES)
-        self._written_schema: set[tuple] = set()
-        self._declared: dict[str, tuple[str, str]] = {}
+        self.names = NameLedger()
+        self._dropped_unions: list[int] = []
 
     def _declare_name(self, name: str, kind: str, source: str) -> None:
         """Claim a name for one thing, and refuse a second claim on it."""
-        self._check_name(name, source)
-        previous = self._declared.get(name)
-        if previous is None:
-            self._declared[name] = (kind, source)
-            return
-        prev_kind, prev_source = previous
-        if prev_kind == kind and prev_source == source:
-            return
-        raise NameCollisionError(
-            f"{name!r} would be emitted for more than one thing, which silently "
-            f"merges them in the ontology:\n"
-            f"  as {prev_kind} from {prev_source}\n"
-            f"  as {kind} from {source}\n\n"
-            "Rename the colliding source in the input data before building."
-        )
+        self.names.declare(name, kind, source)
 
     def _check_name(self, name: str, source: str) -> None:
         """Refuse a name that cannot be an IRI local name."""
-        if not vocab.is_safe_local_name(name):
-            raise vocab.UnsafeLocalNameError(
-                f"{name!r} from {source} cannot be an IRI local name. Names come "
-                "from the input data, so run clean_oced_data(store) before "
-                "building, or check any input that bypasses it such as a "
-                "DECLARE constraints CSV."
-            )
+        self.names.check_name(name, source)
 
-    def _check_individuals(self, names: Iterable[str], source: str) -> None:
-        """Check a batch of individual names for safety and for collisions.
-
-        Individuals are checked in bulk because there are many of them, and
-        only the first offender of each sort is reported.
-        """
-        series = pd.Series(list(names), dtype="object")
-        if series.empty:
-            return
-        series = series[series.notna()].astype(str).drop_duplicates()
-        if series.empty:
-            return
-
-        unsafe = series[~series.str.fullmatch(vocab.SAFE_LOCAL_NAME)]
-        if not unsafe.empty:
-            self._check_name(unsafe.iloc[0], source)
-
-        if self._declared:
-            clashing = series[series.isin(self._declared)]
-            if not clashing.empty:
-                name = str(clashing.iloc[0])
-                kind, declared_by = self._declared[name]
-                raise NameCollisionError(
-                    f"{name!r} is emitted both as an individual and as a {kind}, "
-                    "which makes one IRI a member of itself:\n"
-                    f"  as {kind} from {declared_by}\n"
-                    f"  as individual from {source}\n\n"
-                    "Rename the colliding source in the input data before building."
-                )
+    def _check_individuals(self, names: Iterable[str], source: str) -> pd.Series:
+        """Check a batch of individual names, and return the ones to emit."""
+        return self.names.check_individuals(names, source)
 
     @property
     def declared_count(self) -> int:
         """How many distinct classes and properties have been declared."""
-        return len(self._declared)
+        return self.names.count
+
+    def declared_by_kind(self) -> dict[str, int]:
+        """How many classes, object properties and data properties there are.
+
+        Both backends can answer this from the name ledger, so a streamed
+        build and an in-memory one report the same measurements.
+        """
+        return self.names.by_kind()
+
+    def declared_since(self, mark: int) -> dict[str, list[str]]:
+        """Return the names declared after a mark, grouped by kind.
+
+        Args:
+            mark: A `declared_count` read before the step being measured.
+
+        Returns:
+            Names by kind, in the order they were declared.
+        """
+        return self.names.since(mark)
+
+    @property
+    def dropped_unions(self) -> tuple[int, int]:
+        """How many unions the profile refused, and over how many classes."""
+        return len(self._dropped_unions), sum(self._dropped_unions)
 
     def is_declared(self, name: str) -> bool:
         """Whether a class or property of this name has been declared."""
-        return name in self._declared
+        return self.names.is_declared(name)
 
     @property
     def axiom_count(self) -> int:
@@ -162,10 +151,7 @@ class AxiomSink(ABC):
 
     def _first_time(self, *key: object) -> bool:
         """Report whether this schema statement is new, and record it."""
-        if key in self._written_schema:
-            return False
-        self._written_schema.add(key)
-        return True
+        return self.names.first_time(*key)
 
     @abstractmethod
     def write_declaration(self, name: str, kind: str) -> None:
@@ -237,11 +223,29 @@ class AxiomSink(ABC):
     def save(self, path: str) -> None:
         """Write the ontology to a file."""
 
+    def result_target(self) -> tuple[Any, str | None]:
+        """Return what a finished build carries away from this sink.
+
+        A sink holding an ontology returns it, one that wrote it out returns
+        where, and one that keeps neither returns neither. The builder asks
+        instead of looking for attributes, so a backend states which it is.
+        """
+        return None, None
+
     def close(self) -> None:  # noqa: B027
         """Release whatever the backend holds open.
 
         Optional. A sink that keeps nothing open need not override this.
         """
+
+    def abort(self) -> None:
+        """Give up on this build and leave nothing half-finished behind.
+
+        A sink that has been writing to a file removes it, since a partial
+        ontology that parses is worse than no file at all. The default is to
+        close, which is right for a sink that only holds memory.
+        """
+        self.close()
 
     def _disjuncts(
         self, expression: str | list[str] | None, source: str = "a class expression"
@@ -259,10 +263,7 @@ class AxiomSink(ABC):
         if expression is None or len(expression) <= 1:
             return expression
         if self.settings.profile == OWLProfile.OWL2EL:
-            logger.info(
-                f"  omitting a {len(expression)}-way union under OWL 2 EL, which "
-                "has no disjunction"
-            )
+            self._dropped_unions.append(len(expression))
             return None
         return expression
 
@@ -286,7 +287,6 @@ class AxiomSink(ABC):
             UnsafeLocalNameError: If a name cannot appear in an IRI.
             NameCollisionError: If the name is already used for something else.
         """
-        logger.info(f"  adding class {class_name} as subclass of {superclass}..")
         self._declare_name(class_name, "class", source)
         parents = self._profile_allows(
             self._disjuncts(superclass, f"the superclass of {class_name!r}")
@@ -315,7 +315,6 @@ class AxiomSink(ABC):
             ValueError: If a list of superclasses does not match the number of
                 classes.
         """
-        logger.info(f"  adding {len(class_list)} classes..")
         if isinstance(superclasses, str) or superclasses is None:
             for class_name in class_list:
                 self.add_class(class_name, superclasses, source=source)
@@ -389,7 +388,6 @@ class AxiomSink(ABC):
                 else, or the inverse name is already the inverse of another
                 property.
         """
-        logger.info(f"  adding property {prop_name} ..")
         self._validate_property_args(
             range_class, data_prop, create_inverse, inverse_name
         )
@@ -411,23 +409,34 @@ class AxiomSink(ABC):
         if range_ and self._first_time("range", prop_name, tuple(range_), data_prop):
             self.write_range(prop_name, range_, data_prop)
 
-        if not create_inverse:
-            return
+        if create_inverse:
+            self._declare_inverse(prop_name, inverse_name, kind, superprop, source)
 
+    def _declare_inverse(
+        self,
+        prop_name: str,
+        inverse_name: str | None,
+        kind: str,
+        superprop: str | None,
+        source: str,
+    ) -> None:
+        """Declare the inverse of a property, and relate the two if asked.
+
+        Whether the pair also gets an axiom depends on the inverse
+        representation of the build, so the caller asks for an inverse without
+        deciding how it is expressed.
+
+        Args:
+            prop_name: Property the inverse belongs to.
+            inverse_name: Name for it, or None for the derived one.
+            kind: `object` or `data`, matching the property.
+            superprop: Property the original sits below, whose own inverse the
+                new one is placed below.
+            source: Where the property comes from.
+        """
         if inverse_name is None:
             inverse_name = self.inverse_name(prop_name)
-        claimed_by = self._named_inverse_map.get(inverse_name)
-        if claimed_by is not None and claimed_by != prop_name:
-            raise NameCollisionError(
-                f"{inverse_name!r} is already the inverse of {claimed_by!r} and "
-                f"cannot also be the inverse of {prop_name!r}: a property has one "
-                "inverse, and recording the second would silently drop the first.\n"
-                f"  from {source}\n\n"
-                "Pass a distinct inverse_name, or leave it unset to get "
-                f"{self.inverse_name(prop_name)!r}."
-            )
-        self._named_inverse_map[prop_name] = inverse_name
-        self._named_inverse_map[inverse_name] = prop_name
+        self.names.claim_inverse(prop_name, inverse_name, source)
         self._declare_name(inverse_name, kind, f"inverse of {source}")
         if self._first_time("declare", inverse_name, kind):
             self.write_declaration(inverse_name, kind)
@@ -439,7 +448,7 @@ class AxiomSink(ABC):
             self.add_sub_property(
                 inverse_name,
                 self.inverse_name(superprop),
-                data_prop,
+                kind == "data",
                 source=f"inverse of {source}",
             )
 
@@ -467,59 +476,18 @@ class AxiomSink(ABC):
         if self._first_time("transitive", prop):
             self.write_transitive(prop)
 
-    def assert_individual(self, individual: str, class_name: str) -> None:
-        """Assert that one individual belongs to a class."""
-        self._check_individuals([individual], f"an individual of class {class_name!r}")
-        self.write_class_assertions(class_name, [individual])
-
     def assert_individuals(self, individuals: Sequence[str], class_name: str) -> None:
-        """Assert that each individual belongs to a class, ignoring repeats."""
-        unique = list(dict.fromkeys(individuals))
-        logger.info(f"  asserting {len(unique)} individuals of class {class_name}..")
-        if unique:
-            self._check_individuals(unique, f"an individual of class {class_name!r}")
-            self.write_class_assertions(class_name, unique)
+        """Assert that each individual belongs to a class.
 
-    def assert_relation(
-        self,
-        prop_name: str,
-        from_name: str,
-        to: str | int | bool | float,
-        data_prop: bool = False,
-        inverse_name: str | None = None,
-    ) -> None:
-        """Assert a single property between one subject and one target.
-
-        Args:
-            prop_name: Property to assert.
-            from_name: Individual the property starts at.
-            to: Individual it points to, or a literal value for a data
-                property.
-            data_prop: Whether this is a data property.
-            inverse_name: Name to use when the inverse pair is also asserted.
-
-        Raises:
-            ValueError: If the target is a literal for an object property, or
-                an individual name for a data property.
+        Repeats and missing values are dropped, so a column can be passed
+        straight from the store. A missing value carries no name to assert,
+        and every one of them would otherwise become the same individual.
         """
-        if not isinstance(to, str) and not data_prop:
-            raise ValueError(
-                f"{prop_name!r} is an object property, so its target must be an "
-                f"individual name. Got {to!r} of type {type(to).__name__}."
-            )
-        if isinstance(to, str) and data_prop:
-            raise ValueError(
-                f"{prop_name!r} is a data property, so its target must be a "
-                f"literal value rather than the individual name {to!r}."
-            )
-        self.assert_relations(
-            pd.DataFrame({"from": [from_name], "to": [to]}),
-            prop_name,
-            "from",
-            "to",
-            data_prop=data_prop,
-            inverse_name=inverse_name,
+        names = self._check_individuals(
+            individuals, f"an individual of class {class_name!r}"
         )
+        if not names.empty:
+            self.write_class_assertions(class_name, names)
 
     def assert_relations(
         self,
@@ -551,21 +519,18 @@ class AxiomSink(ABC):
         rows = rows.drop_duplicates([from_key, to_key])
 
         if data_prop:
-            logger.info(f"  asserting {len(rows)} relations of data property {prop}..")
             self._check_individuals(rows[from_key], f"the subject of {prop!r}")
             self.write_data_assertions(prop, rows.itertuples(index=False, name=None))
             return
 
-        logger.info(f"  asserting {len(rows)} relations of object property {prop}..")
-        pairs = [(str(s), str(o)) for s, o in rows.itertuples(index=False, name=None)]
-        if not pairs:
+        if rows.empty:
             return
         self._check_individuals(rows[from_key], f"the subject of {prop!r}")
         self._check_individuals(rows[to_key], f"the target of {prop!r}")
-        self.write_object_assertions(prop, pairs)
+        self.write_object_assertions(prop, _pairs(rows))
         if self.settings.implicit_inverses:
             inv = inverse_name or self.inverse_name(prop)
-            self.write_object_assertions(inv, [(o, s) for s, o in pairs])
+            self.write_object_assertions(inv, _pairs(rows, reverse=True))
 
     def annotate_entity(
         self, iri_fragment: str, label: str | None = None, comment: str | None = None
@@ -603,4 +568,4 @@ class AxiomSink(ABC):
 
     def inverse_name(self, prop: str) -> str:
         """Return the inverse of a property, including inverses named in this build."""
-        return vocab.inverse(prop, self._named_inverse_map)
+        return self.names.inverse_name(prop)

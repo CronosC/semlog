@@ -8,17 +8,19 @@ in the emitter that produces it.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from typing import Any
 
-from semanticlog.data.oced import OCEDStore, RelationKind
+from semanticlog.core.summary import count_phrase, name_lines
+from semanticlog.data.oced import OCEDStore
+from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.audit import audit_build
 from semanticlog.onto.emitters import (
     AttributeEmitter,
-    EventEmitter,
+    EntityEmitter,
     HistoryEmitter,
-    ObjectEmitter,
     OrderEmitter,
     ProvenanceEmitter,
     RelationEmitter,
@@ -26,6 +28,7 @@ from semanticlog.onto.emitters import (
     TimeEmitter,
 )
 from semanticlog.onto.emitters.attributes import (
+    attribute_binnings,
     attribute_owners,
     report_conflated_attributes,
 )
@@ -35,17 +38,23 @@ from semanticlog.onto.sinks import AxiomSink, InMemorySink
 
 logger = logging.getLogger(__name__)
 
-if TYPE_CHECKING:
-    from owlapy.owl_ontology import Ontology
+_KIND_WORDS = {
+    "class": ("class", "classes"),
+    "object": ("object property", "object properties"),
+    "data": ("data property", "data properties"),
+}
 
 
 class OCEDOntoBuilder:
     """Runs the emitters over a store, in the order a build needs.
 
     The order is not arbitrary. The schema comes first so that everything else
-    has something to hang below, classes are declared before the individuals
-    that would collide with them, and the annotation document is applied last,
-    once every name it could refer to exists.
+    has something to hang below, each emitter declares its own classes before
+    asserting its own individuals, and the annotation document is applied
+    last, once every name it could refer to exists. A class declared by a
+    later emitter than the individual it collides with is caught by cleaning
+    rather than by the sink, which is why the reserved set is derived from
+    the vocabulary.
 
     Attributes:
         sink: Where the axioms go.
@@ -79,45 +88,82 @@ class OCEDOntoBuilder:
         """The settings this build runs with."""
         return self._settings
 
-    @property
-    def onto(self) -> Ontology:
-        """The ontology under construction.
-
-        Raises:
-            AttributeError: If the sink keeps no ontology in memory.
-        """
-        onto = getattr(self.sink, "onto", None)
-        if onto is None:
-            raise AttributeError(
-                f"{type(self.sink).__name__} does not keep an ontology in memory."
-            )
-        return onto
-
     def _make_emitters(self) -> None:
         """Create the emitters, sharing the sink, settings and annotations."""
         parts = (self.sink, self.settings, self.annotations)
         self.tbox = TBoxEmitter(*parts)
         self.attributes = AttributeEmitter(*parts)
-        self.events = EventEmitter(*parts, self.attributes)
-        self.objects = ObjectEmitter(*parts, self.attributes)
+        self.entities = EntityEmitter(*parts, self.attributes)
         self.times = TimeEmitter(*parts)
         self.order = OrderEmitter(*parts)
         self.relations = RelationEmitter(*parts)
         self.history = HistoryEmitter(*parts, self.attributes, self.times)
         self.provenance = ProvenanceEmitter(*parts)
 
-    def _result(self) -> BuildResult:
-        """Package the finished build, closing a streaming sink on the way."""
-        onto = getattr(self.sink, "onto", None)
-        if onto is not None:
-            return BuildResult(onto=onto, settings=self.settings, iri=self.iri)
-        self.sink.close()
-        return BuildResult(
-            onto=None,
-            settings=self.settings,
-            iri=self.iri,
-            path=getattr(self.sink, "path", None),
+    @contextmanager
+    def _phase(self, message: str, absent: str = "", count: int = 1) -> Iterator[None]:
+        """Log a build step, then the names and axioms it produced.
+
+        Args:
+            message: What the step is about to do.
+            absent: What to say instead when the step has nothing to work
+                with. Left empty by a step that always has something.
+            count: How much the step has to work with. Zero picks `absent`.
+        """
+        logger.info(absent if absent and not count else message)
+        mark = self.sink.declared_count
+        axioms = self.sink.axiom_count
+        yield
+        self._report(
+            self.sink.declared_since(mark),
+            self.sink.axiom_count - axioms if axioms >= 0 else 0,
         )
+
+    def _report(self, declared: dict[str, list[str]], axioms: int) -> None:
+        """Log what one step produced, as counts and then names.
+
+        The names are cut to a few lines each, unless the log is at debug
+        level, where every one of them is printed.
+
+        Args:
+            declared: Names the step declared, grouped by kind.
+            axioms: How many axioms it wrote.
+        """
+        counts = [
+            (len(declared.get(kind, ())), singular, plural)
+            for kind, (singular, plural) in _KIND_WORDS.items()
+        ]
+        counts.append((axioms, "axiom", "axioms"))
+        phrase = count_phrase(counts)
+        if not phrase:
+            return
+
+        logger.info(f"  {phrase}")
+        complete = logger.isEnabledFor(logging.DEBUG)
+        for kind, (_, plural) in _KIND_WORDS.items():
+            for line in name_lines(plural, declared.get(kind, []), complete=complete):
+                logger.info(line)
+
+    def _report_dropped_unions(self) -> None:
+        """Log the class expressions the profile refused, once for the build."""
+        unions, classes = self.sink.dropped_unions
+        if not unions:
+            return
+        logger.info(
+            f"  omitted {count_phrase([(unions, 'union', 'unions')])} of "
+            f"{count_phrase([(classes, 'class', 'classes')])} under OWL 2 EL, "
+            "which has no disjunction"
+        )
+
+    def _result(self) -> BuildResult:
+        """Package the finished build, closing the sink on the way.
+
+        Closing is what lets a sink finish work it could only do once no
+        further axioms were coming.
+        """
+        self.sink.close()
+        onto, path = self.sink.result_target()
+        return BuildResult(onto=onto, settings=self.settings, iri=self.iri, path=path)
 
     def _claim_single_use(self) -> None:
         """Refuse a second build, which would merge two logs into one ontology."""
@@ -185,71 +231,67 @@ class OCEDOntoBuilder:
             )
             attribute_history = False
 
-        self.tbox.emit(attribute_history=attribute_history)
-        self.provenance.emit(source, run)
+        with self._phase("Instantiating the upper schema.."):
+            self.tbox.emit(attribute_history=attribute_history)
+            self.provenance.emit(source, run)
 
         self.annotations.bind(data.backmap)
         owners = attribute_owners(data)
         report_conflated_attributes(owners)
         self.attributes.bind_owners(owners)
+        self.attributes.bind_binnings(attribute_binnings(data, self.settings))
 
-        logger.info("Instantiating ontology..")
-        logger.info(
-            f"Instantiating event data ({len(data.get_event_types())} activities).."
-        )
-        self.events.emit(data)
-        logger.info(
-            f"Instantiating event order via the strategy: {self.settings.order_representations}.."
-        )
-        self.order.emit(data)
-        logger.info("Instantiating time data..")
-        self.times.emit(data)
-        logger.info(
-            f"Instantiating object data ({len(data.get_object_types())} objects).."
-        )
-        self.objects.emit(data)
-        logger.info(
-            f"Instantiating event to object relation data ({len(data.get_relation_types(RelationKind.E2O))} relation types).."
-        )
-        self.relations.emit_event_to_object(data)
-        logger.info(
-            f"Instantiating object to object relation data ({len(data.get_relation_types(RelationKind.O2O))} relation types).."
-        )
-        self.relations.emit_object_to_object(data)
+        activities = len(data.get_event_types())
+        object_types = len(data.get_object_types())
+        e2o = len(data.get_relation_types(RelationKind.E2O))
+        o2o = len(data.get_relation_types(RelationKind.O2O))
+        order = self.settings.order_representations
+
+        with self._phase(
+            f"Instantiating event data ({activities} activities)..",
+            "No event data in the log..",
+            activities,
+        ):
+            self.entities.emit(data, EntityKind.EVENT)
+        with self._phase(
+            f"Instantiating event order ({', '.join(r.value for r in order)})..",
+            "No event order to instantiate..",
+            len(order),
+        ):
+            self.order.emit(data)
+        with self._phase(
+            "Instantiating time data..", "No time data in the log..", activities
+        ):
+            self.times.emit(data)
+        with self._phase(
+            f"Instantiating object data ({object_types} object types)..",
+            "No object data in the log..",
+            object_types,
+        ):
+            self.entities.emit(data, EntityKind.OBJECT)
+        with self._phase(
+            f"Instantiating event to object relation data ({e2o} relation types)..",
+            "No event to object relations in the data..",
+            e2o,
+        ):
+            self.relations.emit_event_to_object(data)
+        with self._phase(
+            f"Instantiating object to object relation data ({o2o} relation types)..",
+            "No object to object relations in the data..",
+            o2o,
+        ):
+            self.relations.emit_object_to_object(data)
 
         if attribute_history:
-            logger.info("Instantiating object attribute change history..")
-            self.history.emit(data)
+            changes = len(data.get_object_change_types())
+            with self._phase(
+                "Instantiating object attribute change history..",
+                "No object attribute changes in the data..",
+                changes,
+            ):
+                self.history.emit(data)
 
         self._apply_annotation_document()
+        self._report_dropped_unions()
         logger.info("done.")
         return self._result()
-
-
-def construct_tbox(
-    iri: str,
-    settings: OntoBuildSettings,
-    path: str | None = None,
-    attribute_history: bool | None = None,
-    sink: AxiomSink | None = None,
-) -> BuildResult:
-    """Build only the upper schema, with no data in it.
-
-    Useful for inspecting or publishing the schema on its own.
-
-    Args:
-        iri: Base IRI for the ontology.
-        settings: Settings for this build.
-        path: Where to save it. Nothing is written when this is None.
-        attribute_history: Whether to include the attribute change schema.
-            Defaults to what the settings ask for.
-        sink: Where to write. Defaults to an in-memory sink.
-
-    Returns:
-        The finished build.
-    """
-    builder = OCEDOntoBuilder(iri, settings, sink=sink)
-    builder.tbox.emit(attribute_history)
-    if path is not None:
-        builder.sink.save(path)
-    return builder._result()

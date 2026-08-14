@@ -2,13 +2,14 @@
 
 A relation row that names an entity the store does not hold would still become
 an assertion in the ontology, about an individual that appears nowhere else.
-These checks find those rows while the failure can still name the relation and
-the ids.
+An entity with no id has no name to be asserted under at all. These checks
+find both while the failure can still name the table and the ids.
 """
 
 from __future__ import annotations
 
-from semanticlog.data.oced import OCEDStore, RelationKind
+from semanticlog.data.oced import OCEDStore
+from semanticlog.data.tables import EntityKind, RelationKind
 
 _SAMPLE = 5
 
@@ -20,12 +21,33 @@ def _sample(ids: set) -> str:
     return ", ".join(shown) + (f" and {more} more" if more else "")
 
 
-def check_integrity(data: OCEDStore) -> list[str]:
-    """Find relation rows pointing at entities the store does not hold.
+def _missing_ids(data: OCEDStore) -> list[str]:
+    """Find events and objects whose id is empty.
 
-    Both endpoints of every relation are checked, and an object endpoint has
-    to be in one of the types the relation declares, not merely somewhere in
-    the store.
+    An id becomes the local name of an individual, so a row without one has
+    nothing to be emitted under, and every such row across the log would
+    otherwise arrive at the sink as the same name.
+    """
+    violations: list[str] = []
+    for view in data.tables(changes=False):
+        if view.id_column is None:
+            continue
+        missing = int(view.frame[view.id_column].isna().sum())
+        if missing:
+            noun = "event" if view.kind is EntityKind.EVENT else "object"
+            violations.append(
+                f"{view.origin}: {missing} {noun}(s) have no {view.id_column!r}"
+            )
+    return violations
+
+
+def check_integrity(data: OCEDStore) -> list[str]:
+    """Find rows a build could not emit an individual for.
+
+    Every event and object has to carry an id. Both endpoints of every
+    relation have to name an entity the store holds, and an object endpoint
+    has to be in one of the types the relation declares, not merely somewhere
+    in the store.
 
     Args:
         data: Store to check.
@@ -33,7 +55,7 @@ def check_integrity(data: OCEDStore) -> list[str]:
     Returns:
         One message per violation, empty when the store is sound.
     """
-    violations: list[str] = []
+    violations: list[str] = _missing_ids(data)
 
     event_ids: set = set()
     for activity in data.get_event_types():
@@ -94,9 +116,9 @@ def require_integrity(data: OCEDStore) -> None:
     violations = check_integrity(data)
     if violations:
         raise ValueError(
-            "The store has relations pointing at entities it does not hold:\n"
+            "The store holds rows a build could not emit an individual for:\n"
             + "\n".join(f"  {v}" for v in violations)
             + "\n\nEvery such row would become an assertion about an individual "
-            "that appears nowhere else in the ontology. Fix the source data, or "
-            "drop the rows before building."
+            "that appears nowhere else in the ontology, or that has no name at "
+            "all. Fix the source data, or drop the rows before building."
         )

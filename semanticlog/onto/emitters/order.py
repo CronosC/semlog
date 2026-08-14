@@ -16,10 +16,8 @@ import pandas as pd
 from semanticlog.core import vocabulary as vocab
 from semanticlog.data.flatten import iter_logs
 from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind
 from semanticlog.enrich.declare import DeclareResult
 from semanticlog.onto.emitters.base import Emitter
-from semanticlog.onto.settings import OntoBuildSettings
 
 logger = logging.getLogger(__name__)
 
@@ -41,92 +39,33 @@ class OrderEmitter(Emitter):
         super().__init__(*args, **kwargs)
         self._ef_pairs_so_far = 0
 
-    @staticmethod
-    def check_declare_input(data: OCEDStore, settings: OntoBuildSettings) -> None:
-        """Check that the DECLARE constraints belong to the log being built.
-
-        Constraints are mined in a separate step and are easy to pair with the
-        wrong log, in which case the trace ids would name objects this log
-        does not hold and the membership assertions would be about nothing.
-        This runs before the build so the failure names the mismatch rather
-        than surfacing as an odd ontology.
-
-        Args:
-            data: Store being built from.
-            settings: Settings holding the mined constraints.
-
-        Raises:
-            ValueError: If the constraints have no trace column, name a case
-                concept this log does not have, or name trace ids that are not
-                objects of that type.
-        """
-        if not settings.emits_declare:
-            return
-        declare_result = settings.declare_result
-        if declare_result is None:
-            return
-
-        constraints = declare_result.constraints
-        if "trace_id" not in constraints.columns:
-            raise ValueError(
-                "DECLARE constraints have no 'trace_id' column, so there is "
-                "nothing to type as a member of each constraint class."
-            )
-
-        object_types = set(data.get_object_types())
-        problems: list[str] = []
-        for case_concept, group in constraints.groupby("case_concept"):
-            case_concept = str(case_concept)
-            if case_concept not in object_types:
-                problems.append(
-                    f"  case concept {case_concept!r} is not an object type of "
-                    f"this log (it has {', '.join(sorted(object_types))})"
-                )
-                continue
-            known = set(map(str, data.get_ids(EntityKind.OBJECT, case_concept)))
-            unknown = sorted(set(group["trace_id"].astype(str)) - known)
-            if unknown:
-                problems.append(
-                    f"  {len(unknown)} of {group['trace_id'].nunique()} "
-                    f"{case_concept!r} trace id(s) are not objects of that type, "
-                    f"starting with {', '.join(unknown[:5])}"
-                )
-
-        if problems:
-            origin = settings.declare_file or "the assigned DECLARE result"
-            raise ValueError(
-                f"The DECLARE constraints in {origin} do not match this log:\n"
-                + "\n".join(problems)
-                + "\n\nThey were most likely mined from a different log, or from "
-                "this one before it was filtered. Re-run 'semlog mine-declare' "
-                "against the log being built."
-            )
-
     def emit(self, data: OCEDStore) -> None:
         """Emit whichever order representations the settings selected."""
         self.annotations.bind(data.backmap)
         if self.settings.emits_traces:
-            self.emit_directly_follows(data)
+            self.emit_trace_order(data)
         if self.settings.emits_declare:
             self.emit_declare(data)
 
-    def emit_directly_follows(self, data: OCEDStore) -> None:
+    def emit_trace_order(self, data: OCEDStore) -> None:
         """Emit the order super-properties, then the order of each case concept.
 
         The log is flattened once per case concept, and each projection is
         emitted before the next is built.
         """
+        include_df = self.settings.emits_df
         include_ef = self.settings.emits_ef
         has_inverses = self.settings.has_inverses
 
         order_source = "the event order super-properties"
-        self.sink.add_property(
-            vocab.DF,
-            vocab.EVENT,
-            vocab.EVENT,
-            create_inverse=has_inverses,
-            source=order_source,
-        )
+        if include_df:
+            self.sink.add_property(
+                vocab.DF,
+                vocab.EVENT,
+                vocab.EVENT,
+                create_inverse=has_inverses,
+                source=order_source,
+            )
         if include_ef:
             self.sink.add_property(
                 vocab.EF,
@@ -135,13 +74,17 @@ class OrderEmitter(Emitter):
                 create_inverse=has_inverses,
                 source=order_source,
             )
-        self.annotations.order_superproperties(include_ef)
+        self.annotations.order_superproperties(include_df, include_ef)
 
         for case_concept, events in iter_logs(data, self.settings.case_concepts):
-            self.emit_case_order(case_concept, events, include_ef)
+            self.emit_case_order(case_concept, events, include_df, include_ef)
 
     def emit_case_order(
-        self, case_concept: str, events: pd.DataFrame, include_ef: bool
+        self,
+        case_concept: str,
+        events: pd.DataFrame,
+        include_df: bool,
+        include_ef: bool,
     ) -> None:
         """Emit the order of one flattened projection.
 
@@ -152,8 +95,13 @@ class OrderEmitter(Emitter):
         Args:
             case_concept: Object type this projection was taken on.
             events: The flat log of that projection.
+            include_df: Also emit directly-follows.
             include_ef: Also emit eventually-follows.
         """
+        # `iter_logs` already returns this sorted, so the sort is redundant for
+        # order. It is not redundant for memory: sorting reallocates the frame
+        # more compactly than copying it, and dropping it costs 7 MB per
+        # 300k events.
         events = events.sort_values(
             ["case:concept:name", "time:timestamp"], kind="mergesort"
         )
@@ -175,21 +123,21 @@ class OrderEmitter(Emitter):
         self.sink.assert_individuals(list(start_ids), start_cls)
         self.sink.assert_individuals(list(end_ids), end_cls)
 
-        df_pairs = events.loc[
-            events["next_event_id"].notna(), ["event_id", "next_event_id"]
-        ]
-
         df_rel = vocab.df_property(case_concept)
-        self.sink.add_property(
-            df_rel,
-            vocab.EVENT,
-            vocab.EVENT,
-            vocab.DF,
-            create_inverse=has_inverses,
-            source=case_source,
-        )
-        self.annotations.df_property(case_concept, df_rel)
-        self.sink.assert_relations(df_pairs, df_rel, "event_id", "next_event_id")
+        if include_df:
+            df_pairs = events.loc[
+                events["next_event_id"].notna(), ["event_id", "next_event_id"]
+            ]
+            self.sink.add_property(
+                df_rel,
+                vocab.EVENT,
+                vocab.EVENT,
+                vocab.DF,
+                create_inverse=has_inverses,
+                source=case_source,
+            )
+            self.annotations.df_property(case_concept, df_rel)
+            self.sink.assert_relations(df_pairs, df_rel, "event_id", "next_event_id")
 
         if not include_ef:
             return
@@ -258,13 +206,12 @@ class OrderEmitter(Emitter):
         """
         projected = sum(len(grp) * (len(grp) + 1) // 2 for _, grp in groups)
         self._ef_pairs_so_far += projected
-        projected = self._ef_pairs_so_far
+        total = self._ef_pairs_so_far
         budget = self.settings.max_ef_pairs
-        logger.info(f"  {ef_rel}: materializing {projected:,} eventually-follows pairs")
-        if budget and projected > budget:
+        if budget and total > budget:
             longest = max((len(grp) for _, grp in groups), default=0)
             raise ValueError(
-                f"EF_EXPLICIT would materialize {projected:,} pairs in total "
+                f"EF_EXPLICIT would materialize {total:,} pairs in total "
                 f"(reached at '{ef_rel}'), over the max_ef_pairs limit of "
                 f"{budget:,}. Eventually-follows is "
                 f"quadratic in trace length and the longest trace here has {longest:,} "
@@ -272,6 +219,10 @@ class OrderEmitter(Emitter):
                 "them instead, choose a case concept with shorter traces, or raise "
                 "settings.max_ef_pairs."
             )
+        logger.info(
+            f"  {ef_rel}: materializing {projected:,} eventually-follows pairs "
+            f"({total:,} so far)"
+        )
 
     def emit_declare(self, data: OCEDStore) -> None:
         """Type each trace by the DECLARE constraints it satisfies.
@@ -302,6 +253,7 @@ class OrderEmitter(Emitter):
                 vocab.DECLARE_CONSTRAINT,
                 source=f"DECLARE constraint {constraint!r}",
             )
+        self.annotations.declare_constraints(vocab.DECLARE_CONSTRAINT, constraints)
 
         for constraint in constraints:
             trace_ids = df_declare.loc[

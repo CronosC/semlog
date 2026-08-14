@@ -2,21 +2,23 @@
 
 `OntoBuildSettings` says what to emit, `OCEDOntoBuilder` emits it through a
 sink, and the result is a `BuildResult` that can be written out or reasoned
-over.
+over. `Reasoner` is resolved on first use, since it starts the Java OWL API.
 """
 
-from semanticlog.onto.builder import OCEDOntoBuilder, construct_tbox
-from semanticlog.onto.reason import Reasoner
-from semanticlog.onto.result import BuildResult
-from semanticlog.onto.settings import (
-    DEFAULT_IRI,
+from importlib import import_module
+from typing import Any
+
+from semanticlog.core.enums import (
     DataRepresentation,
     EventOrderRepresentation,
     InverseRepresentation,
     OCELExtension,
-    OntoBuildSettings,
     OWLProfile,
 )
+from semanticlog.core.vocabulary import DEFAULT_IRI
+from semanticlog.onto.builder import OCEDOntoBuilder
+from semanticlog.onto.result import BuildResult
+from semanticlog.onto.settings import OntoBuildSettings
 
 __all__ = [
     "DEFAULT_IRI",
@@ -29,5 +31,15 @@ __all__ = [
     "OWLProfile",
     "Reasoner",
     "BuildResult",
-    "construct_tbox",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Import the reasoner the first time it is asked for."""
+    if name != "Reasoner":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(import_module("semanticlog.onto.reason"), name)
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)

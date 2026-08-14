@@ -6,13 +6,13 @@ attached here, so importing semlog never changes how the calling program logs.
 
 from __future__ import annotations
 
-import glob
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 
 LOG_KEEP = 10
-LOG_FORMAT = "%(name)s | %(asctime)s | %(message)s"
+LOG_FORMAT = "%(asctime)s | %(name)s | %(message)s"
 LOG_DATEFMT = "%H:%M:%S"
 
 _QUIET_LIBRARIES = ("pm4py", "matplotlib", "numexpr")
@@ -63,7 +63,7 @@ class FileLog:
             log_dir: Directory for the log files. None disables file logging.
             keep: How many files to keep per input, oldest removed first.
         """
-        self.log_dir = str(log_dir) if log_dir else ""
+        self.log_dir = Path(log_dir) if log_dir else None
         self.keep = keep
         self._handler: logging.FileHandler | None = None
 
@@ -77,22 +77,21 @@ class FileLog:
         Returns:
             The file being written, or None when file logging is off.
         """
-        if not self.log_dir:
+        if self.log_dir is None:
             return None
-        os.makedirs(self.log_dir, exist_ok=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
         self.close()
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = os.path.join(self.log_dir, f"{ts}_{stem}.log")
+        log_path = self.log_dir / f"{ts}_{stem}.log"
         self._handler = logging.FileHandler(log_path)
         self._handler.setFormatter(_formatter())
         logging.getLogger().addHandler(self._handler)
 
-        existing = sorted(glob.glob(os.path.join(self.log_dir, f"*_{stem}.log")))
-        for old in existing[: -self.keep]:
-            os.remove(old)
+        for old in sorted(self.log_dir.glob(f"*_{stem}.log"))[: -self.keep]:
+            old.unlink()
 
-        return log_path
+        return str(log_path)
 
     def close(self) -> None:
         """Stop writing to the current file, if there is one."""

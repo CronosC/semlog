@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 from semanticlog.cli.config import (
-    ConfigError,
     parse_enum,
     resolve_run_config,
 )
@@ -21,7 +20,7 @@ from semanticlog.cli.run import (
     mine_declare,
     reason,
 )
-from semanticlog.onto.settings import (
+from semanticlog.core.enums import (
     OCELExtension,
     OWLProfile,
 )
@@ -119,8 +118,9 @@ _COMMANDS = {
 def main(argv: list[str] | None = None) -> int:
     """Run one semlog command.
 
-    A configuration problem is reported as a message, since the caller can fix
-    it. Any other exception propagates, since it indicates a defect.
+    A problem the caller can fix is reported as a message: a bad setting, a
+    missing file, a reasoner that will not read the ontology it was given.
+    Any other exception propagates, since it indicates a defect.
 
     Args:
         argv: Arguments without the program name. Defaults to the real ones.
@@ -142,10 +142,7 @@ def main(argv: list[str] | None = None) -> int:
     setup_console_logging(_log_level(args))
     try:
         return _COMMANDS[args.command](args)
-    except (ConfigError, FileNotFoundError) as exc:
-        print(f"semlog {args.command}: error: {exc}", file=sys.stderr)
-        return EXIT_USAGE
-    except ImportError as exc:
+    except (ValueError, FileNotFoundError, ImportError) as exc:
         print(f"semlog {args.command}: error: {exc}", file=sys.stderr)
         return EXIT_USAGE
 

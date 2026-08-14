@@ -10,9 +10,9 @@ bracket is written then.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any, TextIO
 
 from semanticlog.onto.settings import OntoBuildSettings
@@ -23,8 +23,6 @@ from semanticlog.onto.sinks.base import (
     AxiomSink,
     normalize_value,
 )
-
-_PN_LOCAL_ESCAPE = re.compile(r"[~+]")
 
 
 class StreamingSink(AxiomSink):
@@ -88,8 +86,13 @@ class StreamingSink(AxiomSink):
 
     @staticmethod
     def _ref(name: str) -> str:
-        """Return a prefixed name, escaping the characters the syntax reserves."""
-        return f":{_PN_LOCAL_ESCAPE.sub(r'\\\g<0>', name)}"
+        """Return a name as a prefixed name.
+
+        Nothing is escaped, because a name reaches this having passed
+        `vocab.SAFE_LOCAL_NAME`, which allows only characters a prefixed name
+        already takes.
+        """
+        return f":{name}"
 
     def _class_expression(self, disjuncts: list[str]) -> str:
         """Return one class reference, or their union when there are several."""
@@ -184,8 +187,12 @@ class StreamingSink(AxiomSink):
 
     @staticmethod
     def _escape(text: str) -> str:
-        """Escape the characters that would end a quoted literal early."""
-        return text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        """Escape the characters that would end a quoted literal early.
+
+        A quoted string takes only `\\"` and `\\\\`, so a newline stays as it is
+        and the axiom carrying it spans more than one line.
+        """
+        return text.replace("\\", "\\\\").replace('"', '\\"')
 
     def write_annotations(
         self, annotation: str, pairs: Iterable[tuple[str, str]]
@@ -211,6 +218,18 @@ class StreamingSink(AxiomSink):
         self._file.close()
         self._file = None
 
+    def abort(self) -> None:
+        """Close the file without finishing the ontology, and remove it.
+
+        What has been written so far is missing its closing bracket, so it is
+        not an ontology. Removing it also means a failed build cannot leave a
+        truncated file where a finished one used to be.
+        """
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+        Path(self.path).unlink(missing_ok=True)
+
     def save(self, path: str) -> None:
         """Finish the file this sink has been writing.
 
@@ -226,3 +245,7 @@ class StreamingSink(AxiomSink):
                 f"{path!r}. Open it on the destination path instead."
             )
         self.close()
+
+    def result_target(self) -> tuple[Any, str | None]:
+        """Hand back the path, since the ontology went straight to it."""
+        return None, self.path

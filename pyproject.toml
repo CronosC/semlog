@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "semlog"
-version = "0.4.0"
+version = "0.5.0"
 description = "Convert OCEL process mining event logs to OWL 2 ontologies. The [declare] extra requires the Lydia solver, which is not on PyPI. See README."
 authors = [{ name = "Christian Dormagen", email = "christian.dormagen@oth-regensburg.de" }]
 readme = "README.md"
@@ -15,8 +15,6 @@ dependencies = [
     "owlapy>=1.6,<2",
     "scipy<2",
     "pandas>=2.2",
-    # Parquet engine for OCEDStore.write/read.
-    "pyarrow>=15",
 ]
 
 [project.scripts]
@@ -31,11 +29,12 @@ declare = [
 dev = [
     "pytest",
     "pytest-cov",
+    # The suite is embarrassingly parallel and pre-commit runs all of it.
+    "pytest-xdist",
     "ruff",
     "mypy",
     "pre-commit",
-    # Used by tests/onto/test_reason.py to read a materialised ontology back
-    # as triples.
+    # Reads an emitted ontology back as triples, in tests/support/ontology.py.
     "rdflib",
 ]
 
@@ -51,7 +50,9 @@ semanticlog = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
 markers = [
+    "slow: runs a subprocess or otherwise takes seconds",
     "reasoner: needs a JVM and the OWL API",
 ]
 filterwarnings = [
@@ -68,6 +69,9 @@ source = ["semanticlog"]
 
 [tool.coverage.report]
 show_missing = true
+# The floor CI holds the suite to. Raise it when coverage rises, never lower it
+# to make a run pass.
+fail_under = 90
 
 [tool.ruff]
 line-length = 88

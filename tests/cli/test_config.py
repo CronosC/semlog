@@ -8,12 +8,11 @@ from semanticlog.cli.config import (
     BUILD_DEFAULTS,
     RENAMED_KEYS,
     ConfigError,
-    enum_choices,
     load_config_file,
     parse_enum,
     resolve_run_config,
 )
-from semanticlog.onto.settings import (
+from semanticlog.core.enums import (
     DataRepresentation,
     EventOrderRepresentation,
     InverseRepresentation,
@@ -60,9 +59,9 @@ def test_parse_enum_reports_the_key_and_the_alternatives():
         parse_enum(EventOrderRepresentation, "nope", key="order_representations")
 
 
-def test_enum_choices_lists_values_before_extra_names():
-    assert enum_choices(OCELExtension) == ["attribute_history", "ATTRIBUTE_HISTORY"]
-    assert enum_choices(OWLProfile) == ["OWL2DL", "OWL2EL"]
+def test_spellings_lists_values_before_extra_names():
+    assert OCELExtension.spellings() == ["attribute_history", "ATTRIBUTE_HISTORY"]
+    assert OWLProfile.spellings() == ["OWL2DL", "OWL2EL"]
 
 
 def test_load_config_file_reads_a_flat_table(write_config):
@@ -221,6 +220,23 @@ def test_an_explicit_name_may_not_collapse_a_batch(tmp_path, ocel):
         resolve_run_config({"input": [str(tmp_path)], "name": "both"})
 
 
+def test_two_inputs_of_one_name_may_not_overwrite_each_other(tmp_path, ocel):
+    """Outputs are named after the input, so both would write log.owl."""
+    for directory in ("first", "second"):
+        (tmp_path / directory).mkdir()
+        (tmp_path / directory / "log.jsonocel").write_bytes(ocel.read_bytes())
+
+    with pytest.raises(ConfigError, match="overwrite one another's output"):
+        resolve_run_config(
+            {
+                "input": [
+                    str(tmp_path / "first" / "log.jsonocel"),
+                    str(tmp_path / "second" / "log.jsonocel"),
+                ]
+            }
+        )
+
+
 def test_axiomatic_inverses_are_rejected_in_owl2el(ocel):
     with pytest.raises(ConfigError, match="AXIOMATIC"):
         resolve(ocel, profile="OWL2EL", inverse_representations=["axiomatic"])
@@ -246,6 +262,22 @@ def test_bin_labels_must_match_the_bin_count(ocel):
 def test_declare_without_a_constraints_file_points_at_mine_declare(ocel):
     with pytest.raises(ConfigError, match="semlog mine-declare"):
         resolve(ocel, order_representations=["declare"])
+
+
+def test_a_missing_declare_file_is_a_configuration_error(ocel, tmp_path):
+    """The settings read the file when they are constructed, so this has to
+    be caught before they are, or it surfaces as an OS error."""
+    missing = tmp_path / "nowhere.csv"
+
+    with pytest.raises(ConfigError, match="declare_file not found"):
+        resolve(ocel, order_representations=["declare"], declare_file=str(missing))
+
+
+def test_a_missing_annotation_document_is_a_configuration_error(ocel, tmp_path):
+    missing = tmp_path / "nowhere.json"
+
+    with pytest.raises(ConfigError, match="annotation_document not found"):
+        resolve(ocel, annotation_document=str(missing))
 
 
 def test_explicitly_empty_case_concepts_conflict_with_an_order_needing_traces(ocel):
@@ -283,11 +315,33 @@ def test_settings_for_does_not_mutate_the_shared_settings(ocel):
 
 
 def test_render_names_every_output_it_would_write(ocel):
-    text = resolve(ocel, output="out", save_backmap=True, save_store=True).render()
+    text = resolve(ocel, output="out", save_backmap=True).render()
     assert "out/pipeline.owl" in text
     assert "out/pipeline.backmap.json" in text
-    assert "out/pipeline.oced" in text
 
 
 def test_render_says_when_case_concepts_are_auto_selected(ocel):
     assert "auto" in resolve(ocel).render()
+
+
+def test_a_relative_output_is_kept_as_given(ocel):
+    cfg = resolve(ocel, output="out/nested")
+
+    assert cfg.output_dir == Path("out/nested")
+    assert not cfg.output_dir.is_absolute()
+
+
+def test_a_config_that_extends_another_still_names_itself(ocel, write_config):
+    write_config("_base.toml", 'profile = "OWL2EL"\n')
+    child = write_config("hiring.toml", f'extends = "_base.toml"\ninput = "{ocel}"\n')
+
+    cfg = resolve_run_config({}, config_file=child)
+
+    assert cfg.settings.profile is OWLProfile.OWL2EL
+    assert cfg.ontology_path(ocel).name == "hiring.owl"
+
+
+def test_the_command_is_recorded_on_the_resolved_run(ocel):
+    cfg = resolve_run_config({"input": [str(ocel)]}, command="semlog build x")
+
+    assert cfg.command == "semlog build x"

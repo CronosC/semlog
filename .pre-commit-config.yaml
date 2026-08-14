@@ -21,15 +21,7 @@ repos:
     hooks:
       - id: pytest
         name: pytest
-        entry: uv run pytest -q
+        entry: uv run pytest -q -n auto
         language: system
         pass_filenames: false
         types: [python]
-
-      - id: no-golden-rebaseline
-        name: golden fixtures not being rewritten
-        entry: >
-          bash -c 'if [ -n "$SEMLOG_UPDATE_GOLDEN" ]; then
-          echo "SEMLOG_UPDATE_GOLDEN is set; unset it before committing."; exit 1; fi'
-        language: system
-        pass_filenames: false

@@ -1,6 +1,6 @@
 # semlog
 
-`semlog` turns object-centric event data into OWL 2 ontologies. It reads an OCEL 2.0 event log, normalizes it into an internal data model, and writes a single `.owl` file that a reasoner, a triple store or a SPARQL endpoint can consume.
+`semlog` turns object-centric event data into OWL 2 ontologies. It reads an OCEL 2.0 event log, normalizes it into an internal data model, and writes a single `.owl` file. That file is OWL functional syntax by default, which a reasoner and the OWL API read directly. Set `streaming = false` for the RDF/XML a triple store, a SPARQL endpoint or rdflib expects.
 
 ## Installation
 
@@ -8,7 +8,7 @@ Python 3.12 or newer is required.
 
 ```bash
 uv sync --extra dev          # recommended
-pre-commit install
+uv run pre-commit install
 ```
 
 or with pip:
@@ -30,6 +30,10 @@ semlog inspect tests/fixtures/pipeline.jsonocel
 semlog build --config examples/pipeline.toml
 semlog reason examples/out/pipeline.owl --check
 ```
+
+`semlog reason` prints a Java stack trace before it answers. The OWL API tries
+its RDF/XML parser first, which fails on functional syntax, and reports that
+before the right parser succeeds. The result on the last line is the answer.
 
 The same build from Python:
 
@@ -57,7 +61,7 @@ result = OCEDOntoBuilder(DEFAULT_IRI, settings).build_ontology(data)
 result.save("pipeline.owl")
 ```
 
-`clean_oced_data` must run before any build. It sanitizes every name that will become part of an IRI and resolves collisions with the names the build reserves for itself.
+`clean_oced_data` must run before any build. It sanitizes every name that will become part of an IRI and resolves collisions with the names the build reserves for itself. Two source names that would clean to one name are renamed apart rather than merged, since merging them would lose a distinction the log made. A counter separates two names of one kind, and the kind goes in front when an activity, an object type and an attribute all claim one name. Every rename is recorded in the backmap. Anything still sharing a name once the renames have run is refused.
 
 ## What a build produces
 
@@ -78,18 +82,34 @@ Every setting below is both a TOML key and a `--flag`. A flag always beats the c
 | Setting | Default | What it changes |
 |---|---|---|
 | `profile` | `OWL2DL` | Which OWL 2 profile the output stays inside. `OWL2EL` omits the inverse and transitivity axioms that profile forbids. |
-| `order_representations` | `df` | How event order is represented: `df`, `ef`, `ef_explicit`, `declare`. Several can be combined. |
-| `case_concepts` | auto | Object types whose instances act as cases. Any event order needs at least one. |
-| `data_representations` | `values` | How numeric attributes appear: `values` keeps the number, `equal_bins` buckets by frequency, `dist_bins` fits a distribution first. |
+| `order_representations` | `df` | How event order is represented: `df`, `ef`, `ef_explicit`, `declare`. Several can be combined. `ef` leaves the pairs to a reasoner, which derives them over `df`, so it has to be combined with it. `ef_explicit` asserts every pair itself and needs nothing else. |
+| `case_concepts` | auto | Object types whose instances act as cases, named as the source log spells them. `df`, `ef` and `ef_explicit` need at least one. A type that cleaning renamed is followed to its new name. `declare` takes its traces from the mined CSV. |
+| `data_representations` | `values` | How numeric attributes appear: `values` keeps the number, `equal_bins` buckets by frequency, `dist_bins` fits a distribution first. Each attribute is cut once, over every value it takes anywhere in the log. A column with too few distinct values to bin keeps its numbers. |
 | `inverse_representations` | none | `axiomatic` writes inverse property axioms (OWL2DL only), `implicit` materializes the inverse assertions instead. |
 | `ocel_extensions` | none | `attribute_history` also emits the timestamped attribute changes of each object. |
 | `bins`, `bin_labels` | `5`, `very_low` … `very_high` | Bin count and labels for the two binning modes. |
+| `max_ef_pairs` | `50000000` | Ceiling on materialized eventually-follows pairs, which grow with the square of the trace length. Zero for no limit. |
 | `size_limit_mb` | `0` | Skip inputs larger than this many MB. Zero for no limit. |
 | `derive_annotations` | `false` | Emit `rdfs:label` and `rdfs:comment` derived from the original names in the log. |
 | `materialize` | `false` | Run a reasoner over the result and save what it entails. |
-| `streaming` | `false` | Write the ontology straight to disk at near constant memory, for logs too large to hold. Rules out `materialize`. |
+| `streaming` | `true` | Write OWL functional syntax straight to disk at near constant memory. Off builds the ontology in memory and writes RDF/XML, which is the slower path but the one rdflib can read. |
 
 `semlog build --help` documents every flag in full.
+
+### Upgrading to 0.5
+
+Two `order_representations` settings changed, so an ontology built with 0.5
+is not always the one 0.4 built from the same log and config.
+
+- `ef` on its own is now refused. It expresses eventually-follows as a
+  transitivity axiom over directly-follows, so with no `df` beside it a
+  reasoner has nothing to derive the pairs from. Write `["df", "ef"]`.
+- `ef_explicit` on its own no longer emits directly-follows. It asserts every
+  pair itself and never needed `df`, but emitted it anyway. Write
+  `["df", "ef_explicit"]` to keep what 0.4 produced.
+
+The version is annotated onto every ontology as `owl:versionInfo`, so an
+existing file still says which of the two built it.
 
 ## Commands
 
@@ -116,7 +136,7 @@ semlog build --config runs/hiring.toml --profile OWL2EL   # same run, EL instead
 semlog build --config runs/hiring.toml --dry-run          # resolve and print, build nothing
 ```
 
-Outputs are named after the config, so `runs/hiring.toml` writes `hiring.owl`. `examples/pipeline.toml` is a complete config that runs from a fresh clone.
+A config naming one input takes its name from the config, so `runs/hiring.toml` writes `hiring.owl`. A config naming several names each output after its input. `examples/pipeline.toml` is a complete config that runs from a fresh clone.
 
 Exit codes are `0` for success, `1` when a build failed or an ontology was inconsistent, and `2` when the configuration was unusable.
 

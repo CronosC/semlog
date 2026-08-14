@@ -51,6 +51,30 @@ def test_detects_missing_event_id_in_e2o():
     assert any("GHOST_EVENT" in v or "event IDs" in v for v in violations)
 
 
+def test_detects_an_event_with_no_id():
+    oced = _consistent_oced()
+    events = pd.DataFrame(
+        {"eid": ["e4", None], "ts": pd.date_range("2024-02-01", periods=2)}
+    )
+    oced.add_event("nameless", "eid", "ts", events)
+
+    violations = check_oced_integrity(oced)
+
+    assert violations == ["activity 'nameless': 1 event(s) have no 'eid'"]
+
+
+def test_detects_an_object_with_no_id():
+    """The row has an attribute, so dtype inference keeps it as a nameless object."""
+    oced = _consistent_oced()
+    oced.add_object(
+        "nameless", "oid", pd.DataFrame({"oid": [None, "x1"], "kind": ["a", "b"]})
+    )
+
+    violations = check_oced_integrity(oced)
+
+    assert violations == ["object type 'nameless': 1 object(s) have no 'oid'"]
+
+
 def test_detects_missing_id_in_o2o():
     oced = OCEDStore()
     events = pd.DataFrame({"eid": ["e1"], "ts": pd.date_range("2024-01-01", periods=1)})
@@ -100,6 +124,78 @@ def test_get_log_drops_no_rows_on_clean_single_type_store(caplog):
         get_log(oced, "thing")
     drop_msgs = [r for r in caplog.records if "dropped" in r.message]
     assert drop_msgs == [], "\n".join(r.message for r in drop_msgs)
+
+
+def test_get_log_reports_the_size_of_the_projection(caplog):
+    oced = _consistent_oced()
+
+    with caplog.at_level(logging.INFO, logger="semanticlog.data.flatten"):
+        get_log(oced, "thing")
+
+    assert "Extracted flattened log (thing) with 3 events, 2 objects" in caplog.text
+
+
+def test_get_log_holds_an_event_once_however_many_relations_reach_the_case():
+    oced = _consistent_oced()
+    oced.add_event_to_object_relation(
+        "creates",
+        "eid",
+        "oid",
+        ["thing"],
+        pd.DataFrame({"eid": ["e1", "e2", "e3"], "oid": ["o1", "o1", "o2"]}),
+    )
+
+    log = get_log(oced, "thing")
+
+    assert len(log) == 3
+    assert log.index.is_unique
+
+
+def test_get_log_leaves_out_an_event_with_no_timestamp(caplog):
+    oced = OCEDStore()
+    oced.add_event(
+        "act",
+        "eid",
+        "ts",
+        pd.DataFrame(
+            {
+                "eid": ["e1", "e2", "e3"],
+                "ts": ["2024-01-01T09:00:00Z", "2024-01-02T09:00:00Z", None],
+            }
+        ),
+    )
+    oced.add_object("thing", "oid", pd.DataFrame({"oid": ["o1"]}))
+    oced.add_event_to_object_relation(
+        "modifies",
+        "eid",
+        "oid",
+        ["thing"],
+        pd.DataFrame({"eid": ["e1", "e2", "e3"], "oid": ["o1", "o1", "o1"]}),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="semanticlog.data.flatten"):
+        log = get_log(oced, "thing")
+
+    assert list(log.index) == ["e1", "e2"]
+    assert "1 event(s) have no timestamp" in caplog.text
+
+
+def test_get_log_says_nothing_about_ids_of_another_object_type(caplog):
+    """Projecting onto one case notion excludes the other types by definition."""
+    oced = _consistent_oced()
+    oced.add_object("other", "oid", pd.DataFrame({"oid": ["x1"]}))
+    oced.add_event_to_object_relation(
+        "touches",
+        "eid",
+        "oid",
+        ["thing", "other"],
+        pd.DataFrame({"eid": ["e1"], "oid": ["x1"]}),
+    )
+
+    with caplog.at_level(logging.INFO, logger="semanticlog.data.flatten"):
+        get_log(oced, "thing")
+
+    assert "another object type" not in caplog.text
 
 
 def _mixed_dtypes() -> OCEDStore:

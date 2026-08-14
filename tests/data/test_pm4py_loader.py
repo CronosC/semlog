@@ -5,8 +5,9 @@ import pm4py
 import pytest
 from pm4py.objects.ocel.obj import OCEL
 
-from semanticlog.data.loading.pm4py_loader import PM4PyLoader
-from semanticlog.data.oced import EntityKind, OCEDStore, RelationKind
+from semanticlog.data.loading.pm4py_loader import PM4PyLoader, _relation_names
+from semanticlog.data.oced import OCEDStore
+from semanticlog.data.tables import EntityKind, RelationKind
 
 
 def _empty_o2o() -> pd.DataFrame:
@@ -92,6 +93,82 @@ def o2o_ocel(tmp_path):
     )
     ocel = OCEL(events=events, objects=objects, relations=relations, o2o=o2o)
     path = str(tmp_path / "o2o.jsonocel")
+    _write_ocel(ocel, path)
+    return path
+
+
+@pytest.fixture
+def null_o2o_qualifier_ocel(tmp_path):
+    events = pd.DataFrame(
+        {
+            "ocel:eid": ["e1"],
+            "ocel:activity": ["act"],
+            "ocel:timestamp": pd.to_datetime(["2022-01-01"], utc=True),
+        }
+    )
+    objects = pd.DataFrame(
+        {
+            "ocel:oid": ["o1", "o2", "i1", "i2"],
+            "ocel:type": ["order", "order", "item", "item"],
+        }
+    )
+    relations = pd.DataFrame(
+        {
+            "ocel:eid": ["e1", "e1", "e1", "e1"],
+            "ocel:activity": ["act", "act", "act", "act"],
+            "ocel:timestamp": pd.to_datetime(["2022-01-01"] * 4, utc=True),
+            "ocel:oid": ["o1", "o2", "i1", "i2"],
+            "ocel:type": ["order", "order", "item", "item"],
+            "ocel:qualifier": ["places", "places", "places", "places"],
+        }
+    )
+    o2o = pd.DataFrame(
+        {
+            "ocel:oid": ["o1", "o1", "o2", "o2"],
+            "ocel:oid_2": ["i1", "i2", "i1", "i2"],
+            "ocel:qualifier": ["None", "none", "NA", "N/A"],
+        }
+    )
+    ocel = OCEL(events=events, objects=objects, relations=relations, o2o=o2o)
+    path = str(tmp_path / "null_o2o_qualifier.jsonocel")
+    _write_ocel(ocel, path)
+    return path
+
+
+@pytest.fixture
+def shared_qualifier_ocel(tmp_path):
+    events = pd.DataFrame(
+        {
+            "ocel:eid": ["e1"],
+            "ocel:activity": ["act"],
+            "ocel:timestamp": pd.to_datetime(["2022-01-01"], utc=True),
+        }
+    )
+    objects = pd.DataFrame(
+        {
+            "ocel:oid": ["o1", "i1"],
+            "ocel:type": ["order", "item"],
+        }
+    )
+    relations = pd.DataFrame(
+        {
+            "ocel:eid": ["e1", "e1"],
+            "ocel:activity": ["act", "act"],
+            "ocel:timestamp": pd.to_datetime(["2022-01-01", "2022-01-01"], utc=True),
+            "ocel:oid": ["o1", "i1"],
+            "ocel:type": ["order", "item"],
+            "ocel:qualifier": ["contains", "contains"],
+        }
+    )
+    o2o = pd.DataFrame(
+        {
+            "ocel:oid": ["o1"],
+            "ocel:oid_2": ["i1"],
+            "ocel:qualifier": ["contains"],
+        }
+    )
+    ocel = OCEL(events=events, objects=objects, relations=relations, o2o=o2o)
+    path = str(tmp_path / "shared_qualifier.jsonocel")
     _write_ocel(ocel, path)
     return path
 
@@ -266,21 +343,36 @@ def test_explicit_e2o_qualifier_stored_as_relation_name(explicit_qualifier_ocel)
     assert "updates" in relation_types
 
 
-def test_null_placeholder_qualifiers_normalised_to_modifies(null_qualifier_ocel):
+def test_null_e2o_placeholder_qualifiers_normalised_to_modifies(null_qualifier_ocel):
     oced = PM4PyLoader(null_qualifier_ocel, {}).get_oced()
     assert "modifies" in oced.get_relation_types()
     for placeholder in ("None", "none", "NA", "N/A"):
         assert placeholder not in oced.get_relation_types()
 
 
-def test_o2o_relation_stored_with_o2o_suffix(o2o_ocel):
-    oced = PM4PyLoader(o2o_ocel, {}).get_oced()
-    assert "contains_o2o" in oced.get_relation_types()
+def test_null_o2o_placeholder_qualifiers_normalised_to_relates(null_o2o_qualifier_ocel):
+    oced = PM4PyLoader(null_o2o_qualifier_ocel, {}).get_oced()
+    assert oced.get_relation_types(RelationKind.O2O) == ["relates"]
 
 
-def test_o2o_original_qualifier_not_stored_without_suffix(o2o_ocel):
+def test_o2o_relation_keeps_its_own_qualifier(o2o_ocel):
     oced = PM4PyLoader(o2o_ocel, {}).get_oced()
+    assert oced.get_relation_types(RelationKind.O2O) == ["contains"]
+
+
+def test_qualifier_used_by_both_families_suffixed_on_both_sides(shared_qualifier_ocel):
+    oced = PM4PyLoader(shared_qualifier_ocel, {}).get_oced()
+    assert oced.get_relation_types(RelationKind.E2O) == ["contains_e2o"]
+    assert oced.get_relation_types(RelationKind.O2O) == ["contains_o2o"]
     assert "contains" not in oced.get_relation_types()
+
+
+def test_a_suffixed_name_the_log_already_uses_is_moved_out_of_the_way():
+    e2o, o2o = _relation_names(
+        pd.Series(["contains", "contains_e2o"]), pd.Series(["contains"])
+    )
+    assert e2o == {"contains": "contains_e2o_", "contains_e2o": "contains_e2o"}
+    assert o2o == {"contains": "contains_o2o"}
 
 
 def test_o2o_null_values_raises(simple_ocel, monkeypatch):

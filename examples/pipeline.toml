@@ -3,7 +3,8 @@
 #
 #     semlog build --config examples/pipeline.toml
 #
-# It writes one file, examples/out/pipeline.owl.
+# It writes one file, examples/out/pipeline.owl, in OWL functional syntax.
+# Set streaming = false for RDF/XML.
 
 input = "tests/fixtures/pipeline.jsonocel"
 output = "examples/out"

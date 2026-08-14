@@ -17,19 +17,82 @@ from collections import defaultdict
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.data.binning import dist_bin_series, equal_bin_series
+from semanticlog.core.enums import DataRepresentation
+from semanticlog.core.summary import count_phrase, name_lines
+from semanticlog.data.binning import Binning, fit_dist_bins, fit_equal_bins
 from semanticlog.data.oced import OCEDStore
 from semanticlog.onto.emitters.base import Emitter
-from semanticlog.onto.settings import DataRepresentation
+from semanticlog.onto.settings import OntoBuildSettings
 
 logger = logging.getLogger(__name__)
+
+# Above this many owners, the count reads better than the list of names.
+_MAX_NAMED_OWNERS = 3
+
+
+def _numeric_columns(data: OCEDStore) -> dict[str, list[pd.Series]]:
+    """Collect every numeric column of each attribute, across the whole store.
+
+    An attribute reaches the build once per table that carries it, and the
+    attribute history reaches it again. All of those share one class and one
+    pool of value individuals, so binning has to see all of them at once.
+    """
+    columns: dict[str, list[pd.Series]] = defaultdict(list)
+    for view in data.tables():
+        for column in view.attributes:
+            if not pd.api.types.is_numeric_dtype(view.frame[column]):
+                continue
+            values = view.frame[column].dropna()
+            if not values.empty:
+                columns[column].append(values)
+    return columns
+
+
+def attribute_binnings(
+    data: OCEDStore, settings: OntoBuildSettings
+) -> dict[str, Binning]:
+    """Fit the bins of every numeric attribute the build will bin.
+
+    Each attribute is cut once, over every value it takes anywhere in the
+    store, so one number falls in the same bin whichever table it was read
+    from. An attribute with too few distinct values to bin is absent, and the
+    emitter keeps its raw values instead.
+
+    Args:
+        data: Store to fit over.
+        settings: Settings, for the binning mode, the bin count and the labels.
+
+    Returns:
+        Attribute name to its cut. Empty when the build does not bin.
+    """
+    mode = settings.binning_mode
+    if mode is None:
+        return {}
+    fit = fit_equal_bins if mode is DataRepresentation.EQUAL_BINS else fit_dist_bins
+
+    binnings: dict[str, Binning] = {}
+    for attribute, columns in _numeric_columns(data).items():
+        values = pd.concat(columns, ignore_index=True)
+        if not pd.api.types.is_numeric_dtype(values):
+            logger.warning(
+                f"BINNING: attribute '{attribute}' holds more than one numeric "
+                "type across the tables carrying it, so it is not binned."
+            )
+            continue
+        binning = fit(values, bins=settings.bins, labels=settings.bin_labels)
+        if binning is not None:
+            binnings[attribute] = binning
+    return binnings
 
 
 def attribute_owners(data: OCEDStore) -> dict[str, list[str]]:
     """Find which entity types carry each attribute.
 
     The owners become the domain of the `has_` property, so an attribute used
-    by two activities gets both of them as its domain.
+    by two activities gets both of them as its domain. The attribute history
+    counts as its object type carrying the attribute, since an attribute that
+    is empty for every object is dropped on load and would otherwise reach the
+    build with no owner at all.
 
     Args:
         data: Store to scan.
@@ -38,14 +101,9 @@ def attribute_owners(data: OCEDStore) -> dict[str, list[str]]:
         Attribute name to the sorted types that carry it.
     """
     owners: dict[str, set[str]] = defaultdict(set)
-    for activity in data.get_event_types():
-        table = data.get_event_table(activity)
-        for column in set(table.data.columns) - {table.id, table.time}:
-            owners[column].add(activity)
-    for obj_type in data.get_object_types():
-        obj = data.get_object_table(obj_type)
-        for column in set(obj.data.columns) - {obj.id}:
-            owners[column].add(obj_type)
+    for view in data.tables():
+        for column in view.attributes:
+            owners[column].add(view.name)
     return {attribute: sorted(types) for attribute, types in owners.items()}
 
 
@@ -60,6 +118,8 @@ def report_conflated_attributes(owners: dict[str, list[str]]) -> dict[str, list[
     One name becomes one class with one pool of value individuals, so a
     `weight` on events and a `weight` on objects end up meaning the same
     thing. Since that is sometimes intended, this warns instead of failing.
+    The owners of an attribute are named while there are few of them, and
+    counted once there are many.
 
     Args:
         owners: Attribute name to the types that carry it.
@@ -68,17 +128,32 @@ def report_conflated_attributes(owners: dict[str, list[str]]) -> dict[str, list[
         The entries with more than one owner.
     """
     conflated = {a: types for a, types in owners.items() if len(types) > 1}
-    if conflated:
-        detail = "; ".join(
-            f"{attribute!r} on {', '.join(types)}"
-            for attribute, types in sorted(conflated.items())
-        )
-        logger.warning(
-            f"ATTRIBUTE CONFLATION: {len(conflated)} attribute name(s) are shared by "
-            f"more than one entity type and become a single OWL class with shared "
-            f"value individuals: {detail}"
-        )
+    if not conflated:
+        return conflated
+
+    entities = len({owner for types in conflated.values() for owner in types})
+    logger.warning(
+        "Attribute conflation: "
+        f"{count_phrase([(entities, 'different entity', 'different entities')])} share "
+        f"{count_phrase([(len(conflated), 'attribute name', 'attribute names')])} "
+        "and their values are merged in one class each."
+    )
+    shared = [
+        f"{attribute} ({_owner_summary(types)})"
+        for attribute, types in sorted(conflated.items())
+    ]
+    for line in name_lines(
+        "attributes", shared, complete=logger.isEnabledFor(logging.DEBUG)
+    ):
+        logger.warning(line)
     return conflated
+
+
+def _owner_summary(types: list[str]) -> str:
+    """Name the types carrying an attribute, or count them when there are many."""
+    if len(types) > _MAX_NAMED_OWNERS:
+        return count_phrase([(len(types), "type", "types")])
+    return ", ".join(types)
 
 
 class AttributeEmitter(Emitter):
@@ -91,73 +166,18 @@ class AttributeEmitter(Emitter):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._owners: dict[str, list[str]] = {}
+        self._binnings: dict[str, Binning] = {}
         self._emitted_values: dict[str, set[str]] = {}
+        self._emitted_literals: dict[str, set[str]] = {}
+        self._emitted_bins: dict[str, set[str]] = {}
 
     def bind_owners(self, owners: dict[str, list[str]]) -> None:
         """Supply the owner map used as the domain of each `has_` property."""
         self._owners = owners
 
-    @staticmethod
-    def check_converging_values(data: OCEDStore) -> None:
-        """Refuse attribute names that would produce the same value individual.
-
-        A value individual is named `attribute_value`, and an underscore is
-        legal in both halves, so `a` with value `b_c` and `a_b` with value `c`
-        would both be `a_b_c`. Only attribute pairs that differ by an
-        underscore can collide this way, so only those are compared.
-
-        Args:
-            data: Store to check.
-
-        Raises:
-            NameCollisionError: If two attributes have a value in common under
-                this naming, quoting one example.
-        """
-        owners = attribute_owners(data)
-        candidates = [
-            (shorter, longer)
-            for shorter in owners
-            for longer in owners
-            if shorter != longer and longer.startswith(f"{shorter}_")
-        ]
-        if not candidates:
-            return
-
-        values = {
-            attribute: AttributeEmitter._distinct_values(data, attribute, types)
-            for attribute, types in owners.items()
-            if any(attribute in pair for pair in candidates)
-        }
-        for shorter, longer in candidates:
-            shared = {
-                vocab.attribute_value(shorter, v) for v in values.get(shorter, ())
-            } & {vocab.attribute_value(longer, v) for v in values.get(longer, ())}
-            if shared:
-                example = sorted(shared)[0]
-                raise vocab.NameCollisionError(
-                    f"{example!r} would be emitted for a value of attribute "
-                    f"{shorter!r} and for a value of attribute {longer!r}, which "
-                    "makes one individual the value of both:\n"
-                    f"  {shorter!r} and {longer!r} differ only by an underscore, "
-                    "which is also legal inside a value.\n\n"
-                    "Rename one of the two columns in the input data before building."
-                )
-
-    @staticmethod
-    def _distinct_values(
-        data: OCEDStore, attribute: str, types: list[str]
-    ) -> set[object]:
-        """Collect the distinct values an attribute takes across its owners."""
-        found: set[object] = set()
-        activities = set(data.get_event_types())
-        for entity_type in types:
-            if entity_type in activities:
-                table = data.get_event_table(entity_type).data
-            else:
-                table = data.get_object_table(entity_type).data
-            if attribute in table.columns:
-                found |= set(table[attribute].dropna().unique())
-        return found
+    def bind_binnings(self, binnings: dict[str, Binning]) -> None:
+        """Supply the cut of each attribute the build bins."""
+        self._binnings = binnings
 
     def emit_columns(
         self,
@@ -205,12 +225,33 @@ class AttributeEmitter(Emitter):
             owner = "event" if attribute_parent == vocab.EVENT_ATTRIBUTE else "object"
             self.annotations.attribute(attr, prop, owner)
 
-            if pd.api.types.is_datetime64_any_dtype(s):
-                self.emit_values(df_attr, key_col, attr, prop, True)
-            elif pd.api.types.is_numeric_dtype(s):
-                self._emit_numeric(df_attr, key_col, attr, prop, dr)
-            else:
-                self.emit_values(df_attr, key_col, attr, prop, False)
+            self.emit_column_values(df_attr, key_col, attr, prop)
+
+    def emit_column_values(
+        self, df_attr: pd.DataFrame, key_col: str, attr: str, prop: str
+    ) -> None:
+        """Emit one attribute column under the data representation of the build.
+
+        The class and the property are expected to be declared already. This
+        is the one place that decides what a value looks like in the output,
+        so the attribute history reaches values the same way the main pass
+        does.
+
+        Args:
+            df_attr: Two columns, the owner and the value, with no gaps.
+            key_col: Column holding the owner id.
+            attr: Attribute the values belong to.
+            prop: Property linking an owner to a value.
+        """
+        s = df_attr[attr]
+        if pd.api.types.is_datetime64_any_dtype(s):
+            self.emit_values(df_attr, key_col, attr, prop, True)
+        elif pd.api.types.is_numeric_dtype(s):
+            self._emit_numeric(
+                df_attr, key_col, attr, prop, self.settings.data_representations
+            )
+        else:
+            self.emit_values(df_attr, key_col, attr, prop, False)
 
     def _emit_numeric(
         self,
@@ -225,11 +266,15 @@ class AttributeEmitter(Emitter):
         if raw_values:
             self.emit_values(df_attr, key_col, attr, prop, True)
 
-        binned = self._bin(df_attr[attr])
-        if binned is None:
+        if self.settings.binning_mode is None:
             return
 
-        df_binned = df_attr.assign(_bin=binned)
+        binning = self._binnings.get(attr)
+        if binning is None:
+            self._emit_unbinnable(df_attr, key_col, attr, prop, raw_values)
+            return
+
+        df_binned = df_attr.assign(_bin=binning.apply(df_attr[attr]))
         in_bin = df_binned[df_binned["_bin"].notna()]
         out_of_bin = df_binned[df_binned["_bin"].isna()]
 
@@ -239,29 +284,46 @@ class AttributeEmitter(Emitter):
         self._emit_bin_classes(in_bin, attr)
         self._emit_out_of_bin(out_of_bin, key_col, attr, prop, raw_values)
 
-    def _bin(self, values: pd.Series) -> pd.Series | None:
-        """Bin a column with the selected strategy, or None if binning is off."""
-        mode = self.settings.binning_mode
-        if mode is None:
-            return None
-        binner = (
-            equal_bin_series
-            if mode is DataRepresentation.EQUAL_BINS
-            else dist_bin_series
+    def _emit_unbinnable(
+        self,
+        df_attr: pd.DataFrame,
+        key_col: str,
+        attr: str,
+        prop: str,
+        raw_values: bool,
+    ) -> None:
+        """Emit the values of a column that has too few of them to bin.
+
+        A class per distinct number would be a bin in name only, so the column
+        gets no bin classes. Its values are still individuals, carrying the
+        literal only when the build asked for raw values.
+        """
+        logger.warning(
+            f"BINNING: attribute '{attr}' has too few distinct values to bin"
+            + ("." if raw_values else ", so its values carry no bin class.")
         )
-        return binner(values, bins=self.settings.bins, labels=self.settings.bin_labels)
+        if not raw_values:
+            self.emit_values(df_attr, key_col, attr, prop, False)
 
     def _emit_bin_classes(self, in_bin: pd.DataFrame, attr: str) -> None:
-        """Emit one subclass per bin, holding the value individuals in it."""
+        """Emit one subclass per bin, holding the value individuals in it.
+
+        A value individual belongs to one bin however many tables the number
+        was read from, so the ones already placed are skipped.
+        """
+        placed = self._emitted_bins.setdefault(attr, set())
         for bin_label, bin_group in in_bin.groupby("_bin", observed=True):
             bin_cls = vocab.bin_class(attr, bin_label)
             self.sink.add_class(
                 bin_cls, attr, source=f"a bin of {attribute_source(attr)}"
             )
-            value_inds = [
-                vocab.attribute_value(attr, v) for v in bin_group[attr].unique()
+            fresh = [
+                name
+                for value in bin_group[attr].unique()
+                if (name := vocab.attribute_value(attr, value)) not in placed
             ]
-            self.sink.assert_individuals(value_inds, bin_cls)
+            placed.update(fresh)
+            self.sink.assert_individuals(fresh, bin_cls)
 
     def _emit_out_of_bin(
         self,
@@ -271,20 +333,20 @@ class AttributeEmitter(Emitter):
         prop: str,
         raw_values: bool,
     ) -> None:
-        """Report values that fell outside every bin, and keep them as numbers.
+        """Report values that fell outside every bin, and emit them anyway.
 
-        A value with no bin would otherwise vanish from the ontology, so when
-        raw values are not already being emitted, these are.
+        A value with no bin would otherwise vanish from the ontology. It is
+        emitted as an individual like every other value of the attribute,
+        carrying the literal only when the build asked for raw values.
         """
         if out_of_bin.empty:
             return
         logger.warning(
             f"BINNING: {len(out_of_bin)} value(s) for attribute '{attr}' fall "
             "outside all bin boundaries and carry no bin class."
-            + ("" if raw_values else " Using the raw numeric value instead.")
         )
         if not raw_values:
-            self.emit_values(out_of_bin, key_col, attr, prop, True)
+            self.emit_values(out_of_bin, key_col, attr, prop, False)
 
     def emit_values(
         self,
@@ -302,8 +364,9 @@ class AttributeEmitter(Emitter):
             attr: Attribute the values belong to.
             prop: Property linking an owner to a value.
             also_assert_data_value: Also keep the literal on the value
-                individual, which is wanted for numbers and timestamps and
-                redundant for text.
+                individual. Wanted for numbers and timestamps, redundant for
+                text, and off for every value of a build that bins its numbers
+                instead of keeping them.
         """
         tmp = df.copy()
 
@@ -324,10 +387,25 @@ class AttributeEmitter(Emitter):
         self.sink.assert_relations(tmp, prop=prop, from_key=key_col, to_key="attr_ind")
 
         if also_assert_data_value:
-            self.sink.assert_relations(
-                tmp,
-                prop=vocab.HAS_DATA_VALUE,
-                from_key="attr_ind",
-                to_key=attr,
-                data_prop=True,
-            )
+            self._emit_literals(tmp, attr)
+
+    def _emit_literals(self, tmp: pd.DataFrame, attr: str) -> None:
+        """Keep the literal on each value individual, once per individual.
+
+        A value individual is named after its value, so it carries one
+        literal however many owners point at it and however many passes reach
+        it. The attribute history reaches values the main pass has already
+        emitted, so the ones already written are skipped here.
+        """
+        written = self._emitted_literals.setdefault(attr, set())
+        fresh = tmp[~tmp["attr_ind"].isin(written)].drop_duplicates("attr_ind")
+        if fresh.empty:
+            return
+        written.update(fresh["attr_ind"])
+        self.sink.assert_relations(
+            fresh,
+            prop=vocab.HAS_DATA_VALUE,
+            from_key="attr_ind",
+            to_key=attr,
+            data_prop=True,
+        )

@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from semanticlog.data.loading.classical_loader import ClassicalLoader
-from semanticlog.data.oced import EntityKind, RelationKind
+from semanticlog.data.tables import EntityKind, RelationKind
 
 _CSV_CONTENT = """case:concept:name,concept:name,time:timestamp,resource
 c1,A,2022-01-01 08:00:00,Alice
@@ -83,9 +83,87 @@ def test_get_oced_extra_object_col_creates_object_type_and_relation(csv_path):
 
 
 def test_get_oced_extra_object_col_resource_ids_present(csv_path):
+    """Ids are prefixed with their column, so no two object types can share one."""
     oced = ClassicalLoader(csv_path, {"object_cols": ["resource"]}).get_oced()
     resource_ids = set(oced.get_ids(EntityKind.OBJECT, "resource"))
-    assert resource_ids == {"Alice", "Bob", "Charlie"}
+    assert resource_ids == {"resource_Alice", "resource_Bob", "resource_Charlie"}
+
+
+# --------------------------------------------------------------------------
+# Attributes
+# --------------------------------------------------------------------------
+
+
+def test_a_column_that_varies_within_a_case_stays_on_the_events(csv_path):
+    oced = ClassicalLoader(csv_path, {}).get_oced()
+
+    # Alice and Bob both work on c1, so resource cannot describe the case.
+    assert "resource" in oced.get_event_table("A").data.columns
+    assert "resource" not in oced.get_object_table("case:concept:name").data.columns
+
+
+def test_a_column_constant_within_a_case_is_lifted_onto_it(tmp_path):
+    path = tmp_path / "log.csv"
+    pd.DataFrame(
+        {
+            "case:concept:name": ["c1", "c1", "c2"],
+            "concept:name": ["A", "B", "A"],
+            "time:timestamp": [
+                "2024-01-01T00:00:00Z",
+                "2024-01-02T00:00:00Z",
+                "2024-01-03T00:00:00Z",
+            ],
+            "region": ["north", "north", "south"],
+            "cost": [10, 20, 30],
+        }
+    ).to_csv(path, index=False)
+
+    oced = ClassicalLoader(str(path), {}).get_oced()
+    cases = oced.get_object_table("case:concept:name").data
+
+    assert set(cases["region"]) == {"north", "south"}
+    assert "cost" not in cases.columns
+    assert "cost" in oced.get_event_table("A").data.columns
+
+
+def test_the_activity_and_the_timestamp_do_not_become_attributes(csv_path):
+    oced = ClassicalLoader(csv_path, {}).get_oced()
+    events = oced.get_event_table("A").data
+
+    assert "concept:name" not in events.columns
+    assert set(events.columns) == {"event_id", "time:timestamp", "resource"}
+
+
+@pytest.mark.parametrize(
+    ("setting", "column"),
+    [("act_col", "concept:name"), ("time_col", "time:timestamp")],
+)
+def test_an_unknown_column_is_named_like_the_case_column_is(tmp_path, setting, column):
+    path = tmp_path / "log.csv"
+    pd.DataFrame(
+        {
+            "case:concept:name": ["c1"],
+            "concept:name": ["a"],
+            "time:timestamp": ["2024-01-01T00:00:00Z"],
+        }
+    ).to_csv(path, index=False)
+
+    with pytest.raises(ValueError, match="missing_column"):
+        ClassicalLoader(str(path), {setting: "missing_column"}).get_oced()
+
+
+def test_an_unknown_object_col_is_named(tmp_path):
+    path = tmp_path / "log.csv"
+    pd.DataFrame(
+        {
+            "case:concept:name": ["c1"],
+            "concept:name": ["a"],
+            "time:timestamp": ["2024-01-01T00:00:00Z"],
+        }
+    ).to_csv(path, index=False)
+
+    with pytest.raises(ValueError, match="object_cols"):
+        ClassicalLoader(str(path), {"object_cols": ["nope"]}).get_oced()
 
 
 def test_a_custom_case_col_is_actually_used(tmp_path):

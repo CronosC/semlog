@@ -4,12 +4,12 @@ import pandas as pd
 import pytest
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.onto.builder import construct_tbox
-from semanticlog.onto.settings import (
+from semanticlog.core.enums import (
     InverseRepresentation,
     OCELExtension,
-    OntoBuildSettings,
 )
+from semanticlog.onto.settings import OntoBuildSettings
+from tests.support.tbox import construct_tbox
 
 TEST_IRI = "https://test.example.org/vocab#"
 

@@ -1,4 +1,4 @@
-"""Every IRI local name a build may emit.
+"""Every IRI a build may emit: the namespace, and every local name in it.
 
 The upper schema names are constants, the names derived from log content are
 built by the functions below, and nothing outside this module formats an
@@ -14,10 +14,15 @@ from typing import Any
 
 import pandas as pd
 
+# The namespace a build puts its names in when it is given no other.
+DEFAULT_IRI: str = "https://oced#"
+
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
 
 
-SAFE_LOCAL_NAME = re.compile(r"[A-Za-z0-9_.+~-]+")
+# `+` and `~` are legal in an IRI but not in an XML element name, and RDF/XML
+# writes a property as an element, so a name holding one cannot be serialized.
+SAFE_LOCAL_NAME = re.compile(r"[A-Za-z0-9_.-]+")
 
 
 class UnsafeLocalNameError(ValueError):
@@ -196,6 +201,10 @@ def attribute_change_ids(
 ) -> pd.Series:
     """Return individual names for attribute change records.
 
+    An object, an attribute and a moment name one change. A log that records
+    two changes of one attribute at one instant would otherwise put both new
+    values on one record, so the second and later of them are numbered.
+
     Args:
         object_ids: Object each change belongs to.
         attribute: Attribute that changed.
@@ -204,7 +213,7 @@ def attribute_change_ids(
     Returns:
         One name per row, aligned with the inputs.
     """
-    return (
+    base = (
         "AttrChange_"
         + object_ids.astype(str)
         + "_"
@@ -212,10 +221,14 @@ def attribute_change_ids(
         + "_"
         + timestamp_ids.astype(str)
     )
+    repeat = base.groupby(base).cumcount()
+    return base.where(repeat == 0, base + "_" + (repeat + 1).astype(str))
 
 
 def derived_schema_names(
-    object_types: Iterable[str], attributes: Iterable[str]
+    object_types: Iterable[str],
+    attributes: Iterable[str],
+    bin_labels: Iterable[str] = (),
 ) -> frozenset[str]:
     """Return the schema names a build would derive from the given log content.
 
@@ -225,12 +238,16 @@ def derived_schema_names(
     Args:
         object_types: Object types that could serve as case concepts.
         attributes: Attribute names found on events and objects.
+        bin_labels: Bin labels the build will use, if it bins numbers. The
+            labels are not derivable from the log, so a caller that knows the
+            settings passes them.
 
     Returns:
         Every derived class and property name, including their inverses.
     """
     classes: set[str] = set()
     properties: set[str] = set()
+    labels = list(bin_labels)
 
     for obj_type in object_types:
         classes.update({start_class(obj_type), end_class(obj_type)})
@@ -238,6 +255,7 @@ def derived_schema_names(
 
     for attribute in attributes:
         classes.add(attribute_change_class(attribute))
+        classes.update(bin_class(attribute, label) for label in labels)
         properties.update(
             {has_attribute_property(attribute), change_value_property(attribute)}
         )

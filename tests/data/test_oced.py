@@ -4,8 +4,9 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
-from semanticlog.data.flatten import get_log, get_logs
-from semanticlog.data.oced import EntityKind, OCEDStore, RelationKind
+from semanticlog.data.flatten import get_log, iter_logs
+from semanticlog.data.oced import OCEDStore
+from semanticlog.data.tables import EntityKind, RelationKind
 
 
 def _make_oced_with_e2o():
@@ -40,18 +41,11 @@ def test_add_event_raises_for_missing_required_columns(event_df_1):
         oced.add_event("type1", "event", "timestamp", bad)
 
 
-def test_add_event_raises_on_duplicate_without_overwrite(event_df_2):
+def test_add_event_raises_on_a_second_table_for_one_activity(event_df_2):
     oced = OCEDStore()
     oced.add_event("type2", "event", "timestamp", event_df_2)
     with pytest.raises(ValueError):
         oced.add_event("type2", "event", "timestamp", event_df_2)
-
-
-def test_add_event_overwrites_existing_when_flag_set(event_df_2):
-    oced = OCEDStore()
-    oced.add_event("type2", "event", "timestamp", event_df_2)
-    oced.add_event("type2", "event", "timestamp", event_df_2, overwrite=True)
-    assert_frame_equal(oced.get_event_table("type2").data, event_df_2)
 
 
 def test_add_object_stores_metadata_and_data(object_df_a):
@@ -68,20 +62,11 @@ def test_add_object_raises_for_missing_id_column(object_df_a):
         oced.add_object("A", "nonexistent_col", object_df_a)
 
 
-def test_add_object_raises_on_duplicate_without_overwrite(object_df_a):
+def test_add_object_raises_on_a_second_table_for_one_type(object_df_a):
     oced = OCEDStore()
     oced.add_object("A", "object", object_df_a)
     with pytest.raises(ValueError):
         oced.add_object("A", "object", object_df_a)
-
-
-def test_add_object_overwrite_replaces_data():
-    oced = OCEDStore()
-    oced.add_object("A", "oid", pd.DataFrame({"oid": [1, 2]}))
-    replacement = pd.DataFrame({"oid": [10, 20]})
-    oced.add_object("A", "oid", replacement, overwrite=True)
-    result_ids = list(oced.get_object_table("A").data["oid"])
-    assert result_ids == [10, 20]
 
 
 def test_get_object_types_returns_all_added_types(object_df_a, object_df_b):
@@ -97,6 +82,16 @@ def test_get_most_common_objects_returns_sorted_by_size(object_df_a, object_df_b
     oced.add_object("B", "object", object_df_b)
     assert oced.get_most_common_objects(n=1) == ["A"]
     assert oced.get_most_common_objects(n=2) == ["A", "B"]
+
+
+def test_get_most_common_objects_refuses_a_negative_count(object_df_a, object_df_b):
+    """A negative slice would read as "all but the smallest" instead."""
+    oced = OCEDStore()
+    oced.add_object("A", "object", object_df_a)
+    oced.add_object("B", "object", object_df_b)
+
+    with pytest.raises(ValueError, match="needs n >= 0"):
+        oced.get_most_common_objects(n=-1)
 
 
 def test_rename_activity_updates_key(minimal_oced):
@@ -321,23 +316,6 @@ def test_get_relation_types_o2o_returns_only_o2o(minimal_oced):
     assert "rel1" not in types
 
 
-def test_get_types_returns_object_type_for_known_object_id():
-    oced = OCEDStore()
-    oced.add_object("A", "object", pd.DataFrame({"object": ["o1", "o2"]}))
-    assert oced.get_types(["o1"]) == ["A"]
-
-
-def test_get_types_returns_activity_for_known_event_id(event_df_1):
-    oced = OCEDStore()
-    oced.add_event("event_type", "event", "timestamp", event_df_1)
-    assert oced.get_types(["e2"]) == ["event_type"]
-
-
-def test_get_types_returns_empty_for_unknown_id():
-    oced = OCEDStore()
-    assert oced.get_types(["nonexistent"]) == []
-
-
 def test_get_ids_event_returns_correct_ids(event_df_1):
     oced = OCEDStore()
     oced.add_event("type1", "event", "timestamp", event_df_1)
@@ -417,7 +395,7 @@ def test_get_log_row_count_and_activity_column(minimal_oced):
     assert activity_counts["type2"] == 2
 
 
-def test_get_logs_matches_get_log_per_case_concept():
+def test_iter_logs_matches_get_log_per_case_concept():
     oced = OCEDStore()
     oced.add_object("A", "oid", pd.DataFrame({"oid": ["a1", "a2"]}))
     oced.add_object("B", "bid", pd.DataFrame({"bid": ["b1"]}))
@@ -440,20 +418,16 @@ def test_get_logs_matches_get_log_per_case_concept():
         "rel_b", "eid", "bid", ["B"], pd.DataFrame({"eid": ["e1"], "bid": ["b1"]})
     )
 
-    logs = get_logs(oced, ["A", "B"])
+    logs = dict(iter_logs(oced, ["A", "B"]))
 
     assert set(logs) == {"A", "B"}
     assert_frame_equal(logs["A"], get_log(oced, "A"))
     assert_frame_equal(logs["B"], get_log(oced, "B"))
 
 
-def test_get_logs_empty_input_returns_empty_dict(minimal_oced):
-    assert get_logs(minimal_oced, []) == {}
-
-
-def test_get_logs_propagates_unknown_case_concept(minimal_oced):
+def test_iter_logs_propagates_unknown_case_concept(minimal_oced):
     with pytest.raises(ValueError, match="Unknown object type"):
-        get_logs(minimal_oced, ["A", "no_such_type"])
+        list(iter_logs(minimal_oced, ["A", "no_such_type"]))
 
 
 def _make_object_changes_df():
@@ -554,28 +528,38 @@ def test_get_original_id_strips_custom_base_iri():
     assert result == "Order #123"
 
 
-def test_get_types_can_be_restricted_to_one_kind(event_df_1):
-    oced = OCEDStore()
-    oced.add_event("an_activity", "event", "timestamp", event_df_1)
-    oced.add_object("A", "object", pd.DataFrame({"object": ["o1"]}))
-    mixed = ["e1", "o1"]
-
-    assert oced.get_types(mixed) == ["A", "an_activity"]
-    assert oced.get_types(mixed, kind=EntityKind.OBJECT) == ["A"]
-    assert oced.get_types(mixed, kind=EntityKind.EVENT) == ["an_activity"]
-
-
 def test_the_store_takes_enums_not_strings(minimal_oced):
-    every_event_id = [
-        i
-        for a in minimal_oced.get_event_types()
-        for i in minimal_oced.get_ids(EntityKind.EVENT, a)
-    ]
-    assert minimal_oced.get_types(every_event_id, kind=EntityKind.EVENT) == (
-        minimal_oced.get_event_types()
-    )
     assert set(minimal_oced.get_relation_types(RelationKind.E2O)) <= set(
         minimal_oced.get_relation_types(RelationKind.ALL)
     )
     assert minimal_oced.get_e2o().keys() == minimal_oced.get_e2o().keys()
     assert minimal_oced.get_o2o().keys() == minimal_oced.get_o2o().keys()
+
+
+# --------------------------------------------------------------------------
+# A rejected add leaves the store as it was
+# --------------------------------------------------------------------------
+
+
+def test_add_event_with_duplicate_ids_leaves_the_store_unchanged():
+    oced = OCEDStore()
+    oced.add_object("A", "oid", pd.DataFrame({"oid": ["shared"]}))
+    clashing = pd.DataFrame(
+        {"eid": ["shared"], "ts": pd.date_range("2022-01-01", periods=1, tz="UTC")}
+    )
+
+    with pytest.raises(ValueError):
+        oced.add_event("E", "eid", "ts", clashing)
+
+    assert oced.get_event_types() == []
+
+
+def test_add_object_with_duplicate_ids_adds_no_table():
+    oced = OCEDStore()
+    oced.add_object("A", "oid", pd.DataFrame({"oid": ["o1"]}))
+    oced.add_object("B", "oid", pd.DataFrame({"oid": ["o2"]}))
+
+    with pytest.raises(ValueError):
+        oced.add_object("C", "oid", pd.DataFrame({"oid": ["o2"]}))
+
+    assert oced.get_object_types() == ["A", "B"]

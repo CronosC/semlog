@@ -6,12 +6,14 @@ consistent or write back everything the reasoner entails.
 """
 
 import logging
+from pathlib import Path
 
 from owlapy.owl_axiom import OWLObjectPropertyAssertionAxiom
 from owlapy.owl_ontology import SyncOntology
 from owlapy.owl_reasoner import SyncReasoner
 
-from semanticlog.onto.settings import OWLProfile
+from semanticlog.core.enums import REASONER_BACKENDS as REASONER_BACKENDS
+from semanticlog.core.enums import OWLProfile
 
 logger = logging.getLogger(__name__)
 
@@ -32,15 +34,38 @@ _GENERATORS_DL_ONLY = [
     "InferredObjectPropertyCharacteristicAxiomGenerator",
 ]
 
+# The OWL API generator for entailed property assertions. owlapy leaves it out
+# of the mapping `infer_axioms` looks names up in, so it is registered there
+# before use.
+_PROPERTY_ASSERTIONS = "InferredPropertyAssertionGenerator"
+
+# What a backend answers with UnsupportedOperationException instead of a result,
+# found by asking each backend for each generator over the example ontology.
+# HermiT and Pellet answer all of them.
+_UNSUPPORTED: dict[str, frozenset[str]] = {
+    "ELK": frozenset(
+        {
+            "InferredDisjointClassesAxiomGenerator",
+            "InferredEquivalentDataPropertiesAxiomGenerator",
+            "InferredInverseObjectPropertiesAxiomGenerator",
+            "InferredSubDataPropertyAxiomGenerator",
+            _PROPERTY_ASSERTIONS,
+        }
+    ),
+}
+
 
 class Reasoner:
     """A reasoner bound to one ontology file.
 
     Attributes:
         path: File the ontology was loaded from.
+        backend: Name of the reasoner doing the work.
         ontology: The loaded ontology.
         reasoner: The backend doing the work.
         possible_generators: Which sorts of entailment to ask for.
+        entails_property_assertions: Whether this backend answers for the
+            relations between individuals.
     """
 
     def __init__(
@@ -59,17 +84,40 @@ class Reasoner:
                 that profile has no axioms for them.
 
         Raises:
-            ValueError: If the backend is not one of the three supported.
+            ValueError: If the backend is not one of the three supported, or if
+                it refuses the ontology, such as HermiT on a timestamp carrying
+                microseconds.
+            FileNotFoundError: If there is no ontology at `path`. The OWL API
+                reports a missing file as a Java exception, which reaches the
+                caller as a stack trace rather than as a message.
         """
-        if backend not in ["HermiT", "Pellet", "ELK"]:
+        if backend not in REASONER_BACKENDS:
             raise ValueError(f"Unsupported reasoner backend: {backend}")
+        if not Path(path).is_file():
+            raise FileNotFoundError(
+                f"ontology file not found: {path}. 'semlog reason' reads an "
+                "ontology that has already been built."
+            )
 
         self.path = path
-        self.ontology = SyncOntology(self.path)
-        self.reasoner = SyncReasoner(self.ontology, reasoner=backend)
-        self.possible_generators = list(_GENERATORS_ALL)
+        self.backend = backend
+        try:
+            self.ontology = SyncOntology(self.path)
+            self.reasoner = SyncReasoner(self.ontology, reasoner=backend)
+        except Exception as exc:
+            others = ", ".join(b for b in REASONER_BACKENDS if b != backend)
+            raise ValueError(
+                f"{backend} will not read {path}:\n"
+                f"  {exc}\n"
+                f"Try one of the other backends: {others}."
+            ) from exc
+
+        unsupported = _UNSUPPORTED.get(backend, frozenset())
+        possible = list(_GENERATORS_ALL)
         if profile != OWLProfile.OWL2EL:
-            self.possible_generators.extend(_GENERATORS_DL_ONLY)
+            possible.extend(_GENERATORS_DL_ONLY)
+        self.possible_generators = [g for g in possible if g not in unsupported]
+        self.entails_property_assertions = _PROPERTY_ASSERTIONS not in unsupported
 
     def materialize(
         self, overwrite_old: bool = True, property_assertions: bool = True
@@ -86,8 +134,14 @@ class Reasoner:
         inferred = list(
             self.reasoner.infer_axioms(inference_types=self.possible_generators)
         )
-        if property_assertions:
+        if property_assertions and self.entails_property_assertions:
             inferred.extend(self.inferred_property_assertions())
+        elif property_assertions:
+            logger.info(
+                "  %s does not answer for entailed property assertions, "
+                "so none were asked for",
+                self.backend,
+            )
         self.ontology.add_axiom(inferred)
         if overwrite_old:
             self.save()
@@ -95,26 +149,34 @@ class Reasoner:
     def inferred_property_assertions(self) -> list[OWLObjectPropertyAssertionAxiom]:
         """Ask the reasoner for every entailed relation between individuals.
 
-        Every individual is queried against every object property, so the cost
-        grows with the product of the two.
+        The OWL API walks the individuals itself, so this is one call into Java
+        rather than one per individual and property.
 
         Returns:
-            The entailed assertions.
+            The entailed assertions. The generator also produces the data
+            property ones, which the ontology does not take from here.
         """
-        individuals = list(self.ontology.individuals_in_signature())
-        properties = list(self.ontology.object_properties_in_signature())
-        logger.info(
-            f"  querying {len(individuals)} individuals x {len(properties)} "
-            "object properties for entailed assertions.."
-        )
+        logger.info("  asking %s for entailed property assertions..", self.backend)
+        self._register_property_assertions()
         axioms = [
-            OWLObjectPropertyAssertionAxiom(individual, prop, value)
-            for individual in individuals
-            for prop in properties
-            for value in self.reasoner.object_property_values(individual, prop)
+            axiom
+            for axiom in self.reasoner.infer_axioms([_PROPERTY_ASSERTIONS])
+            if isinstance(axiom, OWLObjectPropertyAssertionAxiom)
         ]
         logger.info(f"  {len(axioms)} entailed object property assertion(s)")
         return axioms
+
+    def _register_property_assertions(self) -> None:
+        """Put the missing generator in the mapping `infer_axioms` reads."""
+        if _PROPERTY_ASSERTIONS in self.reasoner.inference_types_mapping:
+            return
+        from org.semanticweb.owlapi.util import (  # noqa: PLC0415
+            InferredPropertyAssertionGenerator,
+        )
+
+        self.reasoner.inference_types_mapping[_PROPERTY_ASSERTIONS] = (
+            InferredPropertyAssertionGenerator()
+        )
 
     def check(self) -> bool:
         """Report whether the ontology is consistent."""

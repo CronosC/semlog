@@ -5,17 +5,20 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from semanticlog.core.vocabulary import NameCollisionError, UnsafeLocalNameError
+from semanticlog.core.enums import (
+    DataRepresentation,
+    EventOrderRepresentation,
+)
+from semanticlog.core.vocabulary import (
+    DEFAULT_IRI,
+    NameCollisionError,
+    UnsafeLocalNameError,
+)
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.oced import OCEDStore
 from semanticlog.onto.audit import audit_build
 from semanticlog.onto.builder import OCEDOntoBuilder
-from semanticlog.onto.settings import (
-    DEFAULT_IRI,
-    DataRepresentation,
-    EventOrderRepresentation,
-    OntoBuildSettings,
-)
+from semanticlog.onto.settings import OntoBuildSettings
 
 NS = DEFAULT_IRI
 
@@ -56,6 +59,47 @@ def test_ambiguous_underscore_split_is_rejected():
     assert "'a_b'" in message
 
 
+def test_an_attribute_only_the_history_carries_is_checked_for_ambiguity():
+    """A column empty for every object is dropped by the loader and survives
+    only in the change history, which is the shape built here. Its values still
+    become the same individuals, so the check has to see it there.
+    """
+    data = OCEDStore(ocel_mode=True)
+    data.add_event(
+        "act",
+        id_col="eid",
+        time_col="t",
+        data=pd.DataFrame({"eid": ["e1"], "t": [datetime(2024, 1, 1)]}),
+    )
+    data.add_object(
+        "order", id_col="oid", data=pd.DataFrame({"oid": ["o1"], "a": ["b_c"]})
+    )
+    data.add_event_to_object_relation(
+        "rel",
+        from_id_col="eid",
+        to_id_col="oid",
+        to_type=["order"],
+        data=pd.DataFrame({"eid": ["e1"], "oid": ["o1"]}),
+    )
+    data.add_object_changes(
+        "order",
+        pd.DataFrame(
+            {
+                "ocel:oid": ["o1"],
+                "ocel:type": ["order"],
+                "ocel:timestamp": [datetime(2024, 1, 2)],
+                "ocel:field": ["a_b"],
+                "a_b": ["c"],
+            }
+        ),
+    )
+    store = clean_oced_data(data)
+    assert "a_b" not in store.get_object_table("order").data.columns
+
+    with pytest.raises(NameCollisionError, match="a_b_c"):
+        _build(store)
+
+
 def test_an_ambiguous_split_is_rejected_before_any_axiom_is_written():
     store = clean_oced_data(
         _store(pd.DataFrame({"oid": ["o1"], "a_b": ["c"], "a": ["b_c"]}))
@@ -65,7 +109,7 @@ def test_an_ambiguous_split_is_rejected_before_any_axiom_is_written():
     with pytest.raises(NameCollisionError):
         builder.build_ontology(store)
 
-    assert list(builder.onto.classes_in_signature()) == []
+    assert list(builder.sink.onto.classes_in_signature()) == []
 
 
 def test_prefix_related_attributes_with_disjoint_values_are_accepted():
@@ -88,7 +132,6 @@ def test_a_bin_class_cannot_collide_with_a_value_individual():
         "priced",
         id_col="oid",
         data=pd.DataFrame({"oid": ["p1", "p2"], "price": [1.0, 2.0]}),
-        overwrite=True,
     )
 
     semlog = _build(store, settings)

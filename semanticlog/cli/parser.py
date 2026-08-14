@@ -11,38 +11,32 @@ from __future__ import annotations
 import argparse
 import logging
 import textwrap
-from importlib.metadata import PackageNotFoundError, version
 
-from semanticlog.cli.config import BUILD_DEFAULTS, enum_choices
-from semanticlog.onto.settings import (
-    DEFAULT_BIN_LABELS,
-    DataRepresentation,
-    EventOrderRepresentation,
-    InverseRepresentation,
+from semanticlog.cli.config import (
+    BUILD_DEFAULTS,
+    BUILD_SETTINGS,
+)
+from semanticlog.core.enums import (
+    REASONER_BACKENDS,
     OCELExtension,
     OWLProfile,
+    resolve_reasoner_backend,
 )
-
-_REASONER_BACKENDS = ["HermiT", "Pellet", "ELK"]
 
 
 def semlog_version() -> str:
-    """Return the installed version, or `unknown` when running from a checkout."""
-    try:
-        return version("semlog")
-    except PackageNotFoundError:
-        return "unknown"
+    """Return the version the package reports, which provenance also records."""
+    from semanticlog import __version__
+
+    return __version__
 
 
 def _reasoner_backend(value: str) -> str:
     """Accept a backend name in any case, and reject an unknown one."""
-    for known in _REASONER_BACKENDS:
-        if value.casefold() == known.casefold():
-            return known
-    raise argparse.ArgumentTypeError(
-        f"unknown reasoner backend {value!r}; choose from "
-        + ", ".join(_REASONER_BACKENDS)
-    )
+    try:
+        return resolve_reasoner_backend(value, key="--backend")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 _EPILOG = textwrap.dedent("""\
@@ -111,165 +105,12 @@ def _add_build_parser(sub, parent: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Print the resolved configuration and the files it would write, then stop.",
     )
-    build.add_argument(
-        "--output",
-        metavar="DIR",
-        help=f"Directory for the ontology (default: {BUILD_DEFAULTS['output']}).",
-    )
-    build.add_argument(
-        "--name",
-        metavar="STEM",
-        help=(
-            "Shared stem for every artifact of this run. Defaults to the "
-            "--config file name for a single input, otherwise to the input name."
-        ),
-    )
-    build.add_argument(
-        "--profile",
-        metavar="PROFILE",
-        help=f"OWL profile: {' | '.join(enum_choices(OWLProfile))} (default: {BUILD_DEFAULTS['profile']}).",
-    )
-    build.add_argument(
-        "--order-representations",
-        nargs="*",
-        metavar="MODE",
-        help=(
-            "Event order representations: "
-            f"{' | '.join(enum_choices(EventOrderRepresentation))}. "
-            "Pass --order-representations with no values for none. Default: df."
-        ),
-    )
-    build.add_argument(
-        "--case-concepts",
-        nargs="*",
-        metavar="TYPE",
-        help=(
-            "Object types to use as cases. Omit to auto-select the most common "
-            "types; pass --case-concepts with no values for none. Run "
-            "'semlog inspect' to see the available names."
-        ),
-    )
-    build.add_argument(
-        "--auto-case-concepts",
-        type=int,
-        metavar="N",
-        help=f"How many object types to auto-select (default: {BUILD_DEFAULTS['auto_case_concepts']}).",
-    )
-    build.add_argument(
-        "--data-representations",
-        nargs="*",
-        metavar="MODE",
-        help=(
-            "How numeric attributes are represented: "
-            f"{' | '.join(enum_choices(DataRepresentation))}. "
-            "values keeps the raw number, equal_bins buckets by frequency, "
-            "dist_bins fits a distribution first. equal_bins and dist_bins are "
-            "mutually exclusive. Pass no values to omit numeric attributes. "
-            "Default: values."
-        ),
-    )
-    build.add_argument(
-        "--bins",
-        type=int,
-        metavar="N",
-        help=f"Bin count for the binning modes (default: {BUILD_DEFAULTS['bins']}).",
-    )
-    build.add_argument(
-        "--bin-labels",
-        nargs="+",
-        metavar="LABEL",
-        help=(
-            "Bin labels, exactly --bins of them "
-            f"(default: {' '.join(DEFAULT_BIN_LABELS)})."
-        ),
-    )
-    build.add_argument(
-        "--inverse-representations",
-        nargs="*",
-        metavar="MODE",
-        help=(
-            "Inverse relation strategies: "
-            f"{' | '.join(enum_choices(InverseRepresentation))}. "
-            "axiomatic adds InverseObjectProperty axioms (OWL2DL only), "
-            "implicit materialises the inverse assertions. Default: none."
-        ),
-    )
-    build.add_argument(
-        "--ocel-extensions",
-        nargs="*",
-        metavar="EXT",
-        help=(
-            f"OCEL 2.0 extensions: {' | '.join(enum_choices(OCELExtension))}. "
-            "Default: none."
-        ),
-    )
-    build.add_argument(
-        "--annotation-document",
-        metavar="JSON",
-        help="JSON file mapping entity names to {label, comment} dicts.",
-    )
-    build.add_argument(
-        "--derive-annotations",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Emit rdfs:label on individuals derived from the source data (default: off).",
-    )
-    build.add_argument(
-        "--declare-file",
-        metavar="CSV",
-        help=(
-            "DECLARE constraints CSV, as written by 'semlog mine-declare'. "
-            "Required when --order-representations includes declare."
-        ),
-    )
-    build.add_argument(
-        "--materialize",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help=(
-            "Run the reasoner over each ontology after writing it (default: off). "
-            "'semlog reason' does the same thing to an existing file."
-        ),
-    )
-    build.add_argument(
-        "--reasoner-backend",
-        type=_reasoner_backend,
-        metavar="NAME",
-        help=f"Reasoner used by --materialize: {' | '.join(_REASONER_BACKENDS)} (default: HermiT).",
-    )
-    build.add_argument(
-        "--streaming",
-        action="store_true",
-        default=None,
-        help=(
-            "Write OWL functional syntax straight to disk at near-constant "
-            "memory, for logs too large to hold. No ontology is kept, so "
-            "--materialize is unavailable."
-        ),
-    )
-    build.add_argument(
-        "--save-backmap",
-        action="store_true",
-        default=None,
-        help="Also write the cleaned-name to original-name map as JSON.",
-    )
-    build.add_argument(
-        "--save-store",
-        action="store_true",
-        default=None,
-        help="Also write the loaded OCEDStore as a Parquet directory.",
-    )
-    build.add_argument(
-        "--size-limit-mb",
-        type=int,
-        metavar="MB",
-        help="Skip inputs larger than this many MB (default: 0, no limit).",
-    )
-    build.add_argument(
-        "--log-dir",
-        metavar="DIR",
-        help="Directory for per-input log files (default: no file logging).",
-    )
+    for setting in BUILD_SETTINGS:
+        if setting.argparse is None:
+            continue
+        build.add_argument(
+            setting.flag, default=None, help=setting.help, **setting.argparse
+        )
 
 
 def _add_inspect_parser(sub, parent: argparse.ArgumentParser) -> None:
@@ -299,7 +140,7 @@ def _add_inspect_parser(sub, parent: argparse.ArgumentParser) -> None:
         nargs="*",
         default=[],
         metavar="EXT",
-        help=f"OCEL 2.0 extensions to load: {' | '.join(enum_choices(OCELExtension))}.",
+        help=f"OCEL 2.0 extensions to load: {' | '.join(OCELExtension.spellings())}.",
     )
 
 
@@ -325,7 +166,10 @@ def _add_mine_declare_parser(sub, parent: argparse.ArgumentParser) -> None:
         "--constraints",
         nargs="+",
         metavar="NAME",
-        help="Constraint templates to mine, e.g. Response Precedence Init End.",
+        help=(
+            "Constraint templates to keep, e.g. Response Precedence Init End. "
+            "Omit to keep every template discovery proposes."
+        ),
     )
     mine.add_argument(
         "--constraint-support",
@@ -360,7 +204,7 @@ def _add_mine_declare_parser(sub, parent: argparse.ArgumentParser) -> None:
         nargs="*",
         default=[],
         metavar="EXT",
-        help=f"OCEL 2.0 extensions to load: {' | '.join(enum_choices(OCELExtension))}.",
+        help=f"OCEL 2.0 extensions to load: {' | '.join(OCELExtension.spellings())}.",
     )
 
 
@@ -382,14 +226,14 @@ def _add_reason_parser(sub, parent: argparse.ArgumentParser) -> None:
         "--profile",
         default=OWLProfile.OWL2DL.value,
         metavar="PROFILE",
-        help=f"OWL profile of the ontology: {' | '.join(enum_choices(OWLProfile))} (default: OWL2DL).",
+        help=f"OWL profile of the ontology: {' | '.join(OWLProfile.spellings())} (default: OWL2DL).",
     )
     reason_parser.add_argument(
         "--backend",
         type=_reasoner_backend,
         default="HermiT",
         metavar="NAME",
-        help=f"Reasoner backend: {' | '.join(_REASONER_BACKENDS)} (default: HermiT).",
+        help=f"Reasoner backend: {' | '.join(REASONER_BACKENDS)} (default: HermiT).",
     )
     reason_parser.add_argument(
         "--output",

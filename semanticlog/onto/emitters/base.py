@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import AxiomSink
-
-if TYPE_CHECKING:
-    from semanticlog.onto.emitters.attributes import AttributeEmitter
 
 
 class Emitter:
@@ -34,17 +29,3 @@ class Emitter:
         self.sink = sink
         self.settings = settings
         self.annotations = annotations
-
-
-class _EntityEmitter(Emitter):
-    """Base for the emitters of events and objects, which also have attributes."""
-
-    def __init__(
-        self,
-        sink: AxiomSink,
-        settings: OntoBuildSettings,
-        annotations: AnnotationWriter,
-        attributes: AttributeEmitter,
-    ) -> None:
-        super().__init__(sink, settings, annotations)
-        self.attributes = attributes

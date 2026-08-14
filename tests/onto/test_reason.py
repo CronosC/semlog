@@ -1,10 +1,14 @@
 """Materialising an ontology with a reasoner."""
 
+from pathlib import Path
+
 import pytest
 from rdflib import RDF, Graph, URIRef
 
-from semanticlog.onto.reason import Reasoner
-from semanticlog.onto.settings import DEFAULT_IRI, OntoBuildSettings, OWLProfile
+from semanticlog.core.enums import OWLProfile
+from semanticlog.core.vocabulary import DEFAULT_IRI
+from semanticlog.onto.reason import REASONER_BACKENDS, Reasoner
+from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import InMemorySink
 
 
@@ -30,13 +34,9 @@ def test_materialize(tmp_path):
     sink.add_class("Woman", ["Female"])
 
     individuals = ["a", "b", "c", "d", "e"]
-    for ind in individuals:
-        sink.assert_individual(ind, "Human")
-    sink.assert_individual("a", "Man")
-    sink.assert_individual("b", "Man")
-    sink.assert_individual("c", "Man")
-    sink.assert_individual("d", "Woman")
-    sink.assert_individual("e", "Woman")
+    sink.assert_individuals(individuals, "Human")
+    sink.assert_individuals(["a", "b", "c"], "Man")
+    sink.assert_individuals(["d", "e"], "Woman")
 
     sink.save(out_path)
 
@@ -68,3 +68,40 @@ def test_materialize(tmp_path):
         assert not has_triple(u(ind), RDF.type, u("Female")), (
             f"Unexpected {ind} a Female"
         )
+
+
+def _small_ontology(path: str) -> None:
+    """Write an ontology with something for a reasoner to find."""
+    settings = OntoBuildSettings(profile=OWLProfile.OWL2EL, case_concepts=[])
+    sink = InMemorySink(DEFAULT_IRI, settings)
+    sink.add_class("Human")
+    sink.add_class("Man", ["Human"])
+    sink.add_property("knows", domain_class=["Human"], range_class="Human")
+    sink.assert_individuals(["a", "b"], "Man")
+    sink.write_object_assertions("knows", [("a", "b")])
+    sink.save(path)
+
+
+@pytest.mark.reasoner
+@pytest.mark.parametrize("backend", REASONER_BACKENDS)
+def test_every_backend_materializes(backend, tmp_path):
+    """Each backend is asked only for the entailments it can answer."""
+    path = str(tmp_path / f"{backend}.owl")
+    _small_ontology(path)
+    before = Path(path).stat().st_size
+
+    reasoner = Reasoner(path, backend=backend, profile=OWLProfile.OWL2EL)
+    reasoner.materialize()
+
+    assert Path(path).stat().st_size > before
+
+
+@pytest.mark.reasoner
+def test_a_backend_that_will_not_read_the_ontology_says_which_to_try(tmp_path):
+    path = tmp_path / "not-an-ontology.owl"
+    path.write_text("this is not an ontology", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="will not read") as failure:
+        Reasoner(str(path))
+
+    assert "Pellet" in str(failure.value)

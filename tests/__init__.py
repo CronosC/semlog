@@ -1,9 +1,1 @@
-"""Test suite for semlog."""
-
-import warnings
-
-warnings.filterwarnings(
-    "ignore",
-    message="pkg_resources is deprecated as an API",
-    category=UserWarning,
-)
+"""Test suite for semlog. Fixtures are in conftest.py, helpers in support/."""

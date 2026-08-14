@@ -5,18 +5,18 @@ fills it, cleaning makes its names safe to emit, and flattening projects it
 back into the case-per-row shape that classical process mining expects.
 """
 
-from semanticlog.data.binning import dist_bin_series, equal_bin_series
+from semanticlog.data.binning import Binning, fit_dist_bins, fit_equal_bins
 from semanticlog.data.cleaning import clean_oced_data, fix_duplicate_names
-from semanticlog.data.flatten import get_log, get_logs, iter_logs
+from semanticlog.data.flatten import get_log, iter_logs
 from semanticlog.data.oced import OCEDStore
 
 __all__ = [
+    "Binning",
     "OCEDStore",
-    "dist_bin_series",
     "clean_oced_data",
-    "equal_bin_series",
+    "fit_dist_bins",
+    "fit_equal_bins",
     "fix_duplicate_names",
     "get_log",
-    "get_logs",
     "iter_logs",
 ]

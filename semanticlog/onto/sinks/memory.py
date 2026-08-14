@@ -49,6 +49,15 @@ _RDFS_LABEL = OWLAnnotationProperty(IRI(_RDFS, "label"))
 _RDFS_COMMENT = OWLAnnotationProperty(IRI(_RDFS, "comment"))
 
 
+def owl_literal(value: Any) -> Any:
+    """Return the owlapy literal for a plain Python value.
+
+    `OWLLiteral` is declared abstract and picks the concrete subclass for a
+    value in `__new__`, which a type checker cannot follow.
+    """
+    return OWLLiteral(value)  # type: ignore[abstract]
+
+
 class InMemorySink(AxiomSink):
     """Collects axioms in an owlapy ontology.
 
@@ -61,6 +70,19 @@ class InMemorySink(AxiomSink):
         """Create an empty ontology to collect into."""
         super().__init__(iri, settings)
         self.onto = Ontology(IRI.create(iri), load=False)
+        self._pending_inverses: list[tuple[str, str]] = []
+        self._inverses_written = False
+        self._axiom_count = 0
+
+    @property
+    def axiom_count(self) -> int:
+        """How many axioms have been added, counted as they arrive."""
+        return self._axiom_count
+
+    def _add(self, axioms: Any) -> None:
+        """Add one axiom or a list of them, and count what went in."""
+        self._axiom_count += len(axioms) if isinstance(axioms, list) else 1
+        self.onto.add_axiom(axioms)
 
     def _entity(self, name: str, kind: str) -> Any:
         """Return the owlapy entity for a local name of the given kind."""
@@ -76,10 +98,10 @@ class InMemorySink(AxiomSink):
         return classes[0] if len(classes) == 1 else OWLObjectUnionOf(classes)
 
     def write_declaration(self, name: str, kind: str) -> None:
-        self.onto.add_axiom(OWLDeclarationAxiom(self._entity(name, kind)))
+        self._add(OWLDeclarationAxiom(self._entity(name, kind)))
 
     def write_sub_class_of(self, sub: str, superclass: list[str]) -> None:
-        self.onto.add_axiom(
+        self._add(
             OWLSubClassOfAxiom(
                 self._entity(sub, "class"), self._class_expression(superclass)
             )
@@ -88,16 +110,14 @@ class InMemorySink(AxiomSink):
     def write_sub_property_of(self, sub: str, parent: str, data_prop: bool) -> None:
         axiom = OWLSubDataPropertyOfAxiom if data_prop else OWLSubObjectPropertyOfAxiom
         kind = "data" if data_prop else "object"
-        self.onto.add_axiom(axiom(self._entity(sub, kind), self._entity(parent, kind)))
+        self._add(axiom(self._entity(sub, kind), self._entity(parent, kind)))
 
     def write_domain(self, prop: str, expression: list[str], data_prop: bool) -> None:
         axiom = (
             OWLDataPropertyDomainAxiom if data_prop else OWLObjectPropertyDomainAxiom
         )
         kind = "data" if data_prop else "object"
-        self.onto.add_axiom(
-            axiom(self._entity(prop, kind), self._class_expression(expression))
-        )
+        self._add(axiom(self._entity(prop, kind), self._class_expression(expression)))
 
     def write_range(self, prop: str, expression: list[str], data_prop: bool) -> None:
         axiom = OWLDataPropertyRangeAxiom if data_prop else OWLObjectPropertyRangeAxiom
@@ -106,20 +126,33 @@ class InMemorySink(AxiomSink):
             owl_range: Any = OWLDatatype(IRI(_XSD, expression[0]))
         else:
             owl_range = self._class_expression(expression)
-        self.onto.add_axiom(axiom(self._entity(prop, kind), owl_range))
+        self._add(axiom(self._entity(prop, kind), owl_range))
 
     def write_inverse_properties(self, prop: str, inverse: str) -> None:
-        self.onto.add_axiom(
-            OWLInverseObjectPropertiesAxiom(
-                OWLObjectProperty(self.iri + prop),
-                OWLObjectProperty(self.iri + inverse),
+        """Hold the axiom back until the build has written its assertions.
+
+        The backend links a pair of inverse properties the moment the axiom
+        arrives, and from then on keeps one direction of every assertion
+        between them. Assertions written before the axiom keep both, so these
+        are collected here and written by `close`.
+        """
+        self._pending_inverses.append((prop, inverse))
+
+    def _write_pending_inverses(self) -> None:
+        """Write the inverse axioms held back during the build."""
+        if self._inverses_written:
+            return
+        self._inverses_written = True
+        for prop, inverse in self._pending_inverses:
+            self._add(
+                OWLInverseObjectPropertiesAxiom(
+                    OWLObjectProperty(self.iri + prop),
+                    OWLObjectProperty(self.iri + inverse),
+                )
             )
-        )
 
     def write_transitive(self, prop: str) -> None:
-        self.onto.add_axiom(
-            OWLTransitiveObjectPropertyAxiom(OWLObjectProperty(self.iri + prop))
-        )
+        self._add(OWLTransitiveObjectPropertyAxiom(OWLObjectProperty(self.iri + prop)))
 
     def write_class_assertions(
         self, class_name: str, individuals: Iterable[str]
@@ -131,7 +164,7 @@ class InMemorySink(AxiomSink):
             for individual in individuals
         ]
         if axioms:
-            self.onto.add_axiom(axioms)
+            self._add(axioms)
 
     def write_object_assertions(
         self, prop: str, pairs: Iterable[tuple[str, str]]
@@ -147,7 +180,7 @@ class InMemorySink(AxiomSink):
             for s, o in pairs
         ]
         if axioms:
-            self.onto.add_axiom(axioms)
+            self._add(axioms)
 
     def write_data_assertions(
         self, prop: str, pairs: Iterable[tuple[str, Any]]
@@ -165,7 +198,7 @@ class InMemorySink(AxiomSink):
                 )
             )
         if axioms:
-            self.onto.add_axiom(axioms)
+            self._add(axioms)
 
     @staticmethod
     def _literal(value: Any) -> Any:
@@ -173,7 +206,7 @@ class InMemorySink(AxiomSink):
         value = normalize_value(value)
         if value is None:
             return None
-        return OWLLiteral(value)
+        return owl_literal(value)
 
     def write_annotations(
         self, annotation: str, pairs: Iterable[tuple[str, str]]
@@ -189,14 +222,14 @@ class InMemorySink(AxiomSink):
         axioms = [
             OWLAnnotationAssertionAxiom(
                 IRI.create(f"{self.iri}{name}"),
-                OWLAnnotation(prop, OWLLiteral(text)),
+                OWLAnnotation(prop, owl_literal(text)),
             )
             for name, text in pairs
         ]
         if not axioms:
             return
         try:
-            self.onto.add_axiom(axioms)
+            self._add(axioms)
         except AssertionError as exc:
             names = sorted({str(name) for name, _ in pairs})
             raise ValueError(
@@ -207,15 +240,28 @@ class InMemorySink(AxiomSink):
 
     def write_ontology_annotation(self, property_iri: str, value: str) -> None:
         namespace, _, local = property_iri.rpartition("#")
-        self.onto.add_axiom(
+        self._add(
             OWLAnnotationAssertionAxiom(
                 IRI.create(self.iri.rstrip("#")),
                 OWLAnnotation(
                     OWLAnnotationProperty(IRI(namespace + "#", local)),
-                    OWLLiteral(value),
+                    owl_literal(value),
                 ),
             )
         )
 
+    def close(self) -> None:
+        """Finish the ontology by writing the inverse axioms that were held back.
+
+        Anything asserted after this loses one direction of an inverse pair,
+        so a build closes its sink once and does not write again.
+        """
+        self._write_pending_inverses()
+
     def save(self, path: str) -> None:
+        self.close()
         self.onto.save(path)
+
+    def result_target(self) -> tuple[Any, str | None]:
+        """Hand back the ontology, which this sink held in memory."""
+        return self.onto, None

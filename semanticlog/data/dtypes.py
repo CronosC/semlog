@@ -7,12 +7,8 @@ only when nearly all of its values parse, so one stray entry does not decide
 the type of the column.
 """
 
-import logging
-
 import numpy as np
 import pandas as pd
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_MIN_PARSE_RATIO = 0.95
 
@@ -63,7 +59,6 @@ def infer_dtypes(
     df: pd.DataFrame,
     ignore_cols: list[str] | None = None,
     min_parse_ratio: float = DEFAULT_MIN_PARSE_RATIO,
-    label: str = "table",
 ) -> pd.DataFrame:
     """Return a copy of the table with inferred dtypes.
 
@@ -78,7 +73,6 @@ def infer_dtypes(
             numeric-looking id should stay text.
         min_parse_ratio: Share of non-empty values that must parse before a
             conversion is accepted.
-        label: Name used in the log lines about dropped rows and columns.
 
     Returns:
         A new table. The input is not modified.
@@ -87,9 +81,7 @@ def infer_dtypes(
         ignore_cols = []
     df = df.copy()
 
-    n_rows_before, cols_before = len(df), set(df.columns)
     df = df.dropna(how="all").dropna(axis=1, how="all")
-    _log_drops(label, n_rows_before - len(df), cols_before - set(df.columns))
 
     text_cols = df.select_dtypes(include=["object", "str"]).columns
     df[text_cols] = df[text_cols].replace(r"^\s*$", np.nan, regex=True)
@@ -121,14 +113,3 @@ def infer_dtypes(
         if num is not None:
             df[col] = num
     return df
-
-
-def _log_drops(label: str, n_rows: int, dropped_cols: set) -> None:
-    """Report what the empty-row and empty-column drop removed."""
-    if n_rows:
-        logger.info(f"infer_dtypes[{label}]: dropped {n_rows} all-empty row(s).")
-    if dropped_cols:
-        logger.info(
-            f"infer_dtypes[{label}]: dropped {len(dropped_cols)} all-empty column(s): "
-            f"{sorted(str(c) for c in dropped_cols)}."
-        )

@@ -67,18 +67,6 @@ def test_to_dict_is_json_shaped(result):
     assert d["case_concepts"] == ["order", "item"]
 
 
-def test_from_dict_restores_to_dict_output(result):
-    restored = DeclareResult.from_dict(result.to_dict())
-    assert_frame_equal(restored.constraints, result.constraints)
-    assert restored.case_concepts == result.case_concepts
-
-
-def test_from_dict_handles_empty_constraints():
-    restored = DeclareResult.from_dict({"constraints": [], "case_concepts": []})
-    assert restored.constraints.empty
-    assert restored.case_concepts == []
-
-
 def test_settings_read_declare_file_at_construction(result, tmp_path):
     path = str(tmp_path / "declare.csv")
     result.write(path)
@@ -116,19 +104,23 @@ def test_settings_reread_when_declare_file_changes(result, tmp_path):
     assert len(settings.declare_result.constraints) == 1
 
 
-def test_settings_round_trip_through_to_dict(result, tmp_path):
-    settings = OntoBuildSettings()
-    settings = settings.replace(declare_result=result)
-
-    restored = OntoBuildSettings.from_dict(settings.to_dict())
-
-    assert restored.declare_result is not None
-    assert_frame_equal(restored.declare_result.constraints, result.constraints)
-
-
 def test_enricher_raises_import_error_without_declare4py(monkeypatch):
     import semanticlog.enrich.declare as declare_module
 
     monkeypatch.setattr(declare_module, "_DECLARE4PY_AVAILABLE", False)
     with pytest.raises(ImportError, match="Declare4Py"):
         DeclareEnricher(data=None)
+
+
+def test_reading_a_csv_without_its_origin_file_warns(result, tmp_path, caplog):
+    import logging
+
+    path = tmp_path / "constraints.csv"
+    result.write(str(path))
+    (tmp_path / "constraints.csv.meta.json").unlink()
+
+    with caplog.at_level(logging.WARNING):
+        reread = DeclareResult.read(str(path))
+
+    assert reread.source_log is None
+    assert "do not record which log" in caplog.text

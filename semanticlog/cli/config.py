@@ -11,23 +11,33 @@ share their common settings.
 
 from __future__ import annotations
 
+import argparse
 import difflib
 import tomllib
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from semanticlog.data.loading.pm4py_loader import OCEL_SUFFIXES
-from semanticlog.onto.settings import (
-    DEFAULT_BINS,
+from semanticlog.core.enums import (
+    REASONER_BACKENDS,
+    BuildEnum,
     DataRepresentation,
     EventOrderRepresentation,
     InverseRepresentation,
     OCELExtension,
-    OntoBuildSettings,
     OWLProfile,
+    resolve_reasoner_backend,
+)
+from semanticlog.data.binning import (
+    DEFAULT_BIN_LABELS,
+    DEFAULT_BINS,
+)
+from semanticlog.data.loading.pm4py_loader import OCEL_SUFFIXES
+from semanticlog.onto.settings import (
+    DEFAULT_MAX_EF_PAIRS,
+    FILE_BACKED,
+    OntoBuildSettings,
 )
 
 
@@ -35,63 +45,356 @@ class ConfigError(ValueError):
     """A setting is missing, unknown, or of the wrong sort."""
 
 
-def parse_enum[E: Enum](enum_cls: type[E], token: str, *, key: str) -> E:
-    """Read an enum member from a written setting.
+def parse_enum[E: BuildEnum](enum_cls: type[E], token: str, *, key: str) -> E:
+    """Read an enum member from a written setting, as a configuration problem.
 
-    Both spellings are accepted, case-insensitively, so `--order-representations DF` and
-    `--order-representations df` mean the same thing.
-
-    Args:
-        enum_cls: Enum to read from.
-        token: Text to read.
-        key: Setting name, quoted in the error.
-
-    Returns:
-        The member the text names.
+    The reading itself is `BuildEnum.parse`. This only restates its refusal as
+    a `ConfigError`, so that a bad setting reaches the CLI the same way every
+    other bad setting does.
 
     Raises:
         ConfigError: If nothing matches, listing what would.
     """
-    folded = token.strip().casefold()
-    for member in enum_cls:
-        value = member.value
-        if folded in (str(value).casefold(), member.name.casefold()):
-            return member
-    allowed = ", ".join(str(m.value) for m in enum_cls)
-    raise ConfigError(f"{key}: unknown value {token!r}. Choose from: {allowed}.")
+    try:
+        return enum_cls.parse(token, key=key)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
-def enum_choices(enum_cls: type[Enum]) -> list[str]:
-    """List the spellings of an enum, for help text."""
-    values = [str(m.value) for m in enum_cls]
-    names = [m.name for m in enum_cls if m.name not in values]
-    return values + names
+def _as_list(value: Any) -> list[Any]:
+    """Read a setting as a list, accepting a single value or nothing."""
+    if value is None:
+        return []
+    if isinstance(value, str) or not isinstance(value, Iterable):
+        return [value]
+    return list(value)
 
 
-BUILD_DEFAULTS: dict[str, Any] = {
-    "input": None,
-    "output": "datasets/onto",
-    "name": None,
-    "profile": OWLProfile.OWL2DL.value,
-    "order_representations": [EventOrderRepresentation.DF.value],
-    "case_concepts": None,
-    "auto_case_concepts": 3,
-    "inverse_representations": [],
-    "ocel_extensions": [],
-    "data_representations": [DataRepresentation.VALUES.value],
-    "bins": DEFAULT_BINS,
-    "streaming": False,
-    "bin_labels": None,
-    "annotation_document": None,
-    "derive_annotations": False,
-    "declare_file": None,
-    "materialize": False,
-    "reasoner_backend": "HermiT",
-    "save_backmap": False,
-    "save_store": False,
-    "size_limit_mb": 0,
-    "log_dir": None,
-}
+def _as_bool(value: Any, key: str) -> bool:
+    """Read a setting as a boolean, naming it if it is not one."""
+    if isinstance(value, bool):
+        return value
+    raise ConfigError(f"{key}: expected true or false, got {value!r}.")
+
+
+def _as_int(value: Any, key: str) -> int:
+    """Read a setting as a whole number, naming it if it is not one."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"{key}: expected a whole number, got {value!r}.")
+    return value
+
+
+def _as_str(value: Any, key: str) -> str:
+    """Read a setting as text, naming it if it is not."""
+    if not isinstance(value, str):
+        raise ConfigError(f"{key}: expected a string, got {value!r}.")
+    return value
+
+
+def _as_path(value: Any, key: str) -> Path:
+    """Read a setting as a filesystem path."""
+    return Path(_as_str(value, key))
+
+
+def _as_reasoner_backend(value: Any, key: str) -> str:
+    """Read a reasoner name in any case, and reject an unknown one."""
+    try:
+        return resolve_reasoner_backend(_as_str(value, key), key=key)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
+
+Reader = Callable[[Any, str], Any]
+
+# Where a resolved setting lands: a field of `OntoBuildSettings`, a field of
+# `RunConfig`, or neither, for one `resolve_run_config` assembles itself.
+type Target = Literal["settings", "run", "manual"]
+
+
+def _optional(read: Reader) -> Reader:
+    """Let a reader accept None, which is how an unset setting arrives."""
+
+    def reader(value: Any, key: str) -> Any:
+        return None if value is None else read(value, key)
+
+    return reader
+
+
+def _list_of(read: Reader) -> Reader:
+    """Apply a reader to every element, accepting a single value or nothing."""
+
+    def reader(value: Any, key: str) -> list:
+        return [read(item, key) for item in _as_list(value)]
+
+    return reader
+
+
+def _enum_of[E: BuildEnum](enum_cls: type[E]) -> Reader:
+    """Read a written setting as a member of one enum."""
+
+    def reader(value: Any, key: str) -> E:
+        return parse_enum(enum_cls, _as_str(value, key), key=key)
+
+    return reader
+
+
+@dataclass(frozen=True)
+class Setting:
+    """One build setting, in the one place it is declared.
+
+    Everything that knows about a setting reads it from here: the defaults a
+    run starts from, the flag that overrides them, and the object the value
+    ends up on.
+
+    Attributes:
+        key: TOML key, and the argparse destination the flag writes to.
+        default: Value a run uses when neither a config nor a flag names it.
+        read: Turns a written value into the type the setting has.
+        target: `settings` for a field of `OntoBuildSettings`, `run` for a
+            field of `RunConfig`, `manual` for one `resolve_run_config`
+            assembles itself.
+        help: Help text for the flag.
+        argparse: Further arguments for `add_argument`. None for a setting
+            whose flag the parser declares itself.
+        field: Field this lands on, when it differs from the key.
+    """
+
+    key: str
+    default: Any
+    read: Reader
+    target: Target
+    help: str = ""
+    argparse: Mapping[str, Any] | None = None
+    field: str | None = None
+
+    @property
+    def flag(self) -> str:
+        """The command line spelling of this setting."""
+        return "--" + self.key.replace("_", "-")
+
+
+BUILD_SETTINGS: tuple[Setting, ...] = (
+    Setting("input", None, _list_of(_as_str), "manual"),
+    Setting(
+        "output",
+        "datasets/onto",
+        _as_path,
+        "run",
+        field="output_dir",
+        help="Directory for the ontology (default: datasets/onto).",
+        argparse={"metavar": "DIR"},
+    ),
+    Setting(
+        "name",
+        None,
+        _optional(_as_str),
+        "manual",
+        help=(
+            "Shared stem for every artifact of this run. Defaults to the "
+            "--config file name for a single input, otherwise to the input name."
+        ),
+        argparse={"metavar": "STEM"},
+    ),
+    Setting(
+        "profile",
+        OWLProfile.OWL2DL.value,
+        _enum_of(OWLProfile),
+        "settings",
+        help=f"OWL profile: {' | '.join(OWLProfile.spellings())} (default: {OWLProfile.OWL2DL.value}).",
+        argparse={"metavar": "PROFILE"},
+    ),
+    Setting(
+        "order_representations",
+        [EventOrderRepresentation.DF.value],
+        _list_of(_enum_of(EventOrderRepresentation)),
+        "settings",
+        help=(
+            "Event order representations: "
+            f"{' | '.join(EventOrderRepresentation.spellings())}. "
+            "Pass --order-representations with no values for none. Default: df."
+        ),
+        argparse={"nargs": "*", "metavar": "MODE"},
+    ),
+    Setting(
+        "case_concepts",
+        None,
+        _optional(_list_of(_as_str)),
+        "manual",
+        help=(
+            "Object types to use as cases. Omit to auto-select the most common "
+            "types; pass --case-concepts with no values for none. Run "
+            "'semlog inspect' to see the available names."
+        ),
+        argparse={"nargs": "*", "metavar": "TYPE"},
+    ),
+    Setting(
+        "auto_case_concepts",
+        3,
+        _as_int,
+        "run",
+        help="How many object types to auto-select (default: 3).",
+        argparse={"type": int, "metavar": "N"},
+    ),
+    Setting(
+        "data_representations",
+        [DataRepresentation.VALUES.value],
+        _list_of(_enum_of(DataRepresentation)),
+        "settings",
+        help=(
+            "How numeric attributes are represented: "
+            f"{' | '.join(DataRepresentation.spellings())}. "
+            "values keeps the raw number, equal_bins buckets by frequency, "
+            "dist_bins fits a distribution first. equal_bins and dist_bins are "
+            "mutually exclusive. Pass no values to omit numeric attributes. "
+            "Default: values."
+        ),
+        argparse={"nargs": "*", "metavar": "MODE"},
+    ),
+    Setting(
+        "bins",
+        DEFAULT_BINS,
+        _as_int,
+        "settings",
+        help=f"Bin count for the binning modes (default: {DEFAULT_BINS}).",
+        argparse={"type": int, "metavar": "N"},
+    ),
+    Setting(
+        "bin_labels",
+        list(DEFAULT_BIN_LABELS),
+        _list_of(_as_str),
+        "settings",
+        help=(
+            "Bin labels, exactly --bins of them "
+            f"(default: {' '.join(DEFAULT_BIN_LABELS)})."
+        ),
+        argparse={"nargs": "+", "metavar": "LABEL"},
+    ),
+    Setting(
+        "inverse_representations",
+        [],
+        _list_of(_enum_of(InverseRepresentation)),
+        "settings",
+        help=(
+            "Inverse relation strategies: "
+            f"{' | '.join(InverseRepresentation.spellings())}. "
+            "axiomatic adds InverseObjectProperty axioms (OWL2DL only), "
+            "implicit materialises the inverse assertions. Default: none."
+        ),
+        argparse={"nargs": "*", "metavar": "MODE"},
+    ),
+    Setting(
+        "ocel_extensions",
+        [],
+        _list_of(_enum_of(OCELExtension)),
+        "settings",
+        help=(
+            f"OCEL 2.0 extensions: {' | '.join(OCELExtension.spellings())}. "
+            "Default: none."
+        ),
+        argparse={"nargs": "*", "metavar": "EXT"},
+    ),
+    Setting(
+        "annotation_document",
+        None,
+        _optional(_as_str),
+        "settings",
+        help="JSON file mapping entity names to {label, comment} dicts.",
+        argparse={"metavar": "JSON"},
+    ),
+    Setting(
+        "derive_annotations",
+        False,
+        _as_bool,
+        "settings",
+        help="Emit rdfs:label on individuals derived from the source data (default: off).",
+        argparse={"action": argparse.BooleanOptionalAction},
+    ),
+    Setting(
+        "declare_file",
+        None,
+        _optional(_as_str),
+        "settings",
+        help=(
+            "DECLARE constraints CSV, as written by 'semlog mine-declare'. "
+            "Required when --order-representations includes declare."
+        ),
+        argparse={"metavar": "CSV"},
+    ),
+    Setting(
+        "max_ef_pairs",
+        DEFAULT_MAX_EF_PAIRS,
+        _as_int,
+        "settings",
+        help=(
+            "Ceiling on materialized eventually-follows pairs, which grow with "
+            f"the square of the trace length (default: {DEFAULT_MAX_EF_PAIRS:,}). "
+            "Zero for no limit."
+        ),
+        argparse={"type": int, "metavar": "N"},
+    ),
+    Setting(
+        "materialize",
+        False,
+        _as_bool,
+        "run",
+        help=(
+            "Run the reasoner over each ontology after writing it (default: off). "
+            "'semlog reason' does the same thing to an existing file."
+        ),
+        argparse={"action": argparse.BooleanOptionalAction},
+    ),
+    Setting(
+        "reasoner_backend",
+        "HermiT",
+        _as_reasoner_backend,
+        "run",
+        help=f"Reasoner used by --materialize: {' | '.join(REASONER_BACKENDS)} (default: HermiT).",
+        argparse={"metavar": "NAME"},
+    ),
+    Setting(
+        "streaming",
+        True,
+        _as_bool,
+        "run",
+        help=(
+            "Write OWL functional syntax straight to disk at near-constant "
+            "memory (default: on). --no-streaming builds the ontology in "
+            "memory and writes RDF/XML instead."
+        ),
+        argparse={"action": argparse.BooleanOptionalAction},
+    ),
+    Setting(
+        "save_backmap",
+        False,
+        _as_bool,
+        "run",
+        help="Also write the cleaned-name to original-name map as JSON.",
+        argparse={"action": "store_true"},
+    ),
+    Setting(
+        "size_limit_mb",
+        0,
+        _as_int,
+        "run",
+        help="Skip inputs larger than this many MB (default: 0, no limit).",
+        argparse={"type": int, "metavar": "MB"},
+    ),
+    Setting(
+        "log_dir",
+        None,
+        _optional(_as_path),
+        "run",
+        help="Directory for per-input log files (default: no file logging).",
+        argparse={"metavar": "DIR"},
+    ),
+)
+
+BUILD_DEFAULTS: dict[str, Any] = {s.key: s.default for s in BUILD_SETTINGS}
+
+
+def settings_targeting(target: Target) -> tuple[Setting, ...]:
+    """Return the settings that land on one object."""
+    return tuple(s for s in BUILD_SETTINGS if s.target == target)
 
 
 RENAMED_KEYS: dict[str, str] = {
@@ -185,8 +488,8 @@ class RunConfig:
         materialize: Run a reasoner after writing.
         reasoner_backend: Reasoner to use for that.
         save_backmap: Also write the map of cleaned names to source names.
-        save_store: Also write the loaded store.
-        streaming: Write the ontology straight to disk.
+        streaming: Write the ontology straight to disk as functional syntax.
+            Off builds it in memory and writes RDF/XML.
         size_limit_mb: Skip inputs larger than this. Zero for no limit.
         log_dir: Directory for per-input log files.
         config_file: Config this run came from, recorded as provenance.
@@ -203,8 +506,7 @@ class RunConfig:
     materialize: bool = False
     reasoner_backend: str = "HermiT"
     save_backmap: bool = False
-    save_store: bool = False
-    streaming: bool = False
+    streaming: bool = True
     size_limit_mb: int = 0
     log_dir: Path | None = None
     config_file: Path | None = None
@@ -222,10 +524,6 @@ class RunConfig:
     def backmap_path(self, input_path: Path) -> Path:
         """Return where the name backmap for one input goes."""
         return self.output_dir / f"{self.output_stem(input_path)}.backmap.json"
-
-    def store_path(self, input_path: Path) -> Path:
-        """Return where the loaded store for one input goes."""
-        return self.output_dir / f"{self.output_stem(input_path)}.oced"
 
     def settings_for(self, case_concepts: Sequence[str]) -> OntoBuildSettings:
         """Return the settings with the case concepts this input resolved to."""
@@ -259,9 +557,7 @@ class RunConfig:
             f"materialize          {self.materialize}"
             + (f" ({self.reasoner_backend})" if self.materialize else ""),
         ]
-        if DataRepresentation.EQUAL_BINS in settings.data_representations or (
-            DataRepresentation.DIST_BINS in settings.data_representations
-        ):
+        if settings.binning_mode is not None:
             lines.append(
                 f"bins                 {settings.bins} ({', '.join(settings.bin_labels)})"
             )
@@ -271,46 +567,15 @@ class RunConfig:
             lines.append(f"  {self.ontology_path(path)}")
             if self.save_backmap:
                 lines.append(f"  {self.backmap_path(path)}")
-            if self.save_store:
-                lines.append(f"  {self.store_path(path)}")
         return "\n".join(lines)
-
-
-def _as_list(value: Any) -> list[Any]:
-    """Read a setting as a list, accepting a single value or nothing."""
-    if value is None:
-        return []
-    if isinstance(value, str) or not isinstance(value, Iterable):
-        return [value]
-    return list(value)
-
-
-def _as_bool(value: Any, key: str) -> bool:
-    """Read a setting as a boolean, naming it if it is not one."""
-    if isinstance(value, bool):
-        return value
-    raise ConfigError(f"{key}: expected true or false, got {value!r}.")
-
-
-def _as_int(value: Any, key: str) -> int:
-    """Read a setting as a whole number, naming it if it is not one."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ConfigError(f"{key}: expected a whole number, got {value!r}.")
-    return value
-
-
-def _as_str(value: Any, key: str) -> str:
-    """Read a setting as text, naming it if it is not."""
-    if not isinstance(value, str):
-        raise ConfigError(f"{key}: expected a string, got {value!r}.")
-    return value
 
 
 def _expand_inputs(tokens: Sequence[str]) -> tuple[Path, ...]:
     """Turn the input setting into the actual list of files to build.
 
     A directory contributes every OCEL file in it. A path that does not exist
-    raises rather than yielding an empty result.
+    raises rather than yielding an empty result. Paths are compared resolved,
+    so one file named two ways is built once.
     """
     if not tokens:
         raise ConfigError(
@@ -340,67 +605,62 @@ def _expand_inputs(tokens: Sequence[str]) -> tuple[Path, ...]:
     seen: set[Path] = set()
     unique: list[Path] = []
     for path in inputs:
-        if path not in seen:
-            seen.add(path)
+        resolved = path.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
             unique.append(path)
+    _check_distinct_stems(unique)
     return tuple(unique)
+
+
+def _check_distinct_stems(inputs: Sequence[Path]) -> None:
+    """Refuse inputs whose artifacts would land on one another.
+
+    Outputs are named after the input, so two files of one name in different
+    directories would write one ontology and report two builds.
+
+    Raises:
+        ConfigError: If two inputs share a stem, naming them.
+    """
+    by_stem: dict[str, list[Path]] = {}
+    for path in inputs:
+        by_stem.setdefault(path.stem, []).append(path)
+    clashing = {stem: paths for stem, paths in by_stem.items() if len(paths) > 1}
+    if not clashing:
+        return
+    lines = [
+        f"  {stem}: " + ", ".join(str(p) for p in paths)
+        for stem, paths in sorted(clashing.items())
+    ]
+    raise ConfigError(
+        "these inputs would overwrite one another's output:\n"
+        + "\n".join(lines)
+        + "\n\nOutputs are named after the input. Build them one at a time with "
+        "--name, or into separate --output directories."
+    )
+
+
+def _check_file_backed_settings(merged: dict[str, Any]) -> None:
+    """Check the settings that name a file, before anything tries to read one.
+
+    `OntoBuildSettings` opens each of these in `__post_init__`, so a missing
+    file has to be caught here or it surfaces as an OS error instead of as a
+    message about the setting.
+
+    Raises:
+        ConfigError: If a named file does not exist.
+    """
+    for setting in FILE_BACKED:
+        value = merged.get(setting.path_field)
+        if value is not None and not Path(_as_str(value, setting.path_field)).is_file():
+            raise ConfigError(setting.missing.format(path=value))
 
 
 def _settings_from(merged: dict[str, Any]) -> OntoBuildSettings:
     """Build the ontology settings from the merged configuration."""
-    bins = _as_int(merged["bins"], "bins")
-    bin_labels = merged["bin_labels"]
-    kwargs: dict[str, Any] = {
-        "profile": parse_enum(
-            OWLProfile, _as_str(merged["profile"], "profile"), key="profile"
-        ),
-        "order_representations": [
-            parse_enum(
-                EventOrderRepresentation,
-                _as_str(v, "order_representations"),
-                key="order_representations",
-            )
-            for v in _as_list(merged["order_representations"])
-        ],
-        "ocel_extensions": [
-            parse_enum(
-                OCELExtension, _as_str(v, "ocel_extensions"), key="ocel_extensions"
-            )
-            for v in _as_list(merged["ocel_extensions"])
-        ],
-        "inverse_representations": [
-            parse_enum(
-                InverseRepresentation,
-                _as_str(v, "inverse_representations"),
-                key="inverse_representations",
-            )
-            for v in _as_list(merged["inverse_representations"])
-        ],
-        "data_representations": [
-            parse_enum(
-                DataRepresentation,
-                _as_str(v, "data_representations"),
-                key="data_representations",
-            )
-            for v in _as_list(merged["data_representations"])
-        ],
-        "bins": bins,
-        "annotation_document": (
-            None
-            if merged["annotation_document"] is None
-            else _as_str(merged["annotation_document"], "annotation_document")
-        ),
-        "declare_file": (
-            None
-            if merged["declare_file"] is None
-            else _as_str(merged["declare_file"], "declare_file")
-        ),
-        "derive_annotations": _as_bool(
-            merged["derive_annotations"], "derive_annotations"
-        ),
-    }
-    if bin_labels is not None:
-        kwargs["bin_labels"] = [_as_str(v, "bin_labels") for v in _as_list(bin_labels)]
+    kwargs: dict[str, Any] = {}
+    for setting in settings_targeting("settings"):
+        kwargs[setting.key] = setting.read(merged[setting.key], setting.key)
 
     try:
         return OntoBuildSettings(**kwargs)
@@ -410,10 +670,12 @@ def _settings_from(merged: dict[str, Any]) -> OntoBuildSettings:
 
 def _binning_warnings(merged: dict[str, Any], settings: OntoBuildSettings) -> list[str]:
     """Warn about bin settings that were given but will not be used."""
-    binning = {DataRepresentation.EQUAL_BINS, DataRepresentation.DIST_BINS}
-    if binning & set(settings.data_representations):
+    if settings.binning_mode is not None:
         return []
-    if merged["bins"] == BUILD_DEFAULTS["bins"] and merged["bin_labels"] is None:
+    if (
+        merged["bins"] == BUILD_DEFAULTS["bins"]
+        and merged["bin_labels"] == BUILD_DEFAULTS["bin_labels"]
+    ):
         return []
     return [
         "bins/bin_labels have no effect without equal_bins or dist_bins in "
@@ -448,47 +710,28 @@ def resolve_run_config(
     from_file = load_config_file(config_file) if config_file is not None else {}
     merged: dict[str, Any] = {**BUILD_DEFAULTS, **from_file, **overrides}
 
-    inputs = _expand_inputs(_as_list(merged["input"]))
+    inputs = _expand_inputs(_list_of(_as_str)(merged["input"], "input"))
+    _check_file_backed_settings(merged)
     settings = _settings_from(merged)
+    run: dict[str, Any] = {
+        s.field or s.key: s.read(merged[s.key], s.key)
+        for s in settings_targeting("run")
+    }
 
     try:
         settings.validate(require_inputs=False)
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 
-    if _as_bool(merged["streaming"], "streaming") and _as_bool(
-        merged["materialize"], "materialize"
-    ):
+    if settings.emits_declare and settings.declare_file is None:
         raise ConfigError(
-            "streaming and materialize cannot both be set: a streamed build "
-            "keeps no ontology in memory for the reasoner to read. Run "
-            "'semlog reason' on the written file instead."
+            "order includes 'declare' but no declare_file is set. Mine the "
+            "constraints first with 'semlog mine-declare', then point "
+            "declare_file at the CSV it writes."
         )
 
-    if settings.emits_declare:
-        if settings.declare_file is None:
-            raise ConfigError(
-                "order includes 'declare' but no declare_file is set. Mine the "
-                "constraints first with 'semlog mine-declare', then point "
-                "declare_file at the CSV it writes."
-            )
-        if not Path(settings.declare_file).is_file():
-            raise ConfigError(
-                f"declare_file not found: {settings.declare_file}. Mine the "
-                "constraints first with 'semlog mine-declare'."
-            )
-
-    if (
-        settings.annotation_document is not None
-        and not Path(settings.annotation_document).is_file()
-    ):
-        raise ConfigError(
-            f"annotation_document not found: {settings.annotation_document}"
-        )
-
-    name = merged["name"]
+    name = _optional(_as_str)(merged["name"], "name")
     if name is not None:
-        name = _as_str(name, "name")
         if len(inputs) > 1:
             raise ConfigError(
                 f"name={name!r} would make {len(inputs)} inputs share one output "
@@ -497,11 +740,10 @@ def resolve_run_config(
     elif config_file is not None and len(inputs) == 1:
         name = Path(config_file).stem
 
-    case_concepts = merged["case_concepts"]
+    read_case_concepts = _optional(_list_of(_as_str))
+    case_concepts = read_case_concepts(merged["case_concepts"], "case_concepts")
     if case_concepts is not None:
-        case_concepts = tuple(
-            _as_str(v, "case_concepts") for v in _as_list(case_concepts)
-        )
+        case_concepts = tuple(case_concepts)
         if not case_concepts and settings.emits_traces:
             raise ConfigError(
                 "case_concepts is empty but order needs traces "
@@ -511,19 +753,11 @@ def resolve_run_config(
 
     return RunConfig(
         inputs=inputs,
-        output_dir=Path(_as_str(merged["output"], "output")),
         name=name,
         settings=settings,
         case_concepts=case_concepts,
-        auto_case_concepts=_as_int(merged["auto_case_concepts"], "auto_case_concepts"),
-        materialize=_as_bool(merged["materialize"], "materialize"),
-        reasoner_backend=_as_str(merged["reasoner_backend"], "reasoner_backend"),
-        save_backmap=_as_bool(merged["save_backmap"], "save_backmap"),
-        save_store=_as_bool(merged["save_store"], "save_store"),
-        streaming=_as_bool(merged["streaming"], "streaming"),
-        size_limit_mb=_as_int(merged["size_limit_mb"], "size_limit_mb"),
-        log_dir=None if merged["log_dir"] is None else Path(merged["log_dir"]),
         config_file=None if config_file is None else Path(config_file),
         command=command,
         warnings=tuple(_binning_warnings(merged, settings)),
+        **run,
     )
