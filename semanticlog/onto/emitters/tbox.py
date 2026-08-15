@@ -28,6 +28,7 @@ class TBoxEmitter(Emitter):
             attribute_history = self.settings.emits_attribute_history
 
         has_inverses = self.settings.has_inverses
+        axiomatic = self.settings.axiomatic_inverses
         self.sink.add_classes(
             [vocab.OBJECT, vocab.EVENT, vocab.ATTRIBUTE, vocab.TIME],
             source="the TBox",
@@ -43,6 +44,7 @@ class TBoxEmitter(Emitter):
             domain_class=vocab.EVENT,
             range_class=vocab.TIME,
             create_inverse=has_inverses,
+            axiomatic_inverse=axiomatic,
             inverse_name=vocab.OBSERVES if has_inverses else None,
             source="the TBox",
         )
@@ -51,6 +53,7 @@ class TBoxEmitter(Emitter):
             domain_class=vocab.EVENT,
             range_class=vocab.OBJECT,
             create_inverse=has_inverses,
+            axiomatic_inverse=axiomatic,
             source="the TBox",
         )
         self.sink.add_property(
@@ -58,6 +61,7 @@ class TBoxEmitter(Emitter):
             domain_class=vocab.OBJECT,
             range_class=vocab.OBJECT,
             create_inverse=has_inverses,
+            axiomatic_inverse=axiomatic,
             source="the TBox",
         )
         self.sink.add_property(
@@ -65,6 +69,7 @@ class TBoxEmitter(Emitter):
             domain_class=[vocab.OBJECT, vocab.EVENT],
             range_class=vocab.ATTRIBUTE,
             create_inverse=has_inverses,
+            axiomatic_inverse=axiomatic,
             inverse_name=vocab.ATTRIBUTE_OF if has_inverses else None,
             source="the TBox",
         )
@@ -83,12 +88,14 @@ class TBoxEmitter(Emitter):
     def _emit_attribute_history_schema(self) -> None:
         """Emit the change record class and the properties around it."""
         has_inverses = self.settings.has_inverses
+        axiomatic = self.settings.axiomatic_inverses
         self.sink.add_class(vocab.ATTRIBUTE_CHANGE, source="the TBox")
         self.sink.add_property(
             vocab.HAS_ATTRIBUTE_CHANGE,
             domain_class=vocab.OBJECT,
             range_class=vocab.ATTRIBUTE_CHANGE,
             create_inverse=has_inverses,
+            axiomatic_inverse=axiomatic,
             source="the TBox",
         )
         self.sink.add_property(
@@ -96,6 +103,7 @@ class TBoxEmitter(Emitter):
             domain_class=vocab.ATTRIBUTE_CHANGE,
             range_class=vocab.ATTRIBUTE,
             create_inverse=has_inverses,
+            axiomatic_inverse=axiomatic,
             source="the TBox",
         )
         self.sink.add_property(
@@ -103,5 +111,6 @@ class TBoxEmitter(Emitter):
             domain_class=vocab.ATTRIBUTE_CHANGE,
             range_class=vocab.TIME,
             create_inverse=has_inverses,
+            axiomatic_inverse=axiomatic,
             source="the TBox",
         )

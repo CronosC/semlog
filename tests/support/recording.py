@@ -6,19 +6,20 @@ backend involved.
 
 from __future__ import annotations
 
-import inspect
-
+from semanticlog.core.enums import OWLProfile
 from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import AxiomSink
 
 
 class RecordingSink(AxiomSink):
-    def __init__(self, settings: OntoBuildSettings, iri: str = DEFAULT_IRI) -> None:
-        super().__init__(iri, settings)
+    def __init__(
+        self, profile: OWLProfile = OWLProfile.OWL2DL, iri: str = DEFAULT_IRI
+    ) -> None:
+        super().__init__(iri, profile)
         self.calls: list[tuple] = []
 
     def _record(self, *call) -> None:
+        self._begin_write()
         self.calls.append(call)
 
     def write_declaration(self, name, kind):
@@ -58,8 +59,9 @@ class RecordingSink(AxiomSink):
         for name, text in pairs:
             self._record("annotate", str(name), annotation, text)
 
-    def write_ontology_annotation(self, property_iri, value):
-        self._record("ontology_annotation", property_iri, value)
+    def write_ontology_header(self, annotations):
+        for property_iri, value in annotations.items():
+            self._record("ontology_annotation", property_iri, value)
 
     def save(self, path):
         raise NotImplementedError("RecordingSink holds no ontology to save")
@@ -79,16 +81,3 @@ class RecordingSink(AxiomSink):
             elif call[0] == "individual":
                 seen_as_individual.setdefault(call[1], str(call[2]))
         return violations
-
-
-def make_emitter(cls, sink: AxiomSink, settings: OntoBuildSettings):
-    from semanticlog.onto.annotations import AnnotationWriter
-    from semanticlog.onto.emitters.attributes import AttributeEmitter
-
-    annotations = AnnotationWriter(sink, settings)
-    parameters = inspect.signature(cls.__init__).parameters
-    if "attributes" in parameters:
-        return cls(
-            sink, settings, annotations, AttributeEmitter(sink, settings, annotations)
-        )
-    return cls(sink, settings, annotations)

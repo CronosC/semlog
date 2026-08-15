@@ -21,7 +21,7 @@ repos:
     hooks:
       - id: pytest
         name: pytest
-        entry: uv run pytest -q -n auto
+        entry: uv run pytest -q -n auto -m "not reasoner and not slow"
         language: system
         pass_filenames: false
         types: [python]

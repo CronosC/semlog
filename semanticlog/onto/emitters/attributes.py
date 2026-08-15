@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Mapping
 
 import pandas as pd
 
@@ -20,9 +21,12 @@ from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import DataRepresentation
 from semanticlog.core.summary import count_phrase, name_lines
 from semanticlog.data.binning import Binning, fit_dist_bins, fit_equal_bins
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.readable import ReadableStore
+from semanticlog.onto.annotations import AnnotationWriter
+from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters.base import Emitter
 from semanticlog.onto.settings import OntoBuildSettings
+from semanticlog.onto.sinks import AxiomSink
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +34,7 @@ logger = logging.getLogger(__name__)
 _MAX_NAMED_OWNERS = 3
 
 
-def _numeric_columns(data: OCEDStore) -> dict[str, list[pd.Series]]:
+def _numeric_columns(data: ReadableStore) -> dict[str, list[pd.Series]]:
     """Collect every numeric column of each attribute, across the whole store.
 
     An attribute reaches the build once per table that carries it, and the
@@ -49,7 +53,7 @@ def _numeric_columns(data: OCEDStore) -> dict[str, list[pd.Series]]:
 
 
 def attribute_binnings(
-    data: OCEDStore, settings: OntoBuildSettings
+    data: ReadableStore, settings: OntoBuildSettings
 ) -> dict[str, Binning]:
     """Fit the bins of every numeric attribute the build will bin.
 
@@ -83,28 +87,6 @@ def attribute_binnings(
         if binning is not None:
             binnings[attribute] = binning
     return binnings
-
-
-def attribute_owners(data: OCEDStore) -> dict[str, list[str]]:
-    """Find which entity types carry each attribute.
-
-    The owners become the domain of the `has_` property, so an attribute used
-    by two activities gets both of them as its domain. The attribute history
-    counts as its object type carrying the attribute, since an attribute that
-    is empty for every object is dropped on load and would otherwise reach the
-    build with no owner at all.
-
-    Args:
-        data: Store to scan.
-
-    Returns:
-        Attribute name to the sorted types that carry it.
-    """
-    owners: dict[str, set[str]] = defaultdict(set)
-    for view in data.tables():
-        for column in view.attributes:
-            owners[column].add(view.name)
-    return {attribute: sorted(types) for attribute, types in owners.items()}
 
 
 def attribute_source(attribute: str) -> str:
@@ -159,24 +141,33 @@ def _owner_summary(types: list[str]) -> str:
 class AttributeEmitter(Emitter):
     """Emits attribute classes, their values, and the links to their owners.
 
-    It remembers the values it has already emitted per attribute, since the
-    same attribute reaches it once per entity type that carries it.
+    The values already emitted are the build's rather than this emitter's,
+    since the same attribute reaches it once per entity type carrying it and
+    the attribute history reaches all of them again.
     """
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self._owners: dict[str, list[str]] = {}
-        self._binnings: dict[str, Binning] = {}
-        self._emitted_values: dict[str, set[str]] = {}
-        self._emitted_literals: dict[str, set[str]] = {}
-        self._emitted_bins: dict[str, set[str]] = {}
+    def __init__(
+        self,
+        sink: AxiomSink,
+        settings: OntoBuildSettings,
+        annotations: AnnotationWriter,
+        emitted: EmittedIndividuals,
+        owners: Mapping[str, list[str]],
+        binnings: Mapping[str, Binning],
+    ) -> None:
+        """Prepare the emitter.
 
-    def bind_owners(self, owners: dict[str, list[str]]) -> None:
-        """Supply the owner map used as the domain of each `has_` property."""
+        Args:
+            sink: Where axioms go.
+            settings: Settings of this build.
+            annotations: Writer for the labels and comments.
+            emitted: What the build has already asserted.
+            owners: Attribute name to the types carrying it, which is the
+                domain of each `has_` property.
+            binnings: The cut of each attribute the build bins.
+        """
+        super().__init__(sink, settings, annotations, emitted)
         self._owners = owners
-
-    def bind_binnings(self, binnings: dict[str, Binning]) -> None:
-        """Supply the cut of each attribute the build bins."""
         self._binnings = binnings
 
     def emit_columns(
@@ -220,6 +211,7 @@ class AttributeEmitter(Emitter):
                 range_class=attr,
                 superprop=vocab.HAS_ATTRIBUTE,
                 create_inverse=self.settings.has_inverses,
+                axiomatic_inverse=self.settings.axiomatic_inverses,
                 source=source,
             )
             owner = "event" if attribute_parent == vocab.EVENT_ATTRIBUTE else "object"
@@ -311,7 +303,7 @@ class AttributeEmitter(Emitter):
         A value individual belongs to one bin however many tables the number
         was read from, so the ones already placed are skipped.
         """
-        placed = self._emitted_bins.setdefault(attr, set())
+        placed = self.emitted.bins_of(attr)
         for bin_label, bin_group in in_bin.groupby("_bin", observed=True):
             bin_cls = vocab.bin_class(attr, bin_label)
             self.sink.add_class(
@@ -323,7 +315,7 @@ class AttributeEmitter(Emitter):
                 if (name := vocab.attribute_value(attr, value)) not in placed
             ]
             placed.update(fresh)
-            self.sink.assert_individuals(fresh, bin_cls)
+            self.sink.assert_individuals(bin_cls, fresh)
 
     def _emit_out_of_bin(
         self,
@@ -374,38 +366,35 @@ class AttributeEmitter(Emitter):
         mapping = {v: vocab.attribute_value(attr, v) for v in vals}
         tmp["attr_ind"] = tmp[attr].map(mapping)
 
-        seen = self._emitted_values.setdefault(attr, set())
+        seen = self.emitted.values_of(attr)
         fresh = [name for name in mapping.values() if name not in seen]
         seen.update(fresh)
 
-        self.sink.assert_individuals(fresh, attr)
+        self.sink.assert_individuals(attr, fresh)
 
         self.annotations.attribute_values(
             {value: name for value, name in mapping.items() if name in fresh}
         )
 
-        self.sink.assert_relations(tmp, prop=prop, from_key=key_col, to_key="attr_ind")
+        self.assert_relations(prop, tmp, key_col, "attr_ind")
 
         if also_assert_data_value:
-            self._emit_literals(tmp, attr)
+            self._emit_literals(tmp, attr, fresh)
 
-    def _emit_literals(self, tmp: pd.DataFrame, attr: str) -> None:
-        """Keep the literal on each value individual, once per individual.
+    def _emit_literals(self, tmp: pd.DataFrame, attr: str, fresh: list[str]) -> None:
+        """Keep the literal on each value individual emitted for the first time.
 
         A value individual is named after its value, so it carries one
         literal however many owners point at it and however many passes reach
-        it. The attribute history reaches values the main pass has already
-        emitted, so the ones already written are skipped here.
+        it. Which ones are new is what the individuals already emitted answer,
+        so the attribute history does not write a literal the main pass wrote.
+
+        Whether a value carries its literal is decided by the pass that first
+        emits it. That only makes a difference for an attribute that is a
+        number in one table and text in another, which shares one pool of
+        value individuals and which the build warns about on its own.
         """
-        written = self._emitted_literals.setdefault(attr, set())
-        fresh = tmp[~tmp["attr_ind"].isin(written)].drop_duplicates("attr_ind")
-        if fresh.empty:
+        if not fresh:
             return
-        written.update(fresh["attr_ind"])
-        self.sink.assert_relations(
-            fresh,
-            prop=vocab.HAS_DATA_VALUE,
-            from_key="attr_ind",
-            to_key=attr,
-            data_prop=True,
-        )
+        rows = tmp[tmp["attr_ind"].isin(fresh)].drop_duplicates("attr_ind")
+        self.assert_data(vocab.HAS_DATA_VALUE, rows, "attr_ind", attr)

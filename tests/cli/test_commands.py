@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -16,14 +17,10 @@ import pytest
 
 from semanticlog.cli import EXIT_FAILED, EXIT_OK, EXIT_USAGE, main
 from semanticlog.cli.config import resolve_run_config
-from semanticlog.cli.run import (
-    build_all,
-    build_one,
-    choose_case_concepts,
-    inspect_input,
-    load_and_clean,
-    rank_case_concepts,
-)
+from semanticlog.cli.run import build_all, build_one, inspect_input
+from semanticlog.core.errors import DependencyError
+from semanticlog.data.flatten import choose_case_concepts, rank_case_concepts
+from semanticlog.data.loading import load_and_clean
 from semanticlog.enrich.declare import DeclareResult
 from tests.support.ontology import read_functional, read_rdf
 
@@ -40,7 +37,12 @@ def read_built(path: Path):
 def record(path: Path) -> dict:
     """Return the provenance record of a written ontology, JSON entries parsed."""
     written = dict(read_built(path).ontology_annotations)
-    for key in ("buildConfiguration", "buildInputStatistics", "buildOutputs"):
+    for key in (
+        "buildConfiguration",
+        "buildInputStatistics",
+        "buildOutputs",
+        "caseConcepts",
+    ):
         if key in written:
             written[key] = json.loads(written[key])
     return written
@@ -63,7 +65,7 @@ def test_a_build_writes_one_ontology_and_exits_zero(ocel, tmp_path):
     out = tmp_path / "onto"
 
     assert main(["build", str(ocel), "--output", str(out), "-q"]) == EXIT_OK
-    assert [p.name for p in out.iterdir()] == ["pipeline.owl"]
+    assert [p.name for p in out.iterdir()] == ["pipeline.ofn"]
 
 
 def test_the_backmap_is_off_by_default(cfg, ocel):
@@ -104,7 +106,7 @@ def test_the_command_line_is_recorded_in_the_ontology(ocel, tmp_path):
     out = tmp_path / "onto"
     main(["build", str(ocel), "--output", str(out), "--case-concepts", "order", "-q"])
 
-    command = record(out / "pipeline.owl")["buildCommand"]
+    command = record(out / "pipeline.ofn")["buildCommand"]
     assert command.startswith("semlog build")
     assert "--case-concepts order" in command
 
@@ -124,7 +126,7 @@ def test_the_ontology_says_where_the_case_concepts_came_from(cfg, ocel, tmp_path
     written = record(chosen.ontology_path(ocel))
 
     assert written["caseConceptSource"] == "config"
-    assert written["buildConfiguration"]["case_concepts"] == ["order"]
+    assert written["caseConcepts"] == ["order"]
 
 
 def test_two_builds_of_one_input_are_byte_for_byte_identical(ocel, tmp_path):
@@ -152,8 +154,8 @@ def test_two_configs_of_one_input_do_not_overwrite_each_other(ocel, tmp_path):
     build_one(first, ocel)
     build_one(second, ocel)
 
-    assert (tmp_path / "onto" / "by-order.owl").is_file()
-    assert (tmp_path / "onto" / "by-item.owl").is_file()
+    assert (tmp_path / "onto" / "by-order.ofn").is_file()
+    assert (tmp_path / "onto" / "by-item.ofn").is_file()
 
 
 def test_a_build_takes_its_name_and_settings_from_the_config(
@@ -165,7 +167,7 @@ def test_a_build_takes_its_name_and_settings_from_the_config(
     assert (
         main(["build", "--config", str(config), "--output", str(out), "-q"]) == EXIT_OK
     )
-    written = record(out / "hiring-el.owl")
+    written = record(out / "hiring-el.ofn")
     assert written["buildConfiguration"]["profile"] == "OWL2EL"
     assert written["buildConfigFile"] == str(config)
 
@@ -187,7 +189,7 @@ def test_a_flag_beats_the_config_file(ocel, tmp_path, write_config):
         ]
     )
 
-    assert record(out / "run.owl")["buildConfiguration"]["profile"] == "OWL2DL"
+    assert record(out / "run.ofn")["buildConfiguration"]["profile"] == "OWL2DL"
 
 
 def test_a_positional_input_beats_the_config_file(ocel, tmp_path, write_config):
@@ -225,29 +227,32 @@ def test_a_streaming_build_writes_a_complete_ontology_with_its_record(tmp_path, 
         main(["build", str(ocel), "--streaming", "--output", str(out), "-q"]) == EXIT_OK
     )
 
-    text = (out / "pipeline.owl").read_text()
+    text = (out / "pipeline.ofn").read_text()
     assert text.startswith("Prefix(")
     assert text.rstrip().endswith(")")
     assert "sourceLogSha256" in text
-    assert [p.name for p in out.iterdir()] == ["pipeline.owl"]
+    assert [p.name for p in out.iterdir()] == ["pipeline.ofn"]
 
 
 @pytest.mark.parametrize("streaming", [True, False])
 def test_a_failing_build_leaves_the_previous_ontology_alone(ocel, tmp_path, streaming):
     """A half-written file where a finished one used to be is worse than a failure."""
     out = tmp_path / "onto"
-    good = resolve_run_config({"input": [str(ocel)], "output": str(out)})
+    good = resolve_run_config(
+        {"input": [str(ocel)], "output": str(out), "streaming": streaming}
+    )
     build_all(good)
-    before = (out / "pipeline.owl").read_bytes()
+    path = good.ontology_path(ocel)
+    before = path.read_bytes()
 
     # Fails inside the order emitter, once the sink has already written a
     # TBox and every event, which is when a partial file would appear.
-    doomed = dataclasses.replace(good, streaming=streaming, case_concepts=("nope",))
+    doomed = dataclasses.replace(good, case_concepts=("nope",))
     report = build_all(doomed)
 
     assert not report.ok
-    assert (out / "pipeline.owl").read_bytes() == before
-    assert [p.name for p in out.iterdir()] == ["pipeline.owl"]
+    assert path.read_bytes() == before
+    assert [p.name for p in out.iterdir()] == [path.name]
 
 
 def test_a_run_writes_one_log_file_per_input(ocel, tmp_path):
@@ -286,7 +291,7 @@ def test_materializing_during_a_build_is_recorded_and_grows_the_file(ocel, tmp_p
     code = main(["build", str(ocel), "--output", str(out), "--materialize", "-q"])
 
     assert code == EXIT_OK
-    assert record(out / "pipeline.owl")["materializeRequested"] == "true"
+    assert record(out / "pipeline.ofn")["materializeRequested"] == "true"
 
 
 @pytest.mark.reasoner
@@ -309,8 +314,8 @@ def test_a_streamed_build_can_be_materialized(ocel, tmp_path):
     )
 
     assert code == EXIT_OK
-    grown = (materialized / "pipeline.owl").stat().st_size
-    assert grown > (plain / "pipeline.owl").stat().st_size
+    grown = (materialized / "pipeline.ofn").stat().st_size
+    assert grown > (plain / "pipeline.ofn").stat().st_size
 
 
 # --------------------------------------------------------------------------
@@ -372,6 +377,21 @@ def test_a_missing_input_exits_two_with_a_message(tmp_path, capsys):
     assert "input not found" in capsys.readouterr().err
 
 
+def test_a_failure_that_is_not_a_semlog_error_keeps_its_traceback(ocel, monkeypatch):
+    """A defect is not something the caller can fix, so it is not a usage error."""
+    # `semanticlog.cli` re-exports `main`, so the attribute of that name is the
+    # function and the module has to come from sys.modules.
+    main_module = sys.modules["semanticlog.cli.main"]
+
+    def burst(_path, *_args, **_kwargs):
+        raise ValueError("a plain value error from somewhere inside")
+
+    monkeypatch.setattr(main_module, "inspect_input", burst)
+
+    with pytest.raises(ValueError, match="from somewhere inside"):
+        main(["inspect", str(ocel), "-q"])
+
+
 def test_a_bad_configuration_exits_two_without_a_traceback(ocel, capsys):
     code = main(
         [
@@ -399,6 +419,92 @@ def test_no_streaming_writes_rdf_xml(tmp_path, ocel):
     assert code == EXIT_OK
     assert (out / "pipeline.owl").read_text(encoding="utf-8").startswith("<?xml")
     assert read_rdf(out / "pipeline.owl", NS).individuals
+
+
+# --------------------------------------------------------------------------
+# build: flat logs
+# --------------------------------------------------------------------------
+
+
+def test_a_flat_csv_builds_with_its_columns_named_by_flag(flat_csv, tmp_path):
+    out = tmp_path / "onto"
+
+    code = main(
+        [
+            "build",
+            str(flat_csv),
+            "--case-col",
+            "case_id",
+            "--act-col",
+            "activity",
+            "--time-col",
+            "timestamp",
+            "--object-cols",
+            "resource",
+            "--case-concepts",
+            "case_id",
+            "--output",
+            str(out),
+            "-q",
+        ]
+    )
+
+    assert code == EXIT_OK
+    emitted = read_built(out / "flat.ofn")
+    assert "case_id" in emitted.classes
+    assert "resource" in emitted.classes
+
+
+def test_a_flat_csv_builds_with_its_columns_named_in_the_config(
+    flat_csv, tmp_path, write_config
+):
+    config = write_config(
+        "flat.toml",
+        f'input = "{flat_csv}"\n'
+        'case_col = "case_id"\n'
+        'act_col = "activity"\n'
+        'time_col = "timestamp"\n'
+        'object_cols = ["resource"]\n'
+        'case_concepts = ["case_id"]\n',
+    )
+
+    code = main(
+        ["build", "--config", str(config), "--output", str(tmp_path / "o"), "-q"]
+    )
+
+    assert code == EXIT_OK
+    assert (tmp_path / "o" / "flat.ofn").is_file()
+
+
+def test_inspect_reads_a_flat_csv(flat_csv, capsys):
+    assert (
+        main(
+            [
+                "inspect",
+                str(flat_csv),
+                "--case-col",
+                "case_id",
+                "--act-col",
+                "activity",
+                "--time-col",
+                "timestamp",
+                "-q",
+            ]
+        )
+        == EXIT_OK
+    )
+
+    printed = capsys.readouterr().out
+    assert "place_order" in printed
+    assert "case_id" in printed
+
+
+def test_a_file_semlog_cannot_read_is_refused_before_the_build(tmp_path, capsys):
+    path = tmp_path / "notes.md"
+    path.write_text("nothing to build")
+
+    assert main(["build", str(path), "-q"]) == EXIT_USAGE
+    assert "not an event log" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------
@@ -471,7 +577,7 @@ def test_configured_case_concepts_follow_a_rename_and_build(ocel, tmp_path):
         }
     )
     store = load_and_clean(collided, [])
-    chosen, source = choose_case_concepts(cfg, store)
+    chosen, source = choose_case_concepts(store, cfg.case_concepts)
 
     assert store.get_object_types() == ["item", "order_"]
     assert chosen == ["order_"]
@@ -488,7 +594,9 @@ def test_auto_selection_takes_the_most_common_object_types(ocel, tmp_path):
     )
     store = load_and_clean(ocel, [])
 
-    chosen, source = choose_case_concepts(cfg, store)
+    chosen, source = choose_case_concepts(
+        store, cfg.case_concepts, cfg.auto_case_concepts
+    )
 
     assert chosen == store.get_most_common_objects(n=1)
     assert source == "auto(n=1)"
@@ -507,7 +615,7 @@ def test_auto_selection_passes_over_a_type_no_event_reaches(tiny_store, ocel, tm
         {"input": [str(ocel)], "output": str(tmp_path), "auto_case_concepts": 2}
     )
 
-    chosen, _ = choose_case_concepts(cfg, store)
+    chosen, _ = choose_case_concepts(store, cfg.case_concepts, cfg.auto_case_concepts)
 
     assert store.get_most_common_objects(n=1) == ["courier"]
     assert chosen == ["order"]
@@ -631,7 +739,9 @@ def test_mine_declare_without_the_solver_exits_two_with_a_message(
     import semanticlog.enrich.declare as declare
 
     def refuse(_data):
-        raise ImportError("declare4py is not installed. Install the [declare] extra.")
+        raise DependencyError(
+            "declare4py is not installed. Install the [declare] extra."
+        )
 
     monkeypatch.setattr(declare, "DeclareEnricher", refuse)
 
@@ -667,7 +777,7 @@ def test_a_build_reads_the_constraints_mine_declare_wrote(
     assert code == EXIT_OK
     assert (
         "Response__place_order__pay__"
-        in (tmp_path / "onto" / "pipeline.owl").read_text()
+        in (tmp_path / "onto" / "pipeline.ofn").read_text()
     )
 
 
@@ -712,19 +822,19 @@ def test_reason_reports_a_built_ontology_as_consistent(ocel, tmp_path):
     out = tmp_path / "onto"
     main(["build", str(ocel), "--output", str(out), "-q"])
 
-    assert main(["reason", str(out / "pipeline.owl"), "--check", "-q"]) == EXIT_OK
+    assert main(["reason", str(out / "pipeline.ofn"), "--check", "-q"]) == EXIT_OK
 
 
 @pytest.mark.reasoner
 def test_reason_writes_the_materialized_ontology_where_it_is_told(ocel, tmp_path):
     out = tmp_path / "onto"
     main(["build", str(ocel), "--output", str(out), "-q"])
-    before = (out / "pipeline.owl").read_bytes()
+    before = (out / "pipeline.ofn").read_bytes()
 
     code = main(
         [
             "reason",
-            str(out / "pipeline.owl"),
+            str(out / "pipeline.ofn"),
             "--output",
             str(tmp_path / "materialized.owl"),
             "-q",
@@ -733,17 +843,17 @@ def test_reason_writes_the_materialized_ontology_where_it_is_told(ocel, tmp_path
 
     assert code == EXIT_OK
     assert (tmp_path / "materialized.owl").is_file()
-    assert (out / "pipeline.owl").read_bytes() == before, "the input is left alone"
+    assert (out / "pipeline.ofn").read_bytes() == before, "the input is left alone"
 
 
 @pytest.mark.reasoner
 def test_reason_materializes_in_place_without_an_output(ocel, tmp_path):
     out = tmp_path / "onto"
     main(["build", str(ocel), "--output", str(out), "-q"])
-    before = (out / "pipeline.owl").stat().st_size
+    before = (out / "pipeline.ofn").stat().st_size
 
-    assert main(["reason", str(out / "pipeline.owl"), "-q"]) == EXIT_OK
-    assert (out / "pipeline.owl").stat().st_size > before
+    assert main(["reason", str(out / "pipeline.ofn"), "-q"]) == EXIT_OK
+    assert (out / "pipeline.ofn").stat().st_size > before
 
 
 def test_reason_on_a_missing_file_exits_two(tmp_path, capsys):

@@ -9,23 +9,28 @@ several cases, which is the usual consequence of flattening.
 Two sorts of row do not survive the projection: an event related to one object
 more than once, which the case holds only once, and an event with no timestamp,
 which has no position in an order. Both are reported.
+
+Choosing which types to project onto lives here too, since it is answered from
+the same relations.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 
 import pandas as pd
 
+from semanticlog.core.errors import InputError
 from semanticlog.core.summary import count_phrase
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.cleaning import object_type_renames
+from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind
 
 logger = logging.getLogger(__name__)
 
 
-def get_log(data: OCEDStore, case_concept: str) -> pd.DataFrame:
+def get_log(data: ReadableStore, case_concept: str) -> pd.DataFrame:
     """Return the flat log for one case concept.
 
     Args:
@@ -45,7 +50,7 @@ def get_log(data: OCEDStore, case_concept: str) -> pd.DataFrame:
 
 
 def iter_logs(
-    data: OCEDStore, case_concepts: Iterable[str]
+    data: ReadableStore, case_concepts: Iterable[str]
 ) -> Iterator[tuple[str, pd.DataFrame]]:
     """Yield each case concept with its flat log.
 
@@ -82,7 +87,7 @@ def iter_logs(
         yield case_concept, log
 
 
-def case_concept_candidates(data: OCEDStore) -> list[str]:
+def case_concept_candidates(data: ReadableStore) -> list[str]:
     """Return the object types this store can be projected onto.
 
     A case concept needs events, and events reach objects through the
@@ -100,7 +105,80 @@ def case_concept_candidates(data: OCEDStore) -> list[str]:
     return [t for t in data.get_object_types() if t in reached]
 
 
-def _case_relations(data: OCEDStore, case_concept: str) -> pd.DataFrame:
+def rank_case_concepts(data: ReadableStore, n: int) -> list[str]:
+    """Return the n largest object types a build could project onto.
+
+    Types no event-to-object relation reaches are left out before the count is
+    applied, so choosing three never spends one of them on a type that has no
+    events to order.
+
+    Args:
+        data: Store to choose from.
+        n: How many types to return.
+
+    Returns:
+        Type names, most instances first.
+    """
+    reachable = set(case_concept_candidates(data))
+    ranked = data.get_most_common_objects(n=len(data.get_object_types()))
+    return [obj_type for obj_type in ranked if obj_type in reachable][:n]
+
+
+def follow_renames(data: ReadableStore, case_concepts: Sequence[str]) -> list[str]:
+    """Map given case concepts onto the names the store holds them under.
+
+    A case concept is written as the source log spells it, and cleaning renames
+    an object type whose name something else in the log already claims. A name
+    that matches no object type and no rename is passed through, so the audit
+    is what reports it.
+
+    Args:
+        data: Store the names have to resolve against.
+        case_concepts: Object types as they were given.
+
+    Returns:
+        The same types, in the same order, under their current names.
+    """
+    object_types = set(data.get_object_types())
+    renames = object_type_renames(data)
+    chosen = []
+    for case_concept in case_concepts:
+        moved = renames.get(case_concept)
+        if case_concept in object_types or moved is None:
+            chosen.append(case_concept)
+            continue
+        logger.info(f"  case concept {case_concept} is called {moved} after cleaning")
+        chosen.append(moved)
+    return chosen
+
+
+def choose_case_concepts(
+    data: ReadableStore, case_concepts: Sequence[str] | None, auto: int = 3
+) -> tuple[list[str], str]:
+    """Take the given case concepts, or pick the most common object types.
+
+    Args:
+        data: Store to resolve against.
+        case_concepts: Object types as the source log spells them, or None to
+            choose them.
+        auto: How many to choose when choosing.
+
+    Returns:
+        The chosen types and where the choice came from, which is recorded as
+        provenance so a result says whether it was chosen or given.
+    """
+    if case_concepts is not None:
+        return follow_renames(data, case_concepts), "config"
+    chosen = rank_case_concepts(data, auto)
+    if not chosen and data.get_object_types():
+        logger.warning(
+            "No object type of this log is reached by an event-to-object relation, "
+            "so there is nothing to project onto and no case concept was chosen."
+        )
+    return chosen, f"auto(n={auto})"
+
+
+def _case_relations(data: ReadableStore, case_concept: str) -> pd.DataFrame:
     """Collect the event-to-object rows that reach this case concept.
 
     Every relation naming the type contributes, so an event linked to one
@@ -108,7 +186,7 @@ def _case_relations(data: OCEDStore, case_concept: str) -> pd.DataFrame:
     however many relations connect them, so the pairs are reduced here.
     """
     if case_concept not in data.get_object_types():
-        raise ValueError(f"Unknown object type: {case_concept}")
+        raise InputError(f"Unknown object type: {case_concept}")
 
     relations = data.get_e2o()
     data_list = [
@@ -119,7 +197,7 @@ def _case_relations(data: OCEDStore, case_concept: str) -> pd.DataFrame:
         if case_concept in relation.to_type
     ]
     if not data_list:
-        raise ValueError(
+        raise InputError(
             f"No event-to-object relations reference object type '{case_concept}'."
         )
 
@@ -138,7 +216,7 @@ def _case_relations(data: OCEDStore, case_concept: str) -> pd.DataFrame:
     return rel_data[rel_data[case_concept].isin(valid_case_ids)]
 
 
-def _event_frame(data: OCEDStore) -> pd.DataFrame:
+def _event_frame(data: ReadableStore) -> pd.DataFrame:
     """Stack every activity into one frame of id, activity and timestamp."""
     events_data_list = []
     for event_type in data.get_event_types():
@@ -151,7 +229,7 @@ def _event_frame(data: OCEDStore) -> pd.DataFrame:
         events_data_list.append(event_data)
 
     if not events_data_list:
-        raise ValueError("No event data available.")
+        raise InputError("No event data available.")
     return pd.concat(events_data_list, ignore_index=True)
 
 
@@ -188,7 +266,7 @@ def _drop_undated(log: pd.DataFrame, case_concept: str) -> pd.DataFrame:
 
 
 def _warn_unknown_case_ids(
-    data: OCEDStore, case_concept: str, dropped_ids: set
+    data: ReadableStore, case_concept: str, dropped_ids: set
 ) -> None:
     """Warn about referenced case ids that are in no object table.
 

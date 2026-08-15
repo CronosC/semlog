@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import json
 import tomllib
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -29,20 +30,19 @@ from semanticlog.core.enums import (
     OWLProfile,
     resolve_reasoner_backend,
 )
+from semanticlog.core.errors import ConfigError as ConfigError
+from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.binning import (
     DEFAULT_BIN_LABELS,
     DEFAULT_BINS,
 )
-from semanticlog.data.loading.pm4py_loader import OCEL_SUFFIXES
+from semanticlog.data.loading import CLASSICAL_SUFFIXES, LOG_SUFFIXES
+from semanticlog.enrich.declare import DeclareResult
+from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import (
     DEFAULT_MAX_EF_PAIRS,
-    FILE_BACKED,
     OntoBuildSettings,
 )
-
-
-class ConfigError(ValueError):
-    """A setting is missing, unknown, or of the wrong sort."""
 
 
 def parse_enum[E: BuildEnum](enum_cls: type[E], token: str, *, key: str) -> E:
@@ -196,6 +196,17 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         argparse={"metavar": "STEM"},
     ),
     Setting(
+        "iri",
+        DEFAULT_IRI,
+        _as_str,
+        "run",
+        help=(
+            "Base IRI the ontology puts its names in "
+            f"(default: {DEFAULT_IRI}). A trailing # is added when missing."
+        ),
+        argparse={"metavar": "IRI"},
+    ),
+    Setting(
         "profile",
         OWLProfile.OWL2DL.value,
         _enum_of(OWLProfile),
@@ -222,7 +233,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         "manual",
         help=(
             "Object types to use as cases. Omit to auto-select the most common "
-            "types; pass --case-concepts with no values for none. Run "
+            "types. Pass --case-concepts with no values for none. Run "
             "'semlog inspect' to see the available names."
         ),
         argparse={"nargs": "*", "metavar": "TYPE"},
@@ -234,6 +245,43 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         "run",
         help="How many object types to auto-select (default: 3).",
         argparse={"type": int, "metavar": "N"},
+    ),
+    Setting(
+        "case_col",
+        None,
+        _optional(_as_str),
+        "run",
+        help=(
+            "Flat log only: column holding the case id (default: case:concept:name)."
+        ),
+        argparse={"metavar": "COLUMN"},
+    ),
+    Setting(
+        "act_col",
+        None,
+        _optional(_as_str),
+        "run",
+        help="Flat log only: column holding the activity (default: concept:name).",
+        argparse={"metavar": "COLUMN"},
+    ),
+    Setting(
+        "time_col",
+        None,
+        _optional(_as_str),
+        "run",
+        help="Flat log only: column holding the timestamp (default: time:timestamp).",
+        argparse={"metavar": "COLUMN"},
+    ),
+    Setting(
+        "object_cols",
+        [],
+        _list_of(_as_str),
+        "run",
+        help=(
+            "Flat log only: further columns that each become an object type. "
+            "Default: none."
+        ),
+        argparse={"nargs": "*", "metavar": "COLUMN"},
     ),
     Setting(
         "data_representations",
@@ -278,7 +326,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
             "Inverse relation strategies: "
             f"{' | '.join(InverseRepresentation.spellings())}. "
             "axiomatic adds InverseObjectProperty axioms (OWL2DL only), "
-            "implicit materialises the inverse assertions. Default: none."
+            "implicit materializes the inverse assertions. Default: none."
         ),
         argparse={"nargs": "*", "metavar": "MODE"},
     ),
@@ -297,7 +345,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         "annotation_document",
         None,
         _optional(_as_str),
-        "settings",
+        "run",
         help="JSON file mapping entity names to {label, comment} dicts.",
         argparse={"metavar": "JSON"},
     ),
@@ -313,7 +361,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         "declare_file",
         None,
         _optional(_as_str),
-        "settings",
+        "run",
         help=(
             "DECLARE constraints CSV, as written by 'semlog mine-declare'. "
             "Required when --order-representations includes declare."
@@ -476,15 +524,28 @@ def _load_config_file(path: Path, chain: list[Path]) -> dict[str, Any]:
 class RunConfig:
     """One resolved run: what to build, from what, and where to put it.
 
+    Every field up to `config_file` is one of `BUILD_SETTINGS`, which is where
+    its default is declared. `resolve_run_config` always supplies them, so they
+    carry no default here and the table stays the only place a default is
+    written.
+
     Attributes:
         inputs: Log files to build, in order.
         output_dir: Directory every artifact goes into.
         name: Shared stem for the artifacts, or None to use each input name.
-        settings: Build settings, apart from the case concepts, which are only
-            known once the log is loaded.
+        settings: The choices a build is configured with. What it needs beyond
+            them is resolved per log, by `build_inputs`.
         case_concepts: Object types to use as cases, or None to choose them
             from the log.
+        iri: Base IRI the ontology puts its names in.
         auto_case_concepts: How many to choose when choosing automatically.
+        case_col: Column holding the case id of a flat log.
+        act_col: Column holding the activity of a flat log.
+        time_col: Column holding the timestamp of a flat log.
+        object_cols: Further columns of a flat log that each become an object
+            type.
+        annotation_document: JSON file of entity name to label and comment.
+        declare_file: CSV of mined DECLARE constraints.
         materialize: Run a reasoner after writing.
         reasoner_backend: Reasoner to use for that.
         save_backmap: Also write the map of cleaned names to source names.
@@ -502,13 +563,20 @@ class RunConfig:
     name: str | None
     settings: OntoBuildSettings
     case_concepts: tuple[str, ...] | None
-    auto_case_concepts: int = 3
-    materialize: bool = False
-    reasoner_backend: str = "HermiT"
-    save_backmap: bool = False
-    streaming: bool = True
-    size_limit_mb: int = 0
-    log_dir: Path | None = None
+    iri: str
+    auto_case_concepts: int
+    case_col: str | None
+    act_col: str | None
+    time_col: str | None
+    object_cols: list[str]
+    annotation_document: str | None
+    declare_file: str | None
+    materialize: bool
+    reasoner_backend: str
+    save_backmap: bool
+    streaming: bool
+    size_limit_mb: int
+    log_dir: Path | None
     config_file: Path | None = None
     command: str = ""
     warnings: tuple[str, ...] = field(default_factory=tuple)
@@ -518,16 +586,83 @@ class RunConfig:
         return self.name or input_path.stem
 
     def ontology_path(self, input_path: Path) -> Path:
-        """Return where the ontology for one input goes."""
-        return self.output_dir / f"{self.output_stem(input_path)}.owl"
+        """Return where the ontology for one input goes.
+
+        The extension names the syntax inside: `.ofn` for the functional
+        syntax a streamed build writes, `.owl` for the RDF/XML an in-memory
+        build writes.
+        """
+        suffix = "ofn" if self.streaming else "owl"
+        return self.output_dir / f"{self.output_stem(input_path)}.{suffix}"
 
     def backmap_path(self, input_path: Path) -> Path:
         """Return where the name backmap for one input goes."""
         return self.output_dir / f"{self.output_stem(input_path)}.backmap.json"
 
-    def settings_for(self, case_concepts: Sequence[str]) -> OntoBuildSettings:
-        """Return the settings with the case concepts this input resolved to."""
-        return self.settings.replace(case_concepts=tuple(case_concepts))
+    def declare_result(self) -> DeclareResult | None:
+        """Read the mined constraints, or None when the run names no file.
+
+        Raises:
+            ConfigError: If the file is not there.
+        """
+        if self.declare_file is None:
+            return None
+        if not Path(self.declare_file).is_file():
+            raise ConfigError(
+                f"declare_file not found: {self.declare_file}. Mine the "
+                "constraints first with 'semlog mine-declare'."
+            )
+        return DeclareResult.read(self.declare_file)
+
+    def annotations(self) -> dict[str, dict[str, str]]:
+        """Read the annotation document, or return nothing when there is none.
+
+        Raises:
+            ConfigError: If the file is not there or is not a JSON object of
+                entity name to label and comment.
+        """
+        if self.annotation_document is None:
+            return {}
+        path = Path(self.annotation_document)
+        if not path.is_file():
+            raise ConfigError(f"annotation_document not found: {path}")
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"{path}: invalid JSON: {exc}") from exc
+        return document
+
+    def build_inputs(
+        self, case_concepts: Sequence[str], declare: DeclareResult | None
+    ) -> BuildInputs:
+        """Return what a build of one log needs beyond its settings.
+
+        Args:
+            case_concepts: Object types this input resolved to.
+            declare: The mined constraints, as `declare_result` read them.
+
+        Returns:
+            The inputs for that build.
+        """
+        return BuildInputs(
+            case_concepts=tuple(case_concepts),
+            declare_constraints=None if declare is None else declare.constraints,
+            annotations=self.annotations(),
+        )
+
+    def loader_columns(self) -> dict[str, Any]:
+        """Return the column names a flat log is read with.
+
+        A column nobody named is left out, so the loader applies its own
+        default. An OCEL log carries its structure and ignores all of them.
+        """
+        named = {
+            "case_col": self.case_col,
+            "act_col": self.act_col,
+            "time_col": self.time_col,
+            "object_cols": self.object_cols or None,
+        }
+        return {key: value for key, value in named.items() if value is not None}
 
     def render(self) -> str:
         """Render the run for reading, as printed by --dry-run.
@@ -552,8 +687,8 @@ class RunConfig:
             f"data representation  {', '.join(r.value for r in settings.data_representations) or 'none'}",
             f"inverses             {', '.join(r.value for r in settings.inverse_representations) or 'none'}",
             f"ocel extensions      {', '.join(e.value for e in settings.ocel_extensions) or 'none'}",
-            f"annotations          document={settings.annotation_document or 'none'} derived={settings.derive_annotations}",
-            f"declare constraints  {settings.declare_file or 'none'}",
+            f"annotations          document={self.annotation_document or 'none'} derived={settings.derive_annotations}",
+            f"declare constraints  {self.declare_file or 'none'}",
             f"materialize          {self.materialize}"
             + (f" ({self.reasoner_backend})" if self.materialize else ""),
         ]
@@ -573,7 +708,7 @@ class RunConfig:
 def _expand_inputs(tokens: Sequence[str]) -> tuple[Path, ...]:
     """Turn the input setting into the actual list of files to build.
 
-    A directory contributes every OCEL file in it. A path that does not exist
+    A directory contributes every event log in it. A path that does not exist
     raises rather than yielding an empty result. Paths are compared resolved,
     so one file named two ways is built once.
     """
@@ -589,15 +724,20 @@ def _expand_inputs(tokens: Sequence[str]) -> tuple[Path, ...]:
             found = sorted(
                 child
                 for child in path.iterdir()
-                if child.is_file() and child.suffix.lower() in OCEL_SUFFIXES
+                if child.is_file() and child.suffix.lower() in LOG_SUFFIXES
             )
             if not found:
                 raise ConfigError(
-                    f"{path} contains no OCEL files "
-                    f"({', '.join(sorted(OCEL_SUFFIXES))})."
+                    f"{path} contains no event logs "
+                    f"({', '.join(sorted(LOG_SUFFIXES))})."
                 )
             inputs.extend(found)
         elif path.is_file():
+            if path.suffix.lower() not in LOG_SUFFIXES:
+                raise ConfigError(
+                    f"{path} is not an event log semlog reads "
+                    f"({', '.join(sorted(LOG_SUFFIXES))})."
+                )
             inputs.append(path)
         else:
             raise ConfigError(f"input not found: {path}")
@@ -640,22 +780,6 @@ def _check_distinct_stems(inputs: Sequence[Path]) -> None:
     )
 
 
-def _check_file_backed_settings(merged: dict[str, Any]) -> None:
-    """Check the settings that name a file, before anything tries to read one.
-
-    `OntoBuildSettings` opens each of these in `__post_init__`, so a missing
-    file has to be caught here or it surfaces as an OS error instead of as a
-    message about the setting.
-
-    Raises:
-        ConfigError: If a named file does not exist.
-    """
-    for setting in FILE_BACKED:
-        value = merged.get(setting.path_field)
-        if value is not None and not Path(_as_str(value, setting.path_field)).is_file():
-            raise ConfigError(setting.missing.format(path=value))
-
-
 def _settings_from(merged: dict[str, Any]) -> OntoBuildSettings:
     """Build the ontology settings from the merged configuration."""
     kwargs: dict[str, Any] = {}
@@ -680,6 +804,22 @@ def _binning_warnings(merged: dict[str, Any], settings: OntoBuildSettings) -> li
     return [
         "bins/bin_labels have no effect without equal_bins or dist_bins in "
         f"data_representations (currently {[r.value for r in settings.data_representations]})."
+    ]
+
+
+_COLUMN_KEYS = ("case_col", "act_col", "time_col", "object_cols")
+
+
+def _column_warnings(merged: dict[str, Any], inputs: Sequence[Path]) -> list[str]:
+    """Warn about column settings on a run with no flat log to read them."""
+    named = [key for key in _COLUMN_KEYS if merged[key] != BUILD_DEFAULTS[key]]
+    if not named:
+        return []
+    if any(path.suffix.lower() in CLASSICAL_SUFFIXES for path in inputs):
+        return []
+    return [
+        f"{', '.join(named)} name columns of a flat .csv or .xes log and have "
+        "no effect on the OCEL inputs of this run."
     ]
 
 
@@ -711,19 +851,15 @@ def resolve_run_config(
     merged: dict[str, Any] = {**BUILD_DEFAULTS, **from_file, **overrides}
 
     inputs = _expand_inputs(_list_of(_as_str)(merged["input"], "input"))
-    _check_file_backed_settings(merged)
     settings = _settings_from(merged)
     run: dict[str, Any] = {
         s.field or s.key: s.read(merged[s.key], s.key)
         for s in settings_targeting("run")
     }
 
-    try:
-        settings.validate(require_inputs=False)
-    except ValueError as exc:
-        raise ConfigError(str(exc)) from exc
+    settings.validate()
 
-    if settings.emits_declare and settings.declare_file is None:
+    if settings.emits_declare and run["declare_file"] is None:
         raise ConfigError(
             "order includes 'declare' but no declare_file is set. Mine the "
             "constraints first with 'semlog mine-declare', then point "
@@ -758,6 +894,8 @@ def resolve_run_config(
         case_concepts=case_concepts,
         config_file=None if config_file is None else Path(config_file),
         command=command,
-        warnings=tuple(_binning_warnings(merged, settings)),
+        warnings=tuple(
+            _binning_warnings(merged, settings) + _column_warnings(merged, inputs)
+        ),
         **run,
     )

@@ -1,16 +1,13 @@
 """What a build emits, as one checked value.
 
-`OntoBuildSettings` is the single configuration object of a build. It is
-frozen, it validates itself, and it resolves the files it points at when it is
-constructed, so a builder never has to check whether an input is loaded yet.
+`OntoBuildSettings` holds the choices a build is configured with, and nothing
+that has to be read off a log or out of a file. It is frozen, it does no I/O,
+and it validates itself. What a build needs beyond these is `BuildInputs`.
 """
 
 from __future__ import annotations
 
-import copy
 import dataclasses
-import json
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -22,117 +19,51 @@ from semanticlog.core.enums import (
     OCELExtension,
     OWLProfile,
 )
+from semanticlog.core.errors import ConfigError
 from semanticlog.data.binning import DEFAULT_BIN_LABELS, DEFAULT_BINS
-from semanticlog.enrich.declare import DeclareResult
 
 DEFAULT_MAX_EF_PAIRS = 50_000_000
 
 
-def _read_annotations(path: str) -> dict[str, dict[str, str]]:
-    """Read an annotation document, which maps a name to its label and comment."""
-    with open(path, encoding="utf-8") as f:
-        document: dict[str, dict[str, str]] = json.load(f)
-    return document
-
-
-@dataclass(frozen=True)
-class FileBackedSetting:
-    """A setting that names a file, paired with the field holding its content.
-
-    Everything that knows about one of these reads it from `FILE_BACKED`: the
-    settings resolve it on construction, `replace` drops stale content when the
-    path changes, and the CLI checks the file exists before either happens.
-
-    Attributes:
-        path_field: Field naming the file.
-        content_field: Field the loaded content lands on.
-        read: Turns a path into that content.
-        missing: What to say when the file is not there, with `{path}` in it.
-        copy_content: Deep-copy content passed directly, so a caller cannot
-            mutate it afterwards. Off for content that is already immutable or
-            too large to copy for nothing.
-    """
-
-    path_field: str
-    content_field: str
-    read: Callable[[str], Any]
-    missing: str
-    copy_content: bool = False
-
-
-FILE_BACKED: tuple[FileBackedSetting, ...] = (
-    FileBackedSetting(
-        "declare_file",
-        "declare_result",
-        lambda path: DeclareResult.read(path),
-        "declare_file not found: {path}. Mine the constraints first with "
-        "'semlog mine-declare'.",
-    ),
-    FileBackedSetting(
-        "annotation_document",
-        "annotation_data",
-        _read_annotations,
-        "annotation_document not found: {path}",
-        copy_content=True,
-    ),
-)
-
-
 @dataclass(frozen=True)
 class OntoBuildSettings:
-    """Everything a build needs to know beyond the data itself.
+    """The choices a build is configured with.
 
-    Sequence fields accept any iterable and are stored as tuples. The two
-    file-backed fields are read once, when the settings are constructed, and
-    the loaded content is then available as `annotation_data` and
-    `declare_result`.
+    Sequence fields accept any iterable and are stored as tuples. Nothing here
+    is read off a log or out of a file, so one settings object describes a
+    build of any log. What a build needs beyond this is `BuildInputs`.
 
     Attributes:
         profile: OWL 2 profile the output stays inside.
         order_representations: How event order is expressed. Empty for none.
         ocel_extensions: Optional OCEL 2.0 features to emit.
-        case_concepts: Object types whose instances act as cases. Required by
-            every order representation.
-        declare_file: Path to a mined DECLARE constraints CSV.
         inverse_representations: How inverse properties are expressed. Empty
             for no inverses.
         data_representations: How numeric attribute values are expressed.
         bins: Number of bins for the binning modes.
         bin_labels: Label per bin. Must have exactly `bins` entries.
-        annotation_document: Path to a JSON document of entity name to label
-            and comment.
         derive_annotations: Emit labels and comments derived from the original
             names in the log.
         max_ef_pairs: Ceiling on materialized eventually-follows pairs, which
             grow quadratically with trace length. Zero for no limit.
-        annotation_data: Loaded content of `annotation_document`, or annotations
-            passed directly.
-        declare_result: Loaded content of `declare_file`, or constraints passed
-            directly.
 
     Raises:
-        ValueError: If `bin_labels` does not have exactly `bins` entries.
+        ConfigError: If `bin_labels` does not have exactly `bins` entries.
     """
 
     profile: OWLProfile = OWLProfile.OWL2DL
     order_representations: tuple[EventOrderRepresentation, ...] = ()
     ocel_extensions: tuple[OCELExtension, ...] = ()
-    case_concepts: tuple[str, ...] = ()
-    declare_file: str | None = None
     inverse_representations: tuple[InverseRepresentation, ...] = ()
     data_representations: tuple[DataRepresentation, ...] = (DataRepresentation.VALUES,)
     bins: int = DEFAULT_BINS
     bin_labels: tuple[str, ...] = tuple(DEFAULT_BIN_LABELS)
-    annotation_document: str | None = None
     derive_annotations: bool = False
     max_ef_pairs: int = DEFAULT_MAX_EF_PAIRS
-    annotation_data: dict[str, dict[str, str]] | None = None
-    declare_result: DeclareResult | None = None
 
     _SEQUENCES: ClassVar[tuple[str, ...]] = (
         "order_representations",
         "ocel_extensions",
-        "case_concepts",
         "inverse_representations",
         "data_representations",
         "bin_labels",
@@ -152,10 +83,9 @@ class OntoBuildSettings:
             if not isinstance(value, tuple):
                 object.__setattr__(self, name, tuple(value))
         self._resolve_enums()
-        self._resolve_inputs()
         problem = self._bin_label_problem()
         if problem is not None:
-            raise ValueError(problem)
+            raise ConfigError(problem)
 
     def _resolve_enums(self) -> None:
         """Turn whatever was passed for an enum field into the member itself.
@@ -173,16 +103,6 @@ class OntoBuildSettings:
                 resolved = enum_cls.parse(value, key=name)
             object.__setattr__(self, name, resolved)
 
-    def _resolve_inputs(self) -> None:
-        """Read the file-backed fields, and copy content passed directly."""
-        for setting in FILE_BACKED:
-            content = getattr(self, setting.content_field)
-            path = getattr(self, setting.path_field)
-            if content is None and path is not None:
-                object.__setattr__(self, setting.content_field, setting.read(path))
-            elif content is not None and setting.copy_content:
-                object.__setattr__(self, setting.content_field, copy.deepcopy(content))
-
     def _bin_label_problem(self) -> str | None:
         if len(self.bin_labels) != self.bins:
             return (
@@ -194,18 +114,12 @@ class OntoBuildSettings:
     def replace(self, **changes: Any) -> OntoBuildSettings:
         """Return a copy with some fields changed.
 
-        Changing a path field drops the content loaded from the old path, so
-        the new one is read instead of the stale content being kept.
-
         Args:
             **changes: Field values to change.
 
         Returns:
             A new settings object.
         """
-        for setting in FILE_BACKED:
-            if setting.path_field in changes and setting.content_field not in changes:
-                changes[setting.content_field] = None
         return dataclasses.replace(self, **changes)
 
     @property
@@ -273,21 +187,15 @@ class OntoBuildSettings:
                 return mode
         return None
 
-    def validate(self, require_inputs: bool = True) -> None:
+    def validate(self) -> None:
         """Check that the settings describe a build that can run.
 
         Every problem is collected before raising, so one call reports all of
-        them.
-
-        Args:
-            require_inputs: Also check the settings that depend on data the
-                build has not seen yet, such as case concepts and DECLARE
-                constraints. The CLI resolves its configuration before those
-                are known, so it passes False there and the builder checks
-                again with True.
+        them. What the settings cannot answer for is checked by
+        `BuildInputs.validate`.
 
         Raises:
-            ValueError: If any setting is unusable, listing every problem.
+            ConfigError: If any setting is unusable, listing every problem.
         """
         errors: list[str] = []
         is_el = self.profile == OWLProfile.OWL2EL
@@ -329,21 +237,8 @@ class OntoBuildSettings:
                 "include at most one in data_representations."
             )
 
-        if require_inputs:
-            if self.emits_traces and not self.case_concepts:
-                errors.append(
-                    "order_representations includes DF/EF/EF_EXPLICIT but case_concepts is "
-                    "empty. Set settings.case_concepts before calling build_ontology()."
-                )
-
-            if self.emits_declare and self.declare_result is None:
-                errors.append(
-                    "order_representations includes DECLARE but no DECLARE constraints are "
-                    "available. Set settings.declare_file or assign settings.declare_result."
-                )
-
         if errors:
-            raise ValueError(
+            raise ConfigError(
                 "Invalid OntoBuildSettings:\n" + "\n".join(f"  - {e}" for e in errors)
             )
 
@@ -371,6 +266,4 @@ def _plain(value: Any) -> Any:
         return value.value
     if isinstance(value, tuple):
         return [_plain(item) for item in value]
-    if isinstance(value, DeclareResult):
-        return value.to_dict()
     return value

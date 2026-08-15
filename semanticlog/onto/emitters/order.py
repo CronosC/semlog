@@ -9,22 +9,19 @@ representations run is decided by the settings, and they can be combined.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
+from semanticlog.core.errors import ConfigError
 from semanticlog.data.flatten import iter_logs
-from semanticlog.data.oced import OCEDStore
-from semanticlog.enrich.declare import DeclareResult
+from semanticlog.data.readable import ReadableStore
 from semanticlog.onto.emitters.base import Emitter
+from semanticlog.onto.inputs import BuildInputs, constraint_names
 
 logger = logging.getLogger(__name__)
-
-
-def declare_constraint_names(constraints: pd.DataFrame) -> list[str]:
-    """Return the constraint columns of a mining result, without its index columns."""
-    return [c for c in constraints.columns if c not in DeclareResult.INDEX_COLUMNS]
 
 
 def declare_membership(constraints: pd.DataFrame, constraint: str) -> pd.Series:
@@ -39,15 +36,16 @@ class OrderEmitter(Emitter):
         super().__init__(*args, **kwargs)
         self._ef_pairs_so_far = 0
 
-    def emit(self, data: OCEDStore) -> None:
+    def emit(self, data: ReadableStore, inputs: BuildInputs) -> None:
         """Emit whichever order representations the settings selected."""
-        self.annotations.bind(data.backmap)
         if self.settings.emits_traces:
-            self.emit_trace_order(data)
+            self.emit_trace_order(data, inputs.case_concepts)
         if self.settings.emits_declare:
-            self.emit_declare(data)
+            self.emit_declare(inputs.declare_constraints)
 
-    def emit_trace_order(self, data: OCEDStore) -> None:
+    def emit_trace_order(
+        self, data: ReadableStore, case_concepts: Sequence[str]
+    ) -> None:
         """Emit the order super-properties, then the order of each case concept.
 
         The log is flattened once per case concept, and each projection is
@@ -56,6 +54,7 @@ class OrderEmitter(Emitter):
         include_df = self.settings.emits_df
         include_ef = self.settings.emits_ef
         has_inverses = self.settings.has_inverses
+        axiomatic = self.settings.axiomatic_inverses
 
         order_source = "the event order super-properties"
         if include_df:
@@ -64,6 +63,7 @@ class OrderEmitter(Emitter):
                 vocab.EVENT,
                 vocab.EVENT,
                 create_inverse=has_inverses,
+                axiomatic_inverse=axiomatic,
                 source=order_source,
             )
         if include_ef:
@@ -72,11 +72,12 @@ class OrderEmitter(Emitter):
                 vocab.EVENT,
                 vocab.EVENT,
                 create_inverse=has_inverses,
+                axiomatic_inverse=axiomatic,
                 source=order_source,
             )
         self.annotations.order_superproperties(include_df, include_ef)
 
-        for case_concept, events in iter_logs(data, self.settings.case_concepts):
+        for case_concept, events in iter_logs(data, case_concepts):
             self.emit_case_order(case_concept, events, include_df, include_ef)
 
     def emit_case_order(
@@ -114,14 +115,15 @@ class OrderEmitter(Emitter):
         end_ids = grouped["event_id"].nth(-1)
 
         has_inverses = self.settings.has_inverses
+        axiomatic = self.settings.axiomatic_inverses
         start_cls = vocab.start_class(case_concept)
         end_cls = vocab.end_class(case_concept)
         case_source = f"case concept {case_concept!r}"
         self.sink.add_class(start_cls, vocab.EVENT, source=case_source)
         self.sink.add_class(end_cls, vocab.EVENT, source=case_source)
         self.annotations.trace_boundary_classes(case_concept, start_cls, end_cls)
-        self.sink.assert_individuals(list(start_ids), start_cls)
-        self.sink.assert_individuals(list(end_ids), end_cls)
+        self.sink.assert_individuals(start_cls, start_ids)
+        self.sink.assert_individuals(end_cls, end_ids)
 
         df_rel = vocab.df_property(case_concept)
         if include_df:
@@ -134,10 +136,11 @@ class OrderEmitter(Emitter):
                 vocab.EVENT,
                 vocab.DF,
                 create_inverse=has_inverses,
+                axiomatic_inverse=axiomatic,
                 source=case_source,
             )
             self.annotations.df_property(case_concept, df_rel)
-            self.sink.assert_relations(df_pairs, df_rel, "event_id", "next_event_id")
+            self.assert_relations(df_rel, df_pairs, "event_id", "next_event_id")
 
         if not include_ef:
             return
@@ -149,6 +152,7 @@ class OrderEmitter(Emitter):
             vocab.EVENT,
             vocab.EF,
             create_inverse=has_inverses,
+            axiomatic_inverse=axiomatic,
             source=case_source,
         )
         self.annotations.ef_property(case_concept, ef_rel)
@@ -174,7 +178,7 @@ class OrderEmitter(Emitter):
 
         self_pairs = pd.DataFrame({"event_id": events["event_id"].unique()})
         self_pairs["event_id_self"] = self_pairs["event_id"]
-        self.sink.assert_relations(self_pairs, ef_rel, "event_id", "event_id_self")
+        self.assert_relations(ef_rel, self_pairs, "event_id", "event_id_self")
 
     def _materialize_eventually_follows(
         self, ef_rel: str, events: pd.DataFrame
@@ -196,7 +200,7 @@ class OrderEmitter(Emitter):
             ef_pairs = pd.DataFrame(
                 {"event_id_from": ids[row_idx], "event_id_to": ids[col_idx]}
             )
-            self.sink.assert_relations(ef_pairs, ef_rel, "event_id_from", "event_id_to")
+            self.assert_relations(ef_rel, ef_pairs, "event_id_from", "event_id_to")
 
     def _check_ef_budget(self, ef_rel: str, groups: list) -> None:
         """Refuse to materialize more pairs than the build allows.
@@ -210,7 +214,7 @@ class OrderEmitter(Emitter):
         budget = self.settings.max_ef_pairs
         if budget and total > budget:
             longest = max((len(grp) for _, grp in groups), default=0)
-            raise ValueError(
+            raise ConfigError(
                 f"EF_EXPLICIT would materialize {total:,} pairs in total "
                 f"(reached at '{ef_rel}'), over the max_ef_pairs limit of "
                 f"{budget:,}. Eventually-follows is "
@@ -224,25 +228,27 @@ class OrderEmitter(Emitter):
             f"({total:,} so far)"
         )
 
-    def emit_declare(self, data: OCEDStore) -> None:
+    def emit_declare(self, df_declare: pd.DataFrame | None) -> None:
         """Type each trace by the DECLARE constraints it satisfies.
 
         Every mined constraint becomes a class, and a trace that satisfies it
         becomes a member. The trace is the case object itself, so the
         assertion is about the object, not its events.
 
+        Args:
+            df_declare: One row per trace, as `BuildInputs` carries it.
+
         Raises:
-            ValueError: If no constraints are available.
+            ConfigError: If no constraints are available.
         """
-        declare_result = self.settings.declare_result
-        if declare_result is None:
-            raise ValueError(
-                "No DECLARE constraints available. Set settings.declare_file to a "
-                "results CSV or assign settings.declare_result directly."
+        if df_declare is None:
+            raise ConfigError(
+                "No DECLARE constraints available. Mine them with "
+                "'semlog mine-declare' and pass the table as "
+                "BuildInputs.declare_constraints."
             )
 
-        df_declare = declare_result.constraints
-        constraints = declare_constraint_names(df_declare)
+        constraints = constraint_names(df_declare)
 
         self.sink.add_class(
             vocab.DECLARE_CONSTRAINT, source="the DECLARE constraint hierarchy"
@@ -259,4 +265,4 @@ class OrderEmitter(Emitter):
             trace_ids = df_declare.loc[
                 declare_membership(df_declare, constraint), "trace_id"
             ]
-            self.sink.assert_individuals(trace_ids, constraint)
+            self.sink.assert_individuals(constraint, trace_ids)

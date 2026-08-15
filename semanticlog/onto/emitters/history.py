@@ -14,8 +14,9 @@ import logging
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.readable import ReadableStore
 from semanticlog.onto.annotations import AnnotationWriter
+from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters.attributes import AttributeEmitter, attribute_source
 from semanticlog.onto.emitters.base import Emitter
 from semanticlog.onto.emitters.time import TimeEmitter
@@ -37,14 +38,15 @@ class HistoryEmitter(Emitter):
         sink: AxiomSink,
         settings: OntoBuildSettings,
         annotations: AnnotationWriter,
+        emitted: EmittedIndividuals,
         attributes: AttributeEmitter,
         times: TimeEmitter,
     ) -> None:
-        super().__init__(sink, settings, annotations)
+        super().__init__(sink, settings, annotations, emitted)
         self.attributes = attributes
         self.times = times
 
-    def emit(self, data: OCEDStore) -> None:
+    def emit(self, data: ReadableStore) -> None:
         """Emit a change record for every recorded attribute change.
 
         Each record links the object to the new value and to the moment of
@@ -52,7 +54,6 @@ class HistoryEmitter(Emitter):
         main pass uses, so a number is binned or kept exactly as it is on the
         object itself.
         """
-        self.annotations.bind(data.backmap)
         for obj_type in data.get_object_change_types():
             changes_df = data.get_object_changes(obj_type)
             for attr_name, grp in changes_df.groupby("ocel:field"):
@@ -90,7 +91,7 @@ class HistoryEmitter(Emitter):
         tmp["attr_change_id"] = vocab.attribute_change_ids(
             tmp["ocel:oid"], attr_name, tmp["ts_str"]
         )
-        self.sink.assert_individuals(tmp["attr_change_id"].tolist(), attr_change_cls)
+        self.sink.assert_individuals(attr_change_cls, tmp["attr_change_id"])
         self.annotations.attribute_change_individuals(
             tmp["attr_change_id"],
             attr_name,
@@ -98,11 +99,8 @@ class HistoryEmitter(Emitter):
             tmp["ocel:oid"],
             tmp["ocel:timestamp"],
         )
-        self.sink.assert_relations(
-            tmp,
-            vocab.HAS_ATTRIBUTE_CHANGE,
-            from_key="ocel:oid",
-            to_key="attr_change_id",
+        self.assert_relations(
+            vocab.HAS_ATTRIBUTE_CHANGE, tmp, "ocel:oid", "attr_change_id"
         )
         self.attributes.emit_column_values(
             tmp[["attr_change_id", attr_name]],
@@ -111,12 +109,7 @@ class HistoryEmitter(Emitter):
             change_prop,
         )
         self.times.emit_individuals(tmp["ts_str"], tmp["ocel:timestamp"])
-        self.sink.assert_relations(
-            tmp,
-            vocab.CHANGED_AT,
-            from_key="attr_change_id",
-            to_key="ts_str",
-        )
+        self.assert_relations(vocab.CHANGED_AT, tmp, "attr_change_id", "ts_str")
 
     def _emit_schema(self, attr_name: str) -> tuple[str, str]:
         """Declare the change class and change property of one attribute.
@@ -137,6 +130,7 @@ class HistoryEmitter(Emitter):
             superprop=vocab.ATTRIBUTE_CHANGE_VALUE,
             range_class=attr_name,
             create_inverse=self.settings.has_inverses,
+            axiomatic_inverse=self.settings.axiomatic_inverses,
             source=change_source,
         )
         self.annotations.attribute_change_schema(

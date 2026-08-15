@@ -9,6 +9,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Self
 
+from semanticlog.core.errors import ConfigError
+
 
 class BuildEnum(str, Enum):
     """Base for the choices, which arrive as text as often as they do as members.
@@ -41,7 +43,7 @@ class BuildEnum(str, Enum):
             if folded in (str(member.value).casefold(), member.name.casefold()):
                 return member
         allowed = ", ".join(str(m.value) for m in cls)
-        raise ValueError(f"{key}: unknown value {value!r}. Choose from: {allowed}.")
+        raise ConfigError(f"{key}: unknown value {value!r}. Choose from: {allowed}.")
 
     @classmethod
     def spellings(cls) -> list[str]:

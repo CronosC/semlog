@@ -5,7 +5,7 @@ import pytest
 from pandas.testing import assert_frame_equal
 
 from semanticlog.data.flatten import get_log, iter_logs
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.oced import OCEDStore, attribute_owners
 from semanticlog.data.tables import EntityKind, RelationKind
 
 
@@ -563,3 +563,17 @@ def test_add_object_with_duplicate_ids_adds_no_table():
         oced.add_object("C", "oid", pd.DataFrame({"oid": ["o2"]}))
 
     assert oced.get_object_types() == ["A", "B"]
+
+
+def test_attribute_owners_maps_a_column_to_every_type_carrying_it(awkward_store):
+    owners = attribute_owners(awkward_store)
+
+    assert owners["channel"] == ["item", "order"]
+    assert owners["clerk"] == ["place_order", "ship"]
+    assert owners["price"] == ["order"]
+
+
+def test_the_fixture_log_shares_weight_between_an_event_and_an_object_type(
+    pipeline_store,
+):
+    assert attribute_owners(pipeline_store)["weight"] == ["item", "ship_order"]

@@ -9,14 +9,13 @@ holds the one that comes from a file.
 Written once with `pm4py.write_ocel2_json` and committed. There is no generator
 in the test suite.
 
-Shape, which is what the assertions depend on:
+Shape, which the assertions depend on:
 
 - **Timestamps.** Day *N* is `2024-01-01 + (N-1) days`, one event per day.
 - **Three activities.** `place_order`, `pay`, `ship_order`. `place_order` and `pay` share
   the attributes `amount` and `resource`. `ship_order` has `carrier` and `weight` instead.
   The per-activity nulls that fall out of that are dropped by `PM4PyLoader`'s per-type
-  `dropna(axis=1, how="all")`, which makes the attribute-owner union in the emitted
-  ontology non-trivial.
+  `dropna(axis=1, how="all")`.
 - **Two object types.** `order` (attribute `status`) and `item` (attribute `weight`), with
   the same per-type null dropping.
 - **E2O.** `place_order` and `pay` relate to `order`, `ship_order` to `item`.

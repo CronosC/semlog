@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from semanticlog.core.enums import OWLProfile
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.oced import OCEDStore
 from semanticlog.onto.builder import OCEDOntoBuilder
@@ -21,7 +22,7 @@ from semanticlog.onto.sinks import StreamingSink
 from tests.support import stores
 from tests.support.ontology import Emitted, read_functional, read_rdf
 from tests.support.recording import RecordingSink
-from tests.support.settings import CONFIGURATIONS
+from tests.support.settings import CONFIGURATIONS, Configuration, configured
 
 warnings.filterwarnings(
     "ignore",
@@ -114,8 +115,10 @@ def ocel() -> Path:
 def recording_sink() -> Callable[..., RecordingSink]:
     """Return a factory for a sink that records calls instead of writing axioms."""
 
-    def make(settings: OntoBuildSettings, iri: str = DEFAULT_IRI) -> RecordingSink:
-        return RecordingSink(settings, iri)
+    def make(
+        profile: OWLProfile = OWLProfile.OWL2DL, iri: str = DEFAULT_IRI
+    ) -> RecordingSink:
+        return RecordingSink(profile, iri)
 
     return make
 
@@ -126,7 +129,7 @@ def recording_sink() -> Callable[..., RecordingSink]:
 
 
 def emit(
-    settings: OntoBuildSettings,
+    spec: Configuration | OntoBuildSettings,
     path: Path,
     backend: str = STREAMING,
     data: OCEDStore | None = None,
@@ -135,7 +138,8 @@ def emit(
     """Build one ontology, write it, and read it back.
 
     Args:
-        settings: What to build.
+        spec: What to build, as a configuration or as bare settings, which
+            take the default inputs.
         path: File to write. The extension is left as given.
         backend: Which sink to build through.
         data: Store to build from, defaulting to the matrix store.
@@ -144,36 +148,58 @@ def emit(
     Returns:
         The ontology that was written, read back from the file.
     """
+    config = configured(spec)
     data = stores.build(stores.MATRIX_STORE) if data is None else data
     if backend == STREAMING:
-        sink = StreamingSink(str(path), DEFAULT_IRI, settings)
-        OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
-            data, source=source
+        sink = StreamingSink(str(path), DEFAULT_IRI, config.settings.profile)
+        OCEDOntoBuilder(DEFAULT_IRI, config.settings, sink=sink).build_ontology(
+            data, config.inputs, source=source
         )
         return read_functional(path)
 
-    builder = OCEDOntoBuilder(DEFAULT_IRI, settings)
-    builder.build_ontology(data, source=source)
+    builder = OCEDOntoBuilder(DEFAULT_IRI, config.settings)
+    builder.build_ontology(data, config.inputs, source=source)
     builder.sink.save(str(path))
     return read_rdf(path, DEFAULT_IRI)
 
 
 @pytest.fixture(scope="session")
-def built(tmp_path_factory) -> Callable[..., Emitted]:
-    """Return the ontology one configuration emits, building it once per session.
+def matrix(tmp_path_factory) -> Callable[..., tuple[Emitted, Path]]:
+    """Return one configuration as both the ontology it emits and the file it wrote.
 
     Every test that reads a whole build goes through this, so the matrix is
-    built once rather than once per assertion.
+    built once rather than once per assertion. `built` and `built_path` are the
+    two halves of it, and both share this cache.
     """
     root = tmp_path_factory.mktemp("matrix")
-    cache: dict[tuple[str, str], Emitted] = {}
+    cache: dict[tuple[str, str], tuple[Emitted, Path]] = {}
 
-    def get(name: str, backend: str = STREAMING) -> Emitted:
+    def get(name: str, backend: str = STREAMING) -> tuple[Emitted, Path]:
         key = (name, backend)
         if key not in cache:
             suffix = "ofn" if backend == STREAMING else "owl"
             path = root / f"{name}.{backend}.{suffix}"
-            cache[key] = emit(CONFIGURATIONS[name](), path, backend)
+            cache[key] = (emit(CONFIGURATIONS[name](), path, backend), path)
         return cache[key]
+
+    return get
+
+
+@pytest.fixture(scope="session")
+def built(matrix) -> Callable[..., Emitted]:
+    """Return the ontology one configuration emits, read back from the file."""
+
+    def get(name: str, backend: str = STREAMING) -> Emitted:
+        return matrix(name, backend)[0]
+
+    return get
+
+
+@pytest.fixture(scope="session")
+def built_path(matrix) -> Callable[..., Path]:
+    """Return the file one configuration wrote, for a reader that needs the file itself."""
+
+    def get(name: str, backend: str = STREAMING) -> Path:
+        return matrix(name, backend)[1]
 
     return get

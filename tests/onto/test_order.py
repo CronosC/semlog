@@ -26,9 +26,9 @@ from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.oced import OCEDStore
 from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.reason import Reasoner
-from semanticlog.onto.settings import OntoBuildSettings
 from tests.conftest import IN_MEMORY, emit
 from tests.support.ontology import read_rdf
+from tests.support.settings import Configuration, configuration
 
 NS = DEFAULT_IRI
 
@@ -75,14 +75,14 @@ def _closure(traces) -> set[tuple[str, str]]:
     }
 
 
-def _settings(order, **overrides) -> OntoBuildSettings:
+def _settings(order, **overrides) -> Configuration:
     base: dict = {
         "profile": OWLProfile.OWL2DL,
         "case_concepts": ["order"],
         "order_representations": order,
     }
     base.update(overrides)
-    return OntoBuildSettings(**base)
+    return configuration(**base)
 
 
 def _pairs(onto, prop: str) -> set[tuple[str, str]]:
@@ -268,10 +268,10 @@ def test_ef_explicit_alone_still_bounds_its_traces(tmp_path):
 
 
 def test_ef_explicit_refuses_a_closure_over_budget(tiny_store):
-    settings = _settings([EF_EXPLICIT], max_ef_pairs=3)
+    config = _settings([EF_EXPLICIT], max_ef_pairs=3)
 
     with pytest.raises(ValueError, match="over the max_ef_pairs limit"):
-        OCEDOntoBuilder(NS, settings).build_ontology(tiny_store)
+        OCEDOntoBuilder(NS, config.settings).build_ontology(tiny_store, config.inputs)
 
 
 def test_ef_explicit_within_budget_builds(tiny_store, tmp_path):

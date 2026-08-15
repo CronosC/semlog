@@ -12,6 +12,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from semanticlog.core.errors import DependencyError
 from semanticlog.enrich import declare as declare_module
 from semanticlog.enrich.declare import DeclareEnricher, template_of
 from tests.support import stores
@@ -120,7 +121,7 @@ def log() -> FakeEventLog:
 def test_the_enricher_refuses_to_run_without_declare4py(monkeypatch, tiny_store):
     monkeypatch.setattr(declare_module, "_DECLARE4PY_AVAILABLE", False)
 
-    with pytest.raises(ImportError, match="Lydia"):
+    with pytest.raises(DependencyError, match="Lydia"):
         DeclareEnricher(tiny_store)
 
 

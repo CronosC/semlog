@@ -39,7 +39,6 @@ def history_settings(**overrides) -> OntoBuildSettings:
         "profile": OWLProfile.OWL2EL,
         "ocel_extensions": [OCELExtension.ATTRIBUTE_HISTORY],
         "order_representations": [],
-        "case_concepts": [],
     }
     base.update(overrides)
     return OntoBuildSettings(**base)

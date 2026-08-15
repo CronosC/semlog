@@ -1,7 +1,5 @@
-.PHONY: test test-fast coverage format lint typecheck check install example build build-all
+.PHONY: test test-fast coverage format lint typecheck check install example build-all
 
-# Every tool comes from the project environment, not from whatever the shell
-# happens to have on PATH.
 RUN := uv run
 
 install:
@@ -35,23 +33,12 @@ check: lint typecheck test
 example:
 	$(RUN) semlog build --config examples/pipeline.toml
 
-# Build one run config: make build CONFIG=runs/hiring.toml
-CONFIG ?=
-build:
-	@test -n "$(CONFIG)" || { echo "usage: make build CONFIG=runs/<name>.toml"; exit 2; }
-	$(RUN) semlog build --config $(CONFIG)
-
-# Build every run config. _base.toml holds shared settings.
+# Build every run config. runs/ is local and gitignored, and _base.toml holds
+# the settings the others extend.
 build-all:
-	@test -d runs || { \
-		echo "no runs/ directory. Run configs are local and gitignored;"; \
-		echo "start from examples/pipeline.toml, or use: make example"; \
-		exit 2; \
-	}
-	@found=0; for config in runs/[!_]*.toml; do \
+	@test -d runs || { echo "no runs/ directory. Start from examples/pipeline.toml"; exit 2; }
+	@for config in runs/[!_]*.toml; do \
 		test -e "$$config" || continue; \
-		found=1; \
 		echo "=== $$config ==="; \
 		$(RUN) semlog build --config "$$config" || exit 1; \
-	done; \
-	test "$$found" = 1 || { echo "runs/ holds no run configs (only _base.toml?)"; exit 2; }
+	done

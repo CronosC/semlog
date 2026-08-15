@@ -1,4 +1,4 @@
-"""Turning numeric columns into a handful of labelled bins.
+"""Turning numeric columns into a handful of labeled bins.
 
 A named individual per distinct number is rarely useful to reason over, so a
 numeric attribute can be reduced to a few ordered classes instead. Two
@@ -8,10 +8,9 @@ columns.
 
 Fitting and applying are separate. `fit_equal_bins` and `fit_dist_bins` look
 at every value an attribute takes and return a `Binning`, which then labels
-any column of that attribute. Splitting them is what lets one attribute
-carried by several tables be cut at one set of boundaries. A column with too
-few distinct values to bin has no `Binning`, and the caller decides what to do
-with it.
+any column of that attribute. One attribute carried by several tables is
+therefore cut at one set of boundaries. A column with too few distinct values
+to bin has no `Binning`, and the caller decides what to do with it.
 """
 
 from __future__ import annotations
@@ -23,6 +22,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from scipy import stats
+
+from semanticlog.core.errors import ConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +43,9 @@ DEFAULT_MIN_VALUES = 10
 def _check_labels(bins: int, labels) -> None:
     """Raise unless there is exactly one label per bin."""
     if len(labels) != bins:
-        raise ValueError(
+        raise ConfigError(
             f"bins={bins} needs exactly {bins} labels, got {len(labels)}: "
-            f"{list(labels)}. Values in the unlabelled bins would be silently "
+            f"{list(labels)}. Values in the unlabeled bins would be silently "
             "dropped."
         )
 
@@ -97,7 +98,7 @@ def fit_equal_bins(
     """Fit bins that each hold roughly as many values.
 
     Repeated values can make fewer bins than requested, in which case the
-    labels are taken symmetrically around the centre of the list.
+    labels are taken symmetrically around the center of the list.
 
     Args:
         values: Every value the attribute takes.
@@ -137,7 +138,7 @@ def fit_dist_bins(
     """Fit bins by cutting the distribution that fits the attribute best.
 
     Values are mapped onto a standard normal scale first, so the same bin
-    label means the same distance from the centre whatever the shape of the
+    label means the same distance from the center whatever the shape of the
     original column. The candidate distributions are the normal, log-normal,
     exponential and gamma. When none of them fits, this falls back to equal
     frequency.
@@ -218,7 +219,7 @@ def get_best_fit_distribution(x, candidates=None, p=0.0):
                 loglik = np.sum(dist.logpdf(x, *params))
                 aic = 2 * len(params) - 2 * loglik
                 logger.debug(f"{dist_name} fits with aic {aic}")
-                _, p_val = stats.kstest(x, dist_name, args=params)
+                _, p_val = stats.kstest(x, dist(*params).cdf)
                 if best is None or aic < best[0]:
                     best = (aic, dist_name, params, p_val)
         except _FIT_FAILURES as exc:
@@ -232,10 +233,10 @@ def get_best_fit_distribution(x, candidates=None, p=0.0):
 
 
 def _select_labels(labels: list, n: int) -> list:
-    """Take n labels symmetrically around the centre of the list.
+    """Take n labels symmetrically around the center of the list.
 
-    An odd count keeps the centre label and expands outwards from it. An even
-    count has no centre bin, so the centre-most labels are the ones dropped:
+    An odd count keeps the center label and expands outwards from it. An even
+    count has no center bin, so the center-most labels are the ones dropped:
     two bins out of five labels become low and high, and four become the two
     low and the two high.
     """

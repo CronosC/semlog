@@ -36,7 +36,22 @@ that runs over the matrix, and a row to the shape table.
 The `built` fixture builds each configuration once per session, through each
 sink, and returns it read back as an
 [`Emitted`](support/ontology.py) object. Tests read from that rather than
-building again.
+building again. `built_path` returns the file the same build wrote, for a test
+that needs a reader other than `Emitted`. Both share one cache, so asking for
+either builds the configuration once.
+
+## Two ways to read a build
+
+[support/ontology.py](support/ontology.py) reads a build as text and answers
+what its axioms say. Either syntax comes back as the same `Emitted` object, so
+a test asserts against the ontology rather than the syntax, and the two sinks
+compare directly.
+
+[support/owlapi.py](support/owlapi.py) answers what the OWL API makes of the
+same file: which profile it is in, what it carries as an ontology annotation,
+and what its signature holds against what it declares. Those are questions
+about the structure a parser builds, which a reader working from the lines
+cannot see. It needs a JVM, so a test using it carries the `reasoner` marker.
 
 ## What checks the output
 
@@ -45,7 +60,9 @@ building again.
 | [onto/test_build_shape.py](onto/test_build_shape.py) | did what a configuration emits change? |
 | [onto/test_build_invariants.py](onto/test_build_invariants.py) | is the result a usable ontology? |
 | [onto/test_build_content.py](onto/test_build_content.py) | does it say the right thing about the log? |
+| [onto/test_profiles.py](onto/test_profiles.py) | is a build in the OWL 2 profile its settings name? |
 | [onto/test_sinks.py](onto/test_sinks.py) | do both sinks agree? |
+| [onto/test_reason.py](onto/test_reason.py) | what does a reasoner make of a build? |
 | [test_imports.py](test_imports.py) | does importing the package start anything heavy? |
 
 `test_build_shape.py` holds the record of the product: entity counts per

@@ -1,8 +1,8 @@
 """The record of what cleaning called each thing in the source.
 
 Cleaning makes names safe at the cost of making them uglier, and the ontology
-is annotated with the original wording. `RenameLog` is what remembers it, and
-what `clean_oced_data` leaves on the store as its backmap.
+is annotated with the original wording. `RenameLog` holds it, and
+`clean_oced_data` leaves it on the store as the backmap.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Reducing numeric columns to labelled bins.
+"""Reducing numeric columns to labeled bins.
 
 Fitting and applying are separate, so these check the `Binning` a fit returns
 and what it does to a column, rather than one call that did both.
@@ -196,7 +196,7 @@ def test_the_ranking_and_the_cut_use_the_same_fit():
     ],
 )
 def test_fewer_bins_take_their_labels_symmetrically(labels, surviving, expected):
-    """An odd count keeps the centre, an even one drops it."""
+    """An odd count keeps the center, an even one drops it."""
     from semanticlog.data.binning import _select_labels
 
     assert _select_labels(labels, surviving) == expected

@@ -27,10 +27,11 @@ from semanticlog.core.vocabulary import (
 from semanticlog.enrich.declare import DeclareResult
 from semanticlog.onto.audit import audit_build
 from semanticlog.onto.builder import OCEDOntoBuilder
+from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import StreamingSink
 from tests.support import stores
-from tests.support.settings import CONFIGURATIONS
+from tests.support.settings import CONFIGURATIONS, Configuration, configured
 
 NS = DEFAULT_IRI
 
@@ -42,25 +43,32 @@ def signature(builder: OCEDOntoBuilder) -> list:
     )
 
 
-def declare_settings(**constraint_columns) -> OntoBuildSettings:
+def declare_settings(**constraint_columns) -> Configuration:
     """Return the DECLARE configuration with the given constraint columns."""
-    return CONFIGURATIONS["dl_declare"]().replace(
-        declare_result=DeclareResult(
-            constraints=pd.DataFrame(
-                {
-                    "trace_id": ["o1", "o2"],
-                    "case_concept": ["order", "order"],
-                    **constraint_columns,
-                }
-            ),
-            case_concepts=["order"],
+    return with_constraints(
+        pd.DataFrame(
+            {
+                "trace_id": ["o1", "o2"],
+                "case_concept": ["order", "order"],
+                **constraint_columns,
+            }
         )
     )
 
 
-def build(settings: OntoBuildSettings):
-    return OCEDOntoBuilder(NS, settings).build_ontology(
-        stores.build(stores.MATRIX_STORE)
+def with_constraints(constraints: pd.DataFrame) -> Configuration:
+    """Return the DECLARE configuration carrying one constraints table."""
+    config = CONFIGURATIONS["dl_declare"]()
+    return dataclasses.replace(
+        config,
+        inputs=dataclasses.replace(config.inputs, declare_constraints=constraints),
+    )
+
+
+def build(spec: Configuration | OntoBuildSettings):
+    config = configured(spec)
+    return OCEDOntoBuilder(NS, config.settings).build_ontology(
+        stores.build(stores.MATRIX_STORE), config.inputs
     )
 
 
@@ -98,7 +106,6 @@ def test_ef_under_el_is_refused_for_the_reasoner_not_for_the_profile(tiny_store)
             EventOrderRepresentation.DF,
             EventOrderRepresentation.EF,
         ],
-        case_concepts=["order"],
     )
 
     with pytest.raises(ValueError, match="does not answer for property assertions"):
@@ -111,7 +118,6 @@ def test_ef_without_directly_follows_is_refused(tiny_store):
     """
     settings = OntoBuildSettings(
         order_representations=[EventOrderRepresentation.EF],
-        case_concepts=["order"],
     )
 
     with pytest.raises(ValueError, match="derives its pairs by transitivity"):
@@ -121,14 +127,11 @@ def test_ef_without_directly_follows_is_refused(tiny_store):
 def test_missing_declare_constraints_write_no_axioms(tiny_store):
     builder = OCEDOntoBuilder(
         NS,
-        OntoBuildSettings(
-            order_representations=[EventOrderRepresentation.DECLARE],
-            case_concepts=["order"],
-        ),
+        OntoBuildSettings(order_representations=[EventOrderRepresentation.DECLARE]),
     )
 
     with pytest.raises(ValueError, match="DECLARE"):
-        builder.build_ontology(tiny_store)
+        builder.build_ontology(tiny_store, BuildInputs(case_concepts=["order"]))
 
     assert signature(builder) == []
 
@@ -136,26 +139,21 @@ def test_missing_declare_constraints_write_no_axioms(tiny_store):
 def test_a_case_concept_the_log_does_not_have_writes_no_axioms(tiny_store):
     builder = OCEDOntoBuilder(
         NS,
-        OntoBuildSettings(
-            order_representations=[EventOrderRepresentation.DF],
-            case_concepts=["no_such_type"],
-        ),
+        OntoBuildSettings(order_representations=[EventOrderRepresentation.DF]),
     )
 
     with pytest.raises(ValueError, match="no_such_type"):
-        builder.build_ontology(tiny_store)
+        builder.build_ontology(tiny_store, BuildInputs(case_concepts=["no_such_type"]))
 
     assert signature(builder) == []
 
 
 def test_a_case_concept_cleaning_renamed_is_reported_under_its_new_name(tiny_store):
     tiny_store.backmap = {**tiny_store.backmap, "order": "ORDER"}
-    settings = OntoBuildSettings(
-        order_representations=[EventOrderRepresentation.DF], case_concepts=["ORDER"]
-    )
+    settings = OntoBuildSettings(order_representations=[EventOrderRepresentation.DF])
 
     with pytest.raises(ValueError, match="'ORDER' was renamed to 'order'"):
-        audit_build(tiny_store, settings)
+        audit_build(tiny_store, settings, BuildInputs(case_concepts=["ORDER"]))
 
 
 def test_a_case_concept_no_event_reaches_writes_no_axioms(tiny_store):
@@ -163,24 +161,19 @@ def test_a_case_concept_no_event_reaches_writes_no_axioms(tiny_store):
     tiny_store.add_object("courier", "cid", pd.DataFrame({"cid": ["c1"]}))
     builder = OCEDOntoBuilder(
         NS,
-        OntoBuildSettings(
-            order_representations=[EventOrderRepresentation.DF],
-            case_concepts=["courier"],
-        ),
+        OntoBuildSettings(order_representations=[EventOrderRepresentation.DF]),
     )
 
     with pytest.raises(ValueError, match="no event-to-object relation reaches it"):
-        builder.build_ontology(tiny_store)
+        builder.build_ontology(tiny_store, BuildInputs(case_concepts=["courier"]))
 
     assert signature(builder) == []
 
 
 def test_case_concepts_are_left_alone_when_no_order_is_emitted(tiny_store):
-    settings = OntoBuildSettings(
-        order_representations=[], case_concepts=["no_such_type"]
-    )
+    settings = OntoBuildSettings(order_representations=[])
 
-    audit_build(tiny_store, settings)
+    audit_build(tiny_store, settings, BuildInputs(case_concepts=["no_such_type"]))
 
 
 def test_an_event_with_no_id_writes_no_axioms(tiny_store):
@@ -197,18 +190,18 @@ def test_an_event_with_no_id_writes_no_axioms(tiny_store):
     assert signature(builder) == []
 
 
-def test_a_rejected_declare_input_leaves_nothing_in_the_streamed_file(tmp_path):
+def test_a_rejected_declare_input_leaves_no_streamed_file(tmp_path):
+    """Not even the partial one it had already written a schema into."""
     target = tmp_path / "out.ofn"
-    settings = declare_settings(**{"Response@1": [True, False]})
-    sink = StreamingSink(str(target), NS, settings)
+    config = declare_settings(**{"Response@1": [True, False]})
+    sink = StreamingSink(str(target), NS, config.settings.profile)
 
     with pytest.raises(UnsafeLocalNameError):
-        OCEDOntoBuilder(NS, settings, sink=sink).build_ontology(
-            stores.build(stores.MATRIX_STORE)
+        OCEDOntoBuilder(NS, config.settings, sink=sink).build_ontology(
+            stores.build(stores.MATRIX_STORE), config.inputs
         )
 
-    sink.close()
-    assert "Response" not in target.read_text(encoding="utf-8")
+    assert list(tmp_path.iterdir()) == []
 
 
 # --------------------------------------------------------------------------
@@ -227,65 +220,51 @@ def test_a_constraint_named_after_an_object_type_is_rejected():
 
 
 def test_a_trace_id_that_is_not_an_object_is_rejected():
-    settings = CONFIGURATIONS["dl_declare"]().replace(
-        declare_result=DeclareResult(
-            constraints=pd.DataFrame(
-                {
-                    "trace_id": ["from_another_log", "o1"],
-                    "case_concept": ["order", "order"],
-                    "Response__place_order__ship__": [True, False],
-                }
-            ),
-            case_concepts=["order"],
+    config = with_constraints(
+        pd.DataFrame(
+            {
+                "trace_id": ["from_another_log", "o1"],
+                "case_concept": ["order", "order"],
+                "Response__place_order__ship__": [True, False],
+            }
         )
     )
 
     with pytest.raises(ValueError, match="from_another_log"):
-        audit_build(stores.build(stores.MATRIX_STORE), settings)
+        audit_build(stores.build(stores.MATRIX_STORE), config.settings, config.inputs)
 
 
 def test_a_case_concept_the_log_does_not_have_is_rejected():
-    settings = CONFIGURATIONS["dl_declare"]().replace(
-        declare_result=DeclareResult(
-            constraints=pd.DataFrame(
-                {
-                    "trace_id": ["x1"],
-                    "case_concept": ["no_such_type"],
-                    "Response__place_order__ship__": [True],
-                }
-            ),
-            case_concepts=["no_such_type"],
+    config = with_constraints(
+        pd.DataFrame(
+            {
+                "trace_id": ["x1"],
+                "case_concept": ["no_such_type"],
+                "Response__place_order__ship__": [True],
+            }
         )
     )
 
     with pytest.raises(ValueError, match="not an object type of this log"):
-        audit_build(stores.build(stores.MATRIX_STORE), settings)
+        audit_build(stores.build(stores.MATRIX_STORE), config.settings, config.inputs)
 
 
 def test_the_matrix_declare_input_passes_the_audit():
-    audit_build(stores.build(stores.MATRIX_STORE), CONFIGURATIONS["dl_declare"]())
-
-
-def test_constraints_carried_by_settings_cannot_be_rewritten():
-    settings = CONFIGURATIONS["dl_declare"]()
-
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        settings.declare_result.source_log = "somewhere/else.xml"
+    config = CONFIGURATIONS["dl_declare"]()
+    audit_build(stores.build(stores.MATRIX_STORE), config.settings, config.inputs)
 
 
 def test_constraints_from_another_log_warn_without_failing(caplog):
     from semanticlog.cli.run import warn_on_foreign_declare
 
-    settings = CONFIGURATIONS["dl_declare"]()
-    settings = settings.replace(
-        declare_result=dataclasses.replace(
-            settings.declare_result,
-            source_log="somewhere/else.xml",
-            source_sha256="a" * 64,
-        )
+    declare = DeclareResult(
+        constraints=CONFIGURATIONS["dl_declare"]().inputs.declare_constraints,
+        case_concepts=["order"],
+        source_log="somewhere/else.xml",
+        source_sha256="a" * 64,
     )
 
-    warn_on_foreign_declare(settings, "b" * 64)
+    warn_on_foreign_declare(declare, "b" * 64)
 
     assert "not the file being built" in caplog.text
 

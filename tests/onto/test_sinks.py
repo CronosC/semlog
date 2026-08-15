@@ -11,14 +11,19 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from semanticlog.core.enums import OWLProfile
 from semanticlog.core.vocabulary import DEFAULT_IRI, UnsafeLocalNameError
 from semanticlog.onto.builder import OCEDOntoBuilder
+from semanticlog.onto.emitters.provenance import OWL_VERSION_INFO
 from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import InMemorySink, StreamingSink
 from tests.conftest import IN_MEMORY, STREAMING, emit
 from tests.support import stores
 from tests.support.ontology import read_functional, read_rdf
+from tests.support.owlapi import ontology_annotations
 from tests.support.settings import CONFIGURATIONS, NAMES
+
+PROFILE = OWLProfile.OWL2DL
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -55,6 +60,27 @@ def test_both_sinks_declare_the_same_entities(name, built):
     assert built(name, STREAMING).declared == built(name, IN_MEMORY).declared
 
 
+@pytest.mark.reasoner
+@pytest.mark.parametrize("name", NAMES)
+def test_both_sinks_record_the_provenance_as_ontology_annotations(name, built_path):
+    """An annotation on the ontology, not an annotation assertion naming its IRI.
+
+    `Emitted` reads both as the same thing, so this asks the OWL API, which is
+    where the two are different.
+    """
+    streamed = ontology_annotations(built_path(name, STREAMING))
+    in_memory = ontology_annotations(built_path(name, IN_MEMORY))
+
+    assert in_memory, (
+        f"{name}: no sink recorded the build, so there is nothing to compare"
+    )
+    assert streamed == in_memory, (
+        f"{name}: the sinks disagree about what the ontology itself is annotated with.\n"
+        f"  streaming: {sorted(streamed)}\n"
+        f"  in-memory: {sorted(in_memory)}"
+    )
+
+
 @pytest.mark.parametrize("name", NAMES)
 def test_neither_sink_declares_anything_twice(name, built):
     for backend in (STREAMING, IN_MEMORY):
@@ -66,11 +92,11 @@ def test_neither_sink_declares_anything_twice(name, built):
 
 @pytest.mark.parametrize("name", NAMES)
 def test_nothing_is_used_before_the_build_declares_it(name, recording_sink):
-    settings = CONFIGURATIONS[name]()
-    sink = recording_sink(settings)
+    config = CONFIGURATIONS[name]()
+    sink = recording_sink(config.settings.profile)
 
-    OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
-        stores.build(stores.MATRIX_STORE)
+    OCEDOntoBuilder(DEFAULT_IRI, config.settings, sink=sink).build_ontology(
+        stores.build(stores.MATRIX_STORE), config.inputs
     )
 
     violations = sink.declaration_order_violations()
@@ -83,9 +109,9 @@ def test_nothing_is_used_before_the_build_declares_it(name, recording_sink):
 
 
 def test_the_declaration_order_check_would_notice_a_violation(recording_sink):
-    sink = recording_sink(CONFIGURATIONS["dl_df"]())
+    sink = recording_sink(CONFIGURATIONS["dl_df"]().settings.profile)
 
-    sink.assert_individuals(["late"], "some_class")
+    sink.assert_individuals("some_class", ["late"])
     sink.add_class("late", source="a class declared too late")
 
     assert sink.declaration_order_violations() == [("late", "some_class")]
@@ -98,7 +124,7 @@ def test_the_declaration_order_check_would_notice_a_violation(recording_sink):
 
 @pytest.fixture
 def sink(recording_sink):
-    return recording_sink(CONFIGURATIONS["dl_df"]())
+    return recording_sink(CONFIGURATIONS["dl_df"]().settings.profile)
 
 
 def test_a_repeated_schema_axiom_is_written_once(sink):
@@ -199,21 +225,52 @@ def test_annotating_an_undeclared_entity_is_refused(sink):
 
 def test_a_missing_value_is_not_asserted_as_an_individual(sink):
     """It has no name, and every one of them would arrive under the same one."""
-    sink.assert_individuals(["e1", None, float("nan"), pd.NaT, "e2"], "place_order")
+    sink.assert_individuals("place_order", ["e1", None, float("nan"), pd.NaT, "e2"])
 
     assert [call[1] for call in sink.of_kind("individual")] == ["e1", "e2"]
 
 
 def test_a_column_of_nothing_but_missing_values_asserts_nothing(sink):
-    sink.assert_individuals([None, None], "place_order")
+    sink.assert_individuals("place_order", [None, None])
 
     assert sink.of_kind("individual") == []
 
 
 def test_individuals_are_deduplicated_by_the_name_they_are_emitted_under(sink):
-    sink.assert_individuals([1, "1", 2], "place_order")
+    sink.assert_individuals("place_order", [1, "1", 2])
 
     assert [call[1] for call in sink.of_kind("individual")] == ["1", "2"]
+
+
+# --------------------------------------------------------------------------
+# The life of a sink, which is the same whichever backend is behind it
+# --------------------------------------------------------------------------
+
+
+def test_the_record_declares_the_annotation_properties_it_invented(sink):
+    """OWL 2 DL wants them declared, and a build makes them up as it goes."""
+    sink.open_ontology(
+        {f"{DEFAULT_IRI}sourceLog": "log.jsonocel", OWL_VERSION_INFO: "semlog 0.5.0"}
+    )
+
+    assert [call[1] for call in sink.of_kind("declare")] == ["sourceLog"]
+    assert len(sink.of_kind("ontology_annotation")) == 2
+
+
+def test_the_record_cannot_arrive_after_the_first_axiom(sink):
+    """It belongs inside the ontology header, which is written by then."""
+    sink.add_class("order", source="a build step")
+
+    with pytest.raises(ValueError, match="already begun its ontology"):
+        sink.open_ontology({f"{DEFAULT_IRI}sourceLog": "log.jsonocel"})
+
+
+def test_a_closed_sink_takes_no_more_axioms(sink):
+    """A backend can finish in a way that changes how the axioms before it read."""
+    sink.close()
+
+    with pytest.raises(ValueError, match="is closed"):
+        sink.add_class("order", source="a build step")
 
 
 # --------------------------------------------------------------------------
@@ -227,6 +284,33 @@ def test_a_streamed_file_is_a_complete_ontology(tmp_path):
 
     text = path.read_text(encoding="utf-8")
     assert text.startswith("Prefix(")
+    assert text.rstrip().endswith(")")
+
+
+def test_a_streamed_ontology_appears_only_once_it_is_complete(tmp_path):
+    """Until then it is under the partial name, so nothing reads half of one."""
+    path = tmp_path / "streamed.ofn"
+    sink = StreamingSink(str(path), DEFAULT_IRI, PROFILE)
+    sink.add_class("order", source="a build step")
+
+    assert not path.exists()
+
+    sink.close()
+
+    assert [p.name for p in tmp_path.iterdir()] == ["streamed.ofn"]
+
+
+def test_a_streamed_sink_nothing_opened_still_writes_an_ontology(tmp_path):
+    """The header is what makes the file parse, so a sink with no record gets one."""
+    path = tmp_path / "bare.ofn"
+    sink = StreamingSink(str(path), DEFAULT_IRI, PROFILE)
+    sink.add_class("order", source="a build step")
+
+    sink.close()
+
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("Prefix(")
+    assert "Ontology(" in text
     assert text.rstrip().endswith(")")
 
 
@@ -252,16 +336,15 @@ def _write_text(sink, text: str) -> None:
 def test_text_survives_both_sinks_unchanged(case, tmp_path):
     """A literal is data. Whatever the syntax needs, the text has to come back."""
     text = AWKWARD_TEXT[case]
-    settings = OntoBuildSettings(case_concepts=["order"])
 
     streamed_path = tmp_path / f"{case}.ofn"
-    streamed_sink = StreamingSink(str(streamed_path), DEFAULT_IRI, settings)
+    streamed_sink = StreamingSink(str(streamed_path), DEFAULT_IRI, PROFILE)
     _write_text(streamed_sink, text)
     streamed_sink.save(str(streamed_path))
     streamed = read_functional(streamed_path)
 
     rdf_path = tmp_path / f"{case}.owl"
-    in_memory_sink = InMemorySink(DEFAULT_IRI, settings)
+    in_memory_sink = InMemorySink(DEFAULT_IRI, PROFILE)
     _write_text(in_memory_sink, text)
     in_memory_sink.save(str(rdf_path))
     in_memory = read_rdf(rdf_path, DEFAULT_IRI)
@@ -283,11 +366,13 @@ def test_typed_literals_survive_streaming(tmp_path):
 
 
 def test_the_sinks_write_a_float_under_different_datatypes(tmp_path):
-    """owlready2 writes every float as xsd:decimal, whatever datatype the
-    literal declares, and every other serialisation it offers is converted
+    """A limitation of the backend, not a disagreement between the two sinks.
+
+    Both resolve the datatype through `resolve_literal` and both settle on
+    xsd:double here. owlapy then writes every float as xsd:decimal whatever
+    the literal declares, and every other serialization it offers is converted
     from that RDF/XML. tests/support/ontology.py reads the two as one so the
-    sink comparison stays about everything else, and this is where the
-    difference is recorded.
+    sink comparison stays about everything else.
     """
     streamed = tmp_path / "streamed.ofn"
     in_memory = tmp_path / "memory.owl"
@@ -302,11 +387,11 @@ def test_the_sinks_write_a_float_under_different_datatypes(tmp_path):
 
 def test_a_streamed_build_reports_its_path_and_has_no_ontology(tmp_path):
     path = tmp_path / "streamed.ofn"
-    settings = CONFIGURATIONS["dl_df"]()
-    sink = StreamingSink(str(path), DEFAULT_IRI, settings)
+    config = CONFIGURATIONS["dl_df"]()
+    sink = StreamingSink(str(path), DEFAULT_IRI, config.settings.profile)
 
-    result = OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
-        stores.build(stores.MATRIX_STORE)
+    result = OCEDOntoBuilder(DEFAULT_IRI, config.settings, sink=sink).build_ontology(
+        stores.build(stores.MATRIX_STORE), config.inputs
     )
 
     assert result.path == str(path)
@@ -316,9 +401,7 @@ def test_a_streamed_build_reports_its_path_and_has_no_ontology(tmp_path):
 
 
 def test_saving_a_streaming_sink_elsewhere_is_refused(tmp_path):
-    sink = StreamingSink(
-        str(tmp_path / "streamed.ofn"), DEFAULT_IRI, OntoBuildSettings()
-    )
+    sink = StreamingSink(str(tmp_path / "streamed.ofn"), DEFAULT_IRI, PROFILE)
 
     with pytest.raises(ValueError, match="cannot save"):
         sink.save(str(tmp_path / "elsewhere.ofn"))
@@ -327,16 +410,16 @@ def test_saving_a_streaming_sink_elsewhere_is_refused(tmp_path):
 def test_aborting_a_streaming_sink_leaves_no_file(tmp_path):
     """A partial ontology that parses is worse than no ontology at all."""
     path = tmp_path / "streamed.ofn"
-    sink = StreamingSink(str(path), DEFAULT_IRI, OntoBuildSettings())
+    sink = StreamingSink(str(path), DEFAULT_IRI, PROFILE)
     sink.add_class("order", source="a build step")
 
     sink.abort()
 
-    assert not path.exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_aborting_an_in_memory_sink_only_closes_it(tmp_path):
-    sink = InMemorySink(DEFAULT_IRI, OntoBuildSettings())
+    sink = InMemorySink(DEFAULT_IRI, PROFILE)
     sink.add_class("order", source="a build step")
 
     sink.abort()
@@ -352,12 +435,14 @@ def test_aborting_an_in_memory_sink_only_closes_it(tmp_path):
 @pytest.mark.parametrize("name", NAMES)
 def test_both_sinks_count_the_same_entities_and_axioms(name, tmp_path):
     """The statistics a run logs have to mean the same thing for either sink."""
-    settings = CONFIGURATIONS[name]()
-    streamed = StreamingSink(str(tmp_path / f"{name}.ofn"), DEFAULT_IRI, settings)
-    in_memory = InMemorySink(DEFAULT_IRI, settings)
+    config = CONFIGURATIONS[name]()
+    streamed = StreamingSink(
+        str(tmp_path / f"{name}.ofn"), DEFAULT_IRI, config.settings.profile
+    )
+    in_memory = InMemorySink(DEFAULT_IRI, config.settings.profile)
     for sink in (streamed, in_memory):
-        OCEDOntoBuilder(DEFAULT_IRI, CONFIGURATIONS[name](), sink=sink).build_ontology(
-            stores.build(stores.MATRIX_STORE)
+        OCEDOntoBuilder(DEFAULT_IRI, config.settings, sink=sink).build_ontology(
+            stores.build(stores.MATRIX_STORE), CONFIGURATIONS[name]().inputs
         )
 
     assert streamed.declared_by_kind() == in_memory.declared_by_kind()
@@ -365,7 +450,7 @@ def test_both_sinks_count_the_same_entities_and_axioms(name, tmp_path):
 
 
 def test_declared_entities_are_counted_by_kind(tmp_path):
-    sink = InMemorySink(DEFAULT_IRI, OntoBuildSettings())
+    sink = InMemorySink(DEFAULT_IRI, PROFILE)
     sink.add_class("order", source="a build step")
     sink.add_property("concerns", source="a build step")
     sink.add_property("has_data_value", data_prop=True, source="a build step")
@@ -378,7 +463,7 @@ def test_declared_entities_are_counted_by_kind(tmp_path):
 
 
 def test_declared_names_are_reported_from_a_mark_in_declaration_order():
-    sink = InMemorySink(DEFAULT_IRI, OntoBuildSettings())
+    sink = InMemorySink(DEFAULT_IRI, PROFILE)
     sink.add_class("order", source="a build step")
     mark = sink.declared_count
     sink.add_class("item", source="a build step")
@@ -394,7 +479,7 @@ def test_declared_names_are_reported_from_a_mark_in_declaration_order():
 
 
 def test_declared_names_are_empty_for_a_step_that_declared_nothing():
-    sink = InMemorySink(DEFAULT_IRI, OntoBuildSettings())
+    sink = InMemorySink(DEFAULT_IRI, PROFILE)
     sink.add_class("order", source="a build step")
 
     assert sink.declared_since(sink.declared_count) == {}

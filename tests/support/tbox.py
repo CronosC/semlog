@@ -7,10 +7,12 @@ the tests because nothing in the pipeline builds a schema without data.
 
 from __future__ import annotations
 
-from semanticlog.onto.builder import OCEDOntoBuilder
+from semanticlog.onto.annotations import AnnotationWriter
+from semanticlog.onto.emitted import EmittedIndividuals
+from semanticlog.onto.emitters import TBoxEmitter
 from semanticlog.onto.result import BuildResult
 from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sinks import AxiomSink
+from semanticlog.onto.sinks import AxiomSink, InMemorySink
 
 
 def construct_tbox(
@@ -21,6 +23,9 @@ def construct_tbox(
     sink: AxiomSink | None = None,
 ) -> BuildResult:
     """Emit only the TBox.
+
+    The TBox emitter is driven directly rather than through a builder, since
+    a builder makes its emitters from a store and there is none here.
 
     Args:
         iri: Base IRI for the ontology.
@@ -33,8 +38,15 @@ def construct_tbox(
     Returns:
         The finished build.
     """
-    builder = OCEDOntoBuilder(iri, settings, sink=sink)
-    builder.tbox.emit(attribute_history)
+    sink = InMemorySink(iri, settings.profile) if sink is None else sink
+    TBoxEmitter(
+        sink,
+        settings,
+        AnnotationWriter(sink, settings, {}),
+        EmittedIndividuals(),
+    ).emit(attribute_history)
     if path is not None:
-        builder.sink.save(path)
-    return builder._result()
+        sink.save(path)
+    sink.close()
+    onto, written = sink.result_target()
+    return BuildResult(onto=onto, settings=settings, iri=sink.iri, path=written)

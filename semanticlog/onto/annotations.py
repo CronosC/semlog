@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import functools
 import json
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from importlib import resources
 from typing import Any, Protocol
 
@@ -99,11 +99,11 @@ class AnnotationSink(Protocol):
         ...
 
     def inverse_name(self, prop: str) -> str:
-        """Return the name of the inverse of a property."""
+        """Return the inverse of a property, including inverses named in this build."""
         ...
 
     def is_declared(self, name: str) -> bool:
-        """Report whether a class or property of this name has been declared."""
+        """Whether a class or property of this name has been declared."""
         ...
 
 
@@ -125,10 +125,23 @@ class AnnotationWriter:
     annotations, so emitters can call them unconditionally.
     """
 
-    def __init__(self, sink: AnnotationSink, settings: OntoBuildSettings) -> None:
+    def __init__(
+        self,
+        sink: AnnotationSink,
+        settings: OntoBuildSettings,
+        backmap: Mapping[str, str],
+    ) -> None:
+        """Prepare a writer.
+
+        Args:
+            sink: Where the annotations go.
+            settings: Settings of the build, for whether to write any at all.
+            backmap: Cleaned name to what the log called it, which is what
+                every derived label is made of.
+        """
         self.sink = sink
         self.settings = settings
-        self._backmap: dict[str, str] = {}
+        self._backmap = backmap
 
     @property
     def enabled(self) -> bool:
@@ -139,10 +152,6 @@ class AnnotationWriter:
     def has_inverses(self) -> bool:
         """Whether inverse properties exist and so need annotating too."""
         return self.settings.has_inverses
-
-    def bind(self, backmap: dict[str, str]) -> None:
-        """Supply the map from cleaned names back to what the log called them."""
-        self._backmap = backmap
 
     def original(self, name: str) -> str:
         """Return what the log called a name, or the name if it never changed."""
@@ -169,7 +178,7 @@ class AnnotationWriter:
     def entity_individuals(self, entity_type: str, ids: Iterable[Any]) -> None:
         """Label events or objects with their type and their id from the log.
 
-        An entity with no id is not asserted, so it is not labelled either.
+        An entity with no id is not asserted, so it is not labeled either.
         """
         orig_type = self.original(entity_type)
         self.sink.annotate_individuals_bulk(

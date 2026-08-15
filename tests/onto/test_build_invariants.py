@@ -13,7 +13,15 @@ import pytest
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import OWLProfile
-from tests.conftest import emit
+from semanticlog.onto.builder import OCEDOntoBuilder
+from semanticlog.onto.sinks import StreamingSink
+from tests.conftest import BACKENDS, emit
+from tests.support import stores
+from tests.support.owlapi import (
+    ontology_annotations,
+    ontology_iris,
+    undeclared_signature,
+)
 from tests.support.settings import CONFIGURATIONS, EL_NAMES, NAMES
 
 # Constructors OWL 2 EL does not have. An EL build that emits one of these has
@@ -136,7 +144,7 @@ def test_the_matrix_covers_both_profiles():
 
 @pytest.mark.parametrize("name", NAMES)
 def test_an_attribute_with_several_owners_keeps_one_domain_axiom(name, built):
-    settings = CONFIGURATIONS[name]()
+    settings = CONFIGURATIONS[name]().settings
     domains = [
         line
         for line in built(name).axiom_lines
@@ -158,3 +166,57 @@ def test_two_builds_of_one_configuration_are_identical(name, tmp_path):
     second = emit(CONFIGURATIONS[name](), tmp_path / "second.ofn")
 
     assert first.axiom_lines == second.axiom_lines
+
+
+@pytest.mark.reasoner
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("name", NAMES)
+def test_every_entity_in_the_signature_is_declared(name, backend, built_path):
+    """Nothing is used under a name the file never declares.
+
+    `Emitted` holds the classes and properties a build declared. This asks the
+    OWL API for the whole signature, which also holds the annotation properties
+    and the datatypes, and those are where a missing declaration goes unseen.
+    """
+    undeclared = undeclared_signature(built_path(name, backend))
+    assert not undeclared, (
+        f"{name} through the {backend} sink uses {sum(map(len, undeclared.values()))} "
+        "name(s) it never declares:\n"
+        + "\n".join(
+            f"  {kind}: {', '.join(names)}"
+            for kind, names in sorted(undeclared.items())
+        )
+    )
+
+
+@pytest.mark.reasoner
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_a_build_names_the_ontology_it_produced(backend, built_path):
+    """A build states an ontology IRI, and says what produced it.
+
+    The IRI is how a consumer says which ontology it loaded. `owl:versionInfo`
+    is what a build carries instead of a version IRI, which owlapy has no way
+    to set on the ontology it holds in memory.
+    """
+    path = built_path(NAMES[0], backend)
+    ontology_iri, _ = ontology_iris(path)
+
+    assert ontology_iri, f"the {backend} sink wrote no ontology IRI"
+    assert "versionInfo" in ontology_annotations(path), (
+        f"the {backend} sink wrote no owl:versionInfo, so {ontology_iri} does not "
+        "say what built it"
+    )
+
+
+@pytest.mark.reasoner
+def test_the_ontology_iri_is_the_one_the_build_was_given(tmp_path):
+    """A build puts its names in the IRI it was given, not a fixed one."""
+    path = tmp_path / "named.ofn"
+    config = CONFIGURATIONS["dl_df"]()
+    sink = StreamingSink(str(path), "https://example.org/log", config.settings.profile)
+    OCEDOntoBuilder(
+        "https://example.org/log", config.settings, sink=sink
+    ).build_ontology(stores.build(stores.MATRIX_STORE), config.inputs)
+
+    ontology_iri, _ = ontology_iris(path)
+    assert ontology_iri == "https://example.org/log"

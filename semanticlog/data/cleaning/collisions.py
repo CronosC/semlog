@@ -3,8 +3,8 @@
 Three kinds of collision are possible. Two source names can clean to one
 string, one name can be claimed by two different kinds of thing, and a name can
 clash with one the build reserves for its own schema. Each is resolved by
-renaming the source before the ordinary cleaning pass runs, so the rows behind
-two names never become indistinguishable.
+renaming the source before the ordinary cleaning pass runs. The rows behind two
+names stay apart.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from typing import Any
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
+from semanticlog.core.errors import InputError
 from semanticlog.data.cleaning.names import (
     clean_series,
     clean_string,
@@ -56,9 +57,9 @@ def collect_attribute_names(data: OCEDStore) -> set[str]:
     """Collect every attribute column of events, objects and their history.
 
     A change table can name an attribute the object table no longer carries,
-    since a column that is empty for every object is dropped on load. Its
-    class and its `change_value_` property are still emitted, so the name
-    belongs in the reserved set like any other.
+    since a column that is empty for every object is dropped on load. The build
+    still emits its class and its `change_value_` property. The name belongs in
+    the reserved set like any other.
     """
     return {name for view in data.tables() for name in view.attributes}
 
@@ -102,9 +103,10 @@ def _text_values(view: TableView, column: str) -> list[str]:
 def _value_groups(data: OCEDStore) -> dict[str, list[tuple[str, str]]]:
     """Collect the text values of each attribute, across every table carrying it.
 
-    An attribute value becomes an individual named after its attribute, and
-    two tables with one attribute name share that individual, so the values
-    are grouped by the cleaned attribute name rather than by table.
+    An attribute value becomes an individual named after its attribute, and two
+    tables with one attribute name share that individual. Grouping therefore
+    runs on the cleaned attribute name, one group per attribute across every
+    table that carries it.
     """
     groups: dict[str, list[tuple[str, str]]] = {}
     for view in data.tables():
@@ -117,9 +119,9 @@ def _value_groups(data: OCEDStore) -> dict[str, list[tuple[str, str]]]:
 def verify_unique_names(data: OCEDStore) -> None:
     """Raise if two things would still be emitted under one name.
 
-    Every rename has run by the time this does, so what it reports is a
-    duplicate the input carries itself, such as one id naming both an event and
-    an object, which no rename can resolve without choosing one of them.
+    Every rename has run by the time this does. What it reports is a duplicate
+    the input carries itself, such as one id naming both an event and an object,
+    which no rename can resolve without choosing one of them.
     """
     claims: dict[str, list[str]] = {}
 
@@ -153,7 +155,7 @@ def verify_unique_names(data: OCEDStore) -> None:
         return
     shown = errors[:_MAX_REPORTED_COLLISIONS]
     more = len(errors) - len(shown)
-    raise ValueError(
+    raise InputError(
         "clean_oced_data: the following names are claimed more than once:\n"
         + "\n".join(shown)
         + (f"\n  ... and {more} more" if more else "")
@@ -165,8 +167,8 @@ def verify_unique_names(data: OCEDStore) -> None:
 def record_value_renames(data: OCEDStore, log: RenameLog) -> None:
     """Record the attribute values that cleaning is about to rewrite.
 
-    Values are recorded against their column, so that a later rename of the
-    column carries them with it.
+    Values are recorded against their column. A later rename of the column
+    carries them with it.
     """
 
     for view in data.tables():
@@ -209,8 +211,8 @@ def _free_source_name(name: str, taken: Collection[str]) -> str:
 def _merged_names(names: Iterable[str] | pd.Series) -> dict[str, str]:
     """Return a new source name for each name cleaning would merge into another.
 
-    Names are walked in sorted order, so the first of a colliding set keeps the
-    name it would have had and the result does not depend on the order the
+    Names are walked in sorted order. The first of a colliding set keeps the
+    name it would have had, and the result does not depend on the order the
     store happens to hold them in.
 
     Nothing is allocated per name unless something actually collides, since
@@ -299,10 +301,10 @@ def resolve_merged_names(data: OCEDStore, log: RenameLog) -> None:
     """Rename the source names that cleaning would otherwise merge into one.
 
     This runs before anything is cleaned. Once two names have become one string
-    the rows behind them can no longer be told apart, so the rename is applied
-    to the source name and the ordinary cleaning pass carries it through.
+    the rows behind them can no longer be told apart. The rename is applied to
+    the source name, and the ordinary cleaning pass carries it through.
 
-    Both relation families become properties of one ontology, so they are
+    Both relation families become properties of one ontology, and they are
     checked as one namespace.
 
     Args:
@@ -365,7 +367,7 @@ def resolve_kind_collisions(data: OCEDStore, log: RenameLog) -> None:
     """Prefix a class name that two different kinds of thing both claim.
 
     An activity, an object type and an attribute all become a class named after
-    themselves, so one name reaching the sink twice would merge them. The kind
+    themselves. One name reaching the sink twice would merge them, so the kind
     it came from goes in front of each claimant.
 
     Args:

@@ -57,7 +57,7 @@ def data_properties(semlog) -> set[str]:
 
 
 def test_the_schema_declares_exactly_the_names_the_vocabulary_reserves():
-    built = schema(DEFAULT_IRI, case_concepts=["order"])
+    built = schema(DEFAULT_IRI)
 
     assert classes(built) == BASE_CLASSES
     assert object_properties(built) == BASE_OBJECT_PROPERTIES

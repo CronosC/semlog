@@ -10,13 +10,16 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 
 from semanticlog.core.summary import count_phrase, name_lines
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.oced import attribute_owners
+from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.audit import audit_build
+from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters import (
     AttributeEmitter,
     EntityEmitter,
@@ -29,9 +32,9 @@ from semanticlog.onto.emitters import (
 )
 from semanticlog.onto.emitters.attributes import (
     attribute_binnings,
-    attribute_owners,
     report_conflated_attributes,
 )
+from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.result import BuildResult
 from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import AxiomSink, InMemorySink
@@ -45,13 +48,27 @@ _KIND_WORDS = {
 }
 
 
+@dataclass(frozen=True)
+class Emitters:
+    """Every step of one build, sharing one sink and one record of what it wrote."""
+
+    tbox: TBoxEmitter
+    attributes: AttributeEmitter
+    entities: EntityEmitter
+    times: TimeEmitter
+    order: OrderEmitter
+    relations: RelationEmitter
+    history: HistoryEmitter
+    provenance: ProvenanceEmitter
+
+
 class OCEDOntoBuilder:
     """Runs the emitters over a store, in the order a build needs.
 
-    The order is not arbitrary. The schema comes first so that everything else
-    has something to hang below, each emitter declares its own classes before
-    asserting its own individuals, and the annotation document is applied
-    last, once every name it could refer to exists. A class declared by a
+    The schema comes first so that everything else has something to hang
+    below, each emitter declares its own classes before asserting its own
+    individuals, and the annotation document is applied last, once every name
+    it could refer to exists. A class declared by a
     later emitter than the individual it collides with is caught by cleaning
     rather than by the sink, which is why the reserved set is derived from
     the vocabulary.
@@ -59,7 +76,7 @@ class OCEDOntoBuilder:
     Attributes:
         sink: Where the axioms go.
         iri: Base IRI of the ontology, as the sink normalized it.
-        annotations: Writer for derived labels and comments.
+        emitted: What the build has asserted, shared by every emitter.
     """
 
     def __init__(
@@ -68,37 +85,54 @@ class OCEDOntoBuilder:
         settings: OntoBuildSettings,
         sink: AxiomSink | None = None,
     ) -> None:
-        """Prepare a builder and its emitters.
+        """Prepare a builder.
+
+        The emitters are made once the store is in hand, since what they need
+        beyond the settings comes from the log.
 
         Args:
             iri: Base IRI for the ontology.
             settings: Settings for this build.
             sink: Where to write. Defaults to an in-memory sink.
         """
-        self.sink: AxiomSink = sink if sink is not None else InMemorySink(iri, settings)
+        self.sink: AxiomSink = (
+            sink if sink is not None else InMemorySink(iri, settings.profile)
+        )
         self.iri = self.sink.iri
         self._settings = settings
-        self._annotation_doc: dict[str, dict[str, str]] = settings.annotation_data or {}
-        self.annotations = AnnotationWriter(self.sink, settings)
+        self.emitted = EmittedIndividuals()
         self._claimed = False
-        self._make_emitters()
 
     @property
     def settings(self) -> OntoBuildSettings:
         """The settings this build runs with."""
         return self._settings
 
-    def _make_emitters(self) -> None:
-        """Create the emitters, sharing the sink, settings and annotations."""
-        parts = (self.sink, self.settings, self.annotations)
-        self.tbox = TBoxEmitter(*parts)
-        self.attributes = AttributeEmitter(*parts)
-        self.entities = EntityEmitter(*parts, self.attributes)
-        self.times = TimeEmitter(*parts)
-        self.order = OrderEmitter(*parts)
-        self.relations = RelationEmitter(*parts)
-        self.history = HistoryEmitter(*parts, self.attributes, self.times)
-        self.provenance = ProvenanceEmitter(*parts)
+    def _make_emitters(self, data: ReadableStore) -> Emitters:
+        """Create the emitters for one store, complete from the start.
+
+        What an emitter needs is read from the log here rather than bound
+        into it afterwards, so nothing has to defend against being reached
+        before it was ready.
+        """
+        owners = attribute_owners(data)
+        report_conflated_attributes(owners)
+        annotations = AnnotationWriter(self.sink, self.settings, data.backmap)
+        parts = (self.sink, self.settings, annotations, self.emitted)
+        attributes = AttributeEmitter(
+            *parts, owners, attribute_binnings(data, self.settings)
+        )
+        times = TimeEmitter(*parts)
+        return Emitters(
+            tbox=TBoxEmitter(*parts),
+            attributes=attributes,
+            entities=EntityEmitter(*parts, attributes),
+            times=times,
+            order=OrderEmitter(*parts),
+            relations=RelationEmitter(*parts),
+            history=HistoryEmitter(*parts, attributes, times),
+            provenance=ProvenanceEmitter(*parts),
+        )
 
     @contextmanager
     def _phase(self, message: str, absent: str = "", count: int = 1) -> Iterator[None]:
@@ -155,15 +189,34 @@ class OCEDOntoBuilder:
             "which has no disjunction"
         )
 
+    def _report_what_was_kept(self) -> None:
+        """Log what the build held on to, which is what its memory went on.
+
+        Neither sink writes an axiom twice, and what that costs is one entry
+        per declared name and one per distinct value, moment and bin. A
+        streamed build is flat in events and grows in these, so this is where
+        to look when one uses more memory than the log seems to warrant.
+        """
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+        kept = {"names": self.sink.declared_count, **self.emitted.counts()}
+        logger.debug("kept: " + ", ".join(f"{k}={v:,}" for k, v in kept.items()))
+
     def _result(self) -> BuildResult:
         """Package the finished build, closing the sink on the way.
 
-        Closing is what lets a sink finish work it could only do once no
+        A sink finishes on close whatever work it could only do once no
         further axioms were coming.
         """
         self.sink.close()
         onto, path = self.sink.result_target()
-        return BuildResult(onto=onto, settings=self.settings, iri=self.iri, path=path)
+        return BuildResult(
+            onto=onto,
+            settings=self.settings,
+            iri=self.iri,
+            path=path,
+            stats={**self.sink.declared_by_kind(), "axioms": self.sink.axiom_count},
+        )
 
     def _claim_single_use(self) -> None:
         """Refuse a second build, which would merge two logs into one ontology."""
@@ -175,14 +228,14 @@ class OCEDOntoBuilder:
             )
         self._claimed = True
 
-    def _apply_annotation_document(self) -> None:
+    def _apply_annotations(self, annotations: dict[str, dict[str, str]]) -> None:
         """Apply the supplied annotations, reporting entries that match nothing.
 
         A document written for another log, or for names as they appear before
         cleaning, would otherwise annotate nothing without saying so.
         """
         skipped = []
-        for name, ann in self._annotation_doc.items():
+        for name, ann in annotations.items():
             if not self.sink.is_declared(name):
                 skipped.append(name)
                 continue
@@ -191,23 +244,29 @@ class OCEDOntoBuilder:
             )
         if skipped:
             logger.warning(
-                f"annotation_document: {len(skipped)} entry(s) name nothing this "
+                f"annotations: {len(skipped)} entry(s) name nothing this "
                 f"build declared, and were skipped: {', '.join(sorted(skipped))}"
             )
 
     def build_ontology(
         self,
-        data: OCEDStore,
+        data: ReadableStore,
+        inputs: BuildInputs | None = None,
         source: str | None = None,
         run: Mapping[str, Any] | None = None,
     ) -> BuildResult:
         """Build the ontology for one store.
 
-        The settings and the data are checked before anything is emitted, so
-        a build that cannot work fails before it has written half an ontology.
+        The settings, the inputs and the data are checked before anything is
+        emitted, so a build that cannot work fails before it has written half
+        an ontology. A build that fails anyway abandons its sink, which is
+        what removes a file it had started.
 
         Args:
             data: Store to build from. It has to have been cleaned already.
+            inputs: Case concepts, DECLARE constraints and annotations for this
+                log. Defaults to none of the three, which is enough for a build
+                that emits no event order.
             source: Path of the log, recorded as provenance.
             run: Anything else to record about this run, such as the input
                 checksum and the command.
@@ -216,11 +275,29 @@ class OCEDOntoBuilder:
             The finished build.
 
         Raises:
-            ValueError: If the settings are unusable, the store fails a
-                pre-build check, or this builder has already been used.
+            ConfigError: If the settings or the inputs are unusable.
+            InputError: If the store fails a pre-build check.
+            ValueError: If this builder has already been used.
         """
+        try:
+            return self._build(
+                data, BuildInputs() if inputs is None else inputs, source, run
+            )
+        except BaseException:
+            self.sink.abort()
+            raise
+
+    def _build(
+        self,
+        data: ReadableStore,
+        inputs: BuildInputs,
+        source: str | None,
+        run: Mapping[str, Any] | None,
+    ) -> BuildResult:
+        """Run the build itself, leaving a failure to `build_ontology`."""
         self.settings.validate()
-        audit_build(data, self.settings)
+        inputs.validate(self.settings)
+        audit_build(data, self.settings, inputs)
         self._claim_single_use()
 
         attribute_history = self.settings.emits_attribute_history
@@ -231,15 +308,10 @@ class OCEDOntoBuilder:
             )
             attribute_history = False
 
+        emitters = self._make_emitters(data)
         with self._phase("Instantiating the upper schema.."):
-            self.tbox.emit(attribute_history=attribute_history)
-            self.provenance.emit(source, run)
-
-        self.annotations.bind(data.backmap)
-        owners = attribute_owners(data)
-        report_conflated_attributes(owners)
-        self.attributes.bind_owners(owners)
-        self.attributes.bind_binnings(attribute_binnings(data, self.settings))
+            emitters.provenance.emit(source, run)
+            emitters.tbox.emit(attribute_history=attribute_history)
 
         activities = len(data.get_event_types())
         object_types = len(data.get_object_types())
@@ -252,35 +324,35 @@ class OCEDOntoBuilder:
             "No event data in the log..",
             activities,
         ):
-            self.entities.emit(data, EntityKind.EVENT)
+            emitters.entities.emit(data, EntityKind.EVENT)
         with self._phase(
             f"Instantiating event order ({', '.join(r.value for r in order)})..",
             "No event order to instantiate..",
             len(order),
         ):
-            self.order.emit(data)
+            emitters.order.emit(data, inputs)
         with self._phase(
             "Instantiating time data..", "No time data in the log..", activities
         ):
-            self.times.emit(data)
+            emitters.times.emit(data)
         with self._phase(
             f"Instantiating object data ({object_types} object types)..",
             "No object data in the log..",
             object_types,
         ):
-            self.entities.emit(data, EntityKind.OBJECT)
+            emitters.entities.emit(data, EntityKind.OBJECT)
         with self._phase(
             f"Instantiating event to object relation data ({e2o} relation types)..",
             "No event to object relations in the data..",
             e2o,
         ):
-            self.relations.emit_event_to_object(data)
+            emitters.relations.emit_event_to_object(data)
         with self._phase(
             f"Instantiating object to object relation data ({o2o} relation types)..",
             "No object to object relations in the data..",
             o2o,
         ):
-            self.relations.emit_object_to_object(data)
+            emitters.relations.emit_object_to_object(data)
 
         if attribute_history:
             changes = len(data.get_object_change_types())
@@ -289,9 +361,10 @@ class OCEDOntoBuilder:
                 "No object attribute changes in the data..",
                 changes,
             ):
-                self.history.emit(data)
+                emitters.history.emit(data)
 
-        self._apply_annotation_document()
+        self._apply_annotations(inputs.annotations)
         self._report_dropped_unions()
+        self._report_what_was_kept()
         logger.info("done.")
         return self._result()

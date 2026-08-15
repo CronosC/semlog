@@ -8,7 +8,7 @@ ask for every relation of a kind.
 from __future__ import annotations
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import RelationKind
 from semanticlog.onto.emitters.base import Emitter
 
@@ -16,17 +16,17 @@ from semanticlog.onto.emitters.base import Emitter
 class RelationEmitter(Emitter):
     """Emits both relation families."""
 
-    def emit_event_to_object(self, data: OCEDStore) -> None:
+    def emit_event_to_object(self, data: ReadableStore) -> None:
         """Emit the relations from events to objects."""
         self._emit(data, RelationKind.E2O, vocab.EVENT_OBJECT_RELATION)
 
-    def emit_object_to_object(self, data: OCEDStore) -> None:
+    def emit_object_to_object(self, data: ReadableStore) -> None:
         """Emit the relations between objects."""
         self._emit(data, RelationKind.O2O, vocab.OBJECT_OBJECT_RELATION)
 
     def _emit(
         self,
-        data: OCEDStore,
+        data: ReadableStore,
         relation_filter: RelationKind,
         superprop: str,
     ) -> None:
@@ -36,7 +36,6 @@ class RelationEmitter(Emitter):
         For an object-to-object relation it is the source types the store
         records, falling back to the object class when it records none.
         """
-        self.annotations.bind(data.backmap)
         for relation in data.get_relation_types(relation_filter):
             table = data.get_relation(relation)
             from_types = table.from_type or []
@@ -50,12 +49,8 @@ class RelationEmitter(Emitter):
                 domain_class=domain,
                 range_class=list(table.to_type),
                 create_inverse=self.settings.has_inverses,
+                axiomatic_inverse=self.settings.axiomatic_inverses,
                 source=f"relation {relation!r}",
             )
             self.annotations.relation(relation, from_types, table.to_type)
-            self.sink.assert_relations(
-                table.data,
-                relation,
-                from_key=table.from_id,
-                to_key=table.to_id,
-            )
+            self.assert_relations(relation, table.data, table.from_id, table.to_id)

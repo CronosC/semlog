@@ -18,7 +18,7 @@ CLASS = "class"
 OBJECT_PROPERTY = "object"
 DATA_PROPERTY = "data"
 
-_NOT_AN_AXIOM = ("Prefix(", "Ontology(", ")")
+_NOT_AN_AXIOM = ("Prefix(", "Ontology(", "Annotation(", ")")
 
 # A prefixed name, with the backslash escapes StreamingSink writes for the
 # characters OWL functional syntax reserves.
@@ -41,6 +41,15 @@ _TRANSITIVE = re.compile(rf"^TransitiveObjectProperty\(:({_REF})\)$")
 _ENTITY_ANNOTATION = re.compile(
     rf'^AnnotationAssertion\(rdfs:(label|comment) :({_REF}) "(.*)"\)$', re.DOTALL
 )
+# The sink writes the property as a full IRI. A file the OWL API has rewritten
+# after materializing carries it as a prefixed name, with or without a prefix.
+_HEADER_ANNOTATION = re.compile(
+    r"^Annotation\("
+    r"(?:<[^>]*[#/](?P<name>\w+)>|[A-Za-z]*:(?P<prefixed>\w+))"
+    r' "(?P<value>.*)"\)$',
+    re.DOTALL,
+)
+
 # The sink writes the property as a full IRI. A file the OWL API has rewritten
 # after materializing carries it as a prefixed name instead.
 _ONTOLOGY_ANNOTATION = re.compile(
@@ -75,8 +84,8 @@ def _pair(one: str, other: str) -> tuple[str, str]:
     return (one, other) if one <= other else (other, one)
 
 
-# owlready2 writes every float as xsd:decimal whatever datatype the literal
-# declares, and every other serialisation is converted from that RDF/XML, so
+# owlapy writes every float as xsd:decimal whatever datatype the literal
+# declares, and every other serialization is converted from that RDF/XML, so
 # the in-memory sink cannot emit the xsd:double the streaming sink writes.
 # Reading them as one keeps the sink comparison about everything else.
 _EQUIVALENT_DATATYPES = {"decimal": "double"}
@@ -192,10 +201,36 @@ class Emitted:
 def read_functional(path: str | Path) -> Emitted:
     """Read an ontology in OWL 2 functional syntax, as StreamingSink writes it."""
     emitted = Emitted()
+    _read_header_annotations(Path(path), emitted)
     for line in _axiom_lines(Path(path)):
         emitted.axiom_lines.append(line)
         _read_functional_axiom(line, emitted)
     return emitted
+
+
+def _read_header_annotations(path: Path, emitted: Emitted) -> None:
+    """Read the annotations inside the `Ontology(...)` header.
+
+    They sit between the header line and the first axiom, so reading stops at
+    the first line that is not one. A file the OWL API has rewritten carries
+    them as annotation assertions instead, which the axiom reader picks up.
+    """
+    pending: list[str] = []
+    started = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not started:
+            started = line.startswith("Ontology(")
+            continue
+        if not pending and not line.startswith("Annotation("):
+            return
+        pending.append(line)
+        annotation = "\n".join(pending)
+        if _in_quoted_string(annotation):
+            continue
+        pending = []
+        if m := _HEADER_ANNOTATION.match(annotation):
+            name = m["name"] or m["prefixed"]
+            emitted.ontology_annotations[name] = _unquote(m["value"])
 
 
 def _axiom_lines(path: Path) -> Iterator[str]:

@@ -1,5 +1,6 @@
 """Resolving defaults, TOML files and flags into one checked run."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -176,10 +177,17 @@ def test_a_missing_input_is_an_error_not_a_silent_skip(tmp_path):
         resolve_run_config({"input": [str(tmp_path / "absent.json")]})
 
 
-def test_a_directory_without_ocel_files_is_an_error(tmp_path):
+def test_a_directory_without_event_logs_is_an_error(tmp_path):
     (tmp_path / "notes.md").write_text("nothing to build")
-    with pytest.raises(ConfigError, match="no OCEL files"):
+    with pytest.raises(ConfigError, match="no event logs"):
         resolve_run_config({"input": [str(tmp_path)]})
+
+
+def test_a_file_of_an_unreadable_kind_is_an_error(tmp_path):
+    path = tmp_path / "notes.md"
+    path.write_text("nothing to build")
+    with pytest.raises(ConfigError, match="not an event log"):
+        resolve_run_config({"input": [str(path)]})
 
 
 def test_no_input_at_all_is_an_error(tmp_path):
@@ -195,13 +203,13 @@ def test_the_same_input_named_twice_is_built_once(ocel):
 def test_a_single_input_takes_its_name_from_the_config_file(ocel, write_config):
     path = write_config("hiring-el-df.toml", f'input = "{ocel}"\n')
     cfg = resolve_run_config({}, config_file=path)
-    assert cfg.ontology_path(ocel).name == "hiring-el-df.owl"
+    assert cfg.ontology_path(ocel).name == "hiring-el-df.ofn"
     assert cfg.backmap_path(ocel).name == "hiring-el-df.backmap.json"
 
 
 def test_without_a_config_the_input_name_is_used(ocel):
     cfg = resolve(ocel)
-    assert cfg.ontology_path(ocel).name == "pipeline.owl"
+    assert cfg.ontology_path(ocel).name == "pipeline.ofn"
 
 
 def test_a_batch_names_each_output_after_its_input(tmp_path, ocel, write_config):
@@ -210,7 +218,7 @@ def test_a_batch_names_each_output_after_its_input(tmp_path, ocel, write_config)
     path = write_config("batch.toml", f'input = "{tmp_path}"\n')
 
     cfg = resolve_run_config({}, config_file=path)
-    assert {cfg.ontology_path(p).name for p in cfg.inputs} == {"a.owl", "b.owl"}
+    assert {cfg.ontology_path(p).name for p in cfg.inputs} == {"a.ofn", "b.ofn"}
 
 
 def test_an_explicit_name_may_not_collapse_a_batch(tmp_path, ocel):
@@ -221,7 +229,7 @@ def test_an_explicit_name_may_not_collapse_a_batch(tmp_path, ocel):
 
 
 def test_two_inputs_of_one_name_may_not_overwrite_each_other(tmp_path, ocel):
-    """Outputs are named after the input, so both would write log.owl."""
+    """Outputs are named after the input, so both would write log.ofn."""
     for directory in ("first", "second"):
         (tmp_path / directory).mkdir()
         (tmp_path / directory / "log.jsonocel").write_bytes(ocel.read_bytes())
@@ -265,19 +273,33 @@ def test_declare_without_a_constraints_file_points_at_mine_declare(ocel):
 
 
 def test_a_missing_declare_file_is_a_configuration_error(ocel, tmp_path):
-    """The settings read the file when they are constructed, so this has to
-    be caught before they are, or it surfaces as an OS error."""
+    """The file is read when the inputs of one log are assembled."""
     missing = tmp_path / "nowhere.csv"
+    cfg = resolve(ocel, order_representations=["declare"], declare_file=str(missing))
 
     with pytest.raises(ConfigError, match="declare_file not found"):
-        resolve(ocel, order_representations=["declare"], declare_file=str(missing))
+        cfg.declare_result()
 
 
 def test_a_missing_annotation_document_is_a_configuration_error(ocel, tmp_path):
     missing = tmp_path / "nowhere.json"
+    cfg = resolve(ocel, annotation_document=str(missing))
 
     with pytest.raises(ConfigError, match="annotation_document not found"):
-        resolve(ocel, annotation_document=str(missing))
+        cfg.annotations()
+
+
+def test_the_annotation_document_is_read_when_the_inputs_are_built(ocel, tmp_path):
+    document = tmp_path / "custom.json"
+    document.write_text(
+        json.dumps({"Event": {"label": "Occurrence"}}), encoding="utf-8"
+    )
+    cfg = resolve(ocel, annotation_document=str(document))
+
+    inputs = cfg.build_inputs(["order"], None)
+
+    assert inputs.annotations == {"Event": {"label": "Occurrence"}}
+    assert inputs.case_concepts == ("order",)
 
 
 def test_explicitly_empty_case_concepts_conflict_with_an_order_needing_traces(ocel):
@@ -299,24 +321,44 @@ def test_bins_without_a_binning_mode_only_warns(ocel):
     assert any("no effect" in w for w in cfg.warnings)
 
 
+def test_column_names_on_an_ocel_input_only_warn(ocel):
+    cfg = resolve(ocel, case_col="case_id", object_cols=["resource"])
+
+    assert any("no effect" in w for w in cfg.warnings)
+    assert cfg.loader_columns() == {"case_col": "case_id", "object_cols": ["resource"]}
+
+
+def test_column_names_on_a_flat_input_are_not_warned_about(tmp_path):
+    path = tmp_path / "log.csv"
+    path.write_text("case_id,activity,timestamp\nc1,A,2024-01-01 08:00:00\n")
+
+    cfg = resolve_run_config({"input": [str(path)], "case_col": "case_id"})
+
+    assert cfg.warnings == ()
+
+
+def test_unnamed_columns_are_left_to_the_loader(ocel):
+    assert resolve(ocel).loader_columns() == {}
+
+
 def test_a_wrongly_typed_value_names_the_setting(ocel):
     with pytest.raises(ConfigError, match="bins: expected a whole number"):
         resolve(ocel, bins="five")
 
 
-def test_settings_for_does_not_mutate_the_shared_settings(ocel):
+def test_build_inputs_carry_the_case_concepts_of_one_log(ocel):
     cfg = resolve(ocel)
-    first = cfg.settings_for(["order"])
-    second = cfg.settings_for(["item"])
+
+    first = cfg.build_inputs(["order"], None)
+    second = cfg.build_inputs(["item"], None)
 
     assert first.case_concepts == ("order",)
     assert second.case_concepts == ("item",)
-    assert cfg.settings.case_concepts == ()
 
 
 def test_render_names_every_output_it_would_write(ocel):
     text = resolve(ocel, output="out", save_backmap=True).render()
-    assert "out/pipeline.owl" in text
+    assert "out/pipeline.ofn" in text
     assert "out/pipeline.backmap.json" in text
 
 
@@ -338,7 +380,7 @@ def test_a_config_that_extends_another_still_names_itself(ocel, write_config):
     cfg = resolve_run_config({}, config_file=child)
 
     assert cfg.settings.profile is OWLProfile.OWL2EL
-    assert cfg.ontology_path(ocel).name == "hiring.owl"
+    assert cfg.ontology_path(ocel).name == "hiring.ofn"
 
 
 def test_the_command_is_recorded_on_the_resolved_run(ocel):

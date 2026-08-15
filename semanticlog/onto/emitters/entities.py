@@ -8,9 +8,10 @@ both and the builder says which half it is emitting.
 from __future__ import annotations
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind
 from semanticlog.onto.annotations import AnnotationWriter
+from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters.attributes import AttributeEmitter
 from semanticlog.onto.emitters.base import Emitter
 from semanticlog.onto.settings import OntoBuildSettings
@@ -30,12 +31,13 @@ class EntityEmitter(Emitter):
         sink: AxiomSink,
         settings: OntoBuildSettings,
         annotations: AnnotationWriter,
+        emitted: EmittedIndividuals,
         attributes: AttributeEmitter,
     ) -> None:
-        super().__init__(sink, settings, annotations)
+        super().__init__(sink, settings, annotations, emitted)
         self.attributes = attributes
 
-    def emit(self, data: OCEDStore, kind: EntityKind) -> None:
+    def emit(self, data: ReadableStore, kind: EntityKind) -> None:
         """Emit every type of one kind, its entities and their attributes.
 
         All classes are declared before any individual is asserted, so that a
@@ -47,7 +49,6 @@ class EntityEmitter(Emitter):
             data: Store to emit from.
             kind: Whether to emit the activities or the object types.
         """
-        self.annotations.bind(data.backmap)
         parent, attribute_parent = _PARENTS[kind]
         views = [v for v in data.tables(changes=False) if v.kind is kind]
 
@@ -57,7 +58,7 @@ class EntityEmitter(Emitter):
             self.annotations.entity_class(view.name, kind)
         for view in views:
             ids = view.frame[view.id_column]
-            self.sink.assert_individuals(list(ids), view.name)
+            self.sink.assert_individuals(view.name, ids)
             self.annotations.entity_individuals(view.name, ids)
             self.attributes.emit_columns(
                 view.frame.drop(columns=view.structural),

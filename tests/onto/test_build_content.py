@@ -19,7 +19,7 @@ from semanticlog.core.enums import (
     EventOrderRepresentation,
 )
 from tests.conftest import emit
-from tests.support.settings import declare_result, settings
+from tests.support.settings import declare_constraints, settings
 
 EVENTS = [f"e{i}" for i in range(1, 13)]
 SHIPMENTS = [f"s{i}" for i in range(1, 7)]
@@ -249,7 +249,7 @@ def test_a_mined_constraint_is_labelled_with_what_it_says(tmp_path):
                 EventOrderRepresentation.DF,
                 EventOrderRepresentation.DECLARE,
             ],
-            declare_result=declare_result(),
+            declare_constraints=declare_constraints(),
             derive_annotations=True,
         ),
         tmp_path / "declare.ofn",
@@ -282,8 +282,13 @@ def test_each_case_concept_keeps_its_own_constraints(built):
 def test_declare_without_constraints_is_refused():
     from semanticlog.onto.settings import EventOrderRepresentation
 
+    config = settings(
+        order_representations=[EventOrderRepresentation.DECLARE],
+        declare_constraints=None,
+    )
+
     with pytest.raises(ValueError, match="DECLARE"):
-        settings(order_representations=[EventOrderRepresentation.DECLARE]).validate()
+        config.inputs.validate(config.settings)
 
 
 # --------------------------------------------------------------------------
@@ -362,4 +367,4 @@ def test_the_two_binning_modes_are_mutually_exclusive():
                 DataRepresentation.EQUAL_BINS,
                 DataRepresentation.DIST_BINS,
             ]
-        ).validate()
+        ).settings.validate()

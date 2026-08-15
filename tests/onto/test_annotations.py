@@ -1,13 +1,14 @@
 """The labels and comments of the upper schema."""
 
-import json
-
 import pytest
 
 from semanticlog.core.enums import InverseRepresentation
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.onto.annotations import TBOX_ANNOTATION_DOCUMENT, tbox_annotations
+from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
+from tests.conftest import emit
+from tests.support.settings import Configuration
 from tests.support.tbox import construct_tbox
 
 
@@ -48,10 +49,12 @@ def test_every_annotated_name_exists_in_the_schema(full_tbox_names):
     assert not orphaned, f"annotated but never declared: {sorted(orphaned)}"
 
 
-def test_the_document_round_trips_as_an_annotation_document(tmp_path):
-    path = tmp_path / "custom.json"
-    path.write_text(json.dumps(tbox_annotations()), encoding="utf-8")
+def test_a_supplied_document_reaches_the_build_as_annotations(tmp_path):
+    inputs = BuildInputs(annotations=tbox_annotations())
 
-    settings = OntoBuildSettings(annotation_document=str(path))
+    onto = emit(
+        Configuration(OntoBuildSettings(order_representations=[]), inputs),
+        tmp_path / "annotated.ofn",
+    )
 
-    assert settings.annotation_data == tbox_annotations()
+    assert ("Event", "label", tbox_annotations()["Event"]["label"]) in onto.annotations

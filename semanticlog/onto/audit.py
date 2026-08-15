@@ -7,43 +7,53 @@ two attributes whose values would become one individual. Running them up front
 means a build that cannot succeed fails before it has written half an ontology,
 with a message about the input.
 
-`warn_on_foreign_declare` is the exception. It answers the same question as
-`check_declare_input`, from the checksum rather than from the store, and only
-warns. It takes the digest of the input, so a caller that has one runs it.
+Every check here reads the store. Whether a set of constraints came from the
+file being built is answered from the checksum instead, which is the caller's
+to hold, so that check lives with the caller.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+
+import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
+from semanticlog.core.errors import ConfigError, InputError
 from semanticlog.data.cleaning import object_type_renames
 from semanticlog.data.flatten import case_concept_candidates
 from semanticlog.data.integrity import require_integrity
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.oced import attribute_owners
+from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind
-from semanticlog.onto.emitters.attributes import attribute_owners
+from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 
 logger = logging.getLogger(__name__)
 
 
-def audit_build(data: OCEDStore, settings: OntoBuildSettings) -> None:
+def audit_build(
+    data: ReadableStore, settings: OntoBuildSettings, inputs: BuildInputs
+) -> None:
     """Run every applicable check, stopping at the first failure.
 
     The settings decide whether the checks that only apply to some
     representations do anything.
 
     Raises:
-        ValueError: If a check rejects the store.
+        ConfigError: If the case concepts do not name types this log holds.
+        InputError: If a check rejects the store.
     """
-    check_case_concepts(data, settings)
+    check_case_concepts(data, settings, inputs.case_concepts)
     require_integrity(data)
-    check_declare_input(data, settings)
+    check_declare_input(data, settings, inputs.declare_constraints)
     check_converging_values(data)
 
 
-def check_case_concepts(data: OCEDStore, settings: OntoBuildSettings) -> None:
+def check_case_concepts(
+    data: ReadableStore, settings: OntoBuildSettings, case_concepts: Sequence[str]
+) -> None:
     """Check that every case concept is one this log can be projected onto.
 
     Flattening looks each case concept up in the store, which holds names
@@ -53,10 +63,11 @@ def check_case_concepts(data: OCEDStore, settings: OntoBuildSettings) -> None:
 
     Args:
         data: Store being built from.
-        settings: Settings holding the case concepts.
+        settings: Settings, for whether any of this applies.
+        case_concepts: Object types the build will project onto.
 
     Raises:
-        ValueError: If a case concept is not an object type of this log, or
+        ConfigError: If a case concept is not an object type of this log, or
             is one no event-to-object relation reaches.
     """
     if not settings.emits_traces:
@@ -65,10 +76,8 @@ def check_case_concepts(data: OCEDStore, settings: OntoBuildSettings) -> None:
     object_types = set(data.get_object_types())
     candidates = case_concept_candidates(data)
     reachable = set(candidates)
-    unknown = [c for c in settings.case_concepts if c not in object_types]
-    unreachable = [
-        c for c in settings.case_concepts if c in object_types and c not in reachable
-    ]
+    unknown = [c for c in case_concepts if c not in object_types]
+    unreachable = [c for c in case_concepts if c in object_types and c not in reachable]
     if not unknown and not unreachable:
         return
 
@@ -89,17 +98,19 @@ def check_case_concepts(data: OCEDStore, settings: OntoBuildSettings) -> None:
             "event-to-object relation reaches it, so it has no events to order"
         )
 
-    raise ValueError(
+    raise ConfigError(
         "The case concepts do not name object types this log can be "
         "projected onto:\n"
         + "\n".join(problems)
         + f"\n\nThis log can be projected onto: {', '.join(sorted(reachable))}. "
-        "Set settings.case_concepts to types it holds. 'semlog inspect' lists "
+        "Set the case concepts to types it holds. 'semlog inspect' lists "
         "them along with what each one was called in the source."
     )
 
 
-def check_declare_input(data: OCEDStore, settings: OntoBuildSettings) -> None:
+def check_declare_input(
+    data: ReadableStore, settings: OntoBuildSettings, constraints: pd.DataFrame | None
+) -> None:
     """Check that the DECLARE constraints belong to the log being built.
 
     Constraints are mined in a separate step and are easy to pair with the
@@ -110,22 +121,19 @@ def check_declare_input(data: OCEDStore, settings: OntoBuildSettings) -> None:
 
     Args:
         data: Store being built from.
-        settings: Settings holding the mined constraints.
+        settings: Settings, for whether any of this applies.
+        constraints: The mined constraints, one row per trace.
 
     Raises:
-        ValueError: If the constraints have no trace column, name a case
+        InputError: If the constraints have no trace column, name a case
             concept this log does not have, or name trace ids that are not
             objects of that type.
     """
-    if not settings.emits_declare:
-        return
-    declare_result = settings.declare_result
-    if declare_result is None:
+    if not settings.emits_declare or constraints is None:
         return
 
-    constraints = declare_result.constraints
     if "trace_id" not in constraints.columns:
-        raise ValueError(
+        raise InputError(
             "DECLARE constraints have no 'trace_id' column, so there is "
             "nothing to type as a member of each constraint class."
         )
@@ -150,9 +158,8 @@ def check_declare_input(data: OCEDStore, settings: OntoBuildSettings) -> None:
             )
 
     if problems:
-        origin = settings.declare_file or "the assigned DECLARE result"
-        raise ValueError(
-            f"The DECLARE constraints in {origin} do not match this log:\n"
+        raise InputError(
+            "The DECLARE constraints do not match this log:\n"
             + "\n".join(problems)
             + "\n\nThey were most likely mined from a different log, or from "
             "this one before it was filtered. Re-run 'semlog mine-declare' "
@@ -160,25 +167,7 @@ def check_declare_input(data: OCEDStore, settings: OntoBuildSettings) -> None:
         )
 
 
-def warn_on_foreign_declare(settings: OntoBuildSettings, digest: str) -> None:
-    """Warn when the DECLARE constraints were mined from a different file.
-
-    The build continues, because the trace ids still resolve and a filtered
-    copy of a log is a reasonable thing to mine from. It is worth saying so.
-    """
-    result = settings.declare_result
-    if result is None or result.source_sha256 is None:
-        return
-    if result.source_sha256 != digest:
-        logger.warning(
-            f"DECLARE constraints were mined from {result.source_log!r} "
-            f"(sha256 {result.source_sha256[:12]}), which is not the file being "
-            f"built (sha256 {digest[:12]}). The trace ids still resolve, so the "
-            "build continues."
-        )
-
-
-def check_converging_values(data: OCEDStore) -> None:
+def check_converging_values(data: ReadableStore) -> None:
     """Refuse attribute names that would produce the same value individual.
 
     A value individual is named `attribute_value`, and an underscore is
@@ -224,7 +213,7 @@ def check_converging_values(data: OCEDStore) -> None:
             )
 
 
-def _distinct_values(data: OCEDStore, attribute: str) -> set[object]:
+def _distinct_values(data: ReadableStore, attribute: str) -> set[object]:
     """Collect the distinct values an attribute takes across every table holding it."""
     found: set[object] = set()
     for view in data.tables():

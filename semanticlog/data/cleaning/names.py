@@ -1,10 +1,8 @@
 """Rewriting a source name into one an IRI can hold.
 
-Every activity, object type, relation, attribute, id and text value in a log
-becomes part of an IRI, so anything outside `[A-Za-z0-9_.-]` has to go. These
-are the primitives that do it, and they know nothing about a store: what has
-to be cleaned is decided in `collisions`, and the order it happens in is
-decided in `clean_oced_data`.
+These are the primitives, and they know nothing about a store. What has to be
+cleaned is decided in `collisions`, and the order it happens in is decided in
+`clean_oced_data`.
 """
 
 from __future__ import annotations
@@ -15,6 +13,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+
+from semanticlog.data.tables import OCEL_PREFIX
 
 _ISO8601_RE = re.compile(
     r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
@@ -27,9 +27,6 @@ _ISO8601_RE = re.compile(
 # both an XML NCName and a Turtle prefixed name, which are the two forms the
 # sinks write, so folding them into `_` would merge names for nothing.
 _UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9_.-]")
-
-# What marks a column of a change table as structure rather than an attribute.
-_OCEL_PREFIX = "ocel:"
 
 
 def is_timestamp(string: str) -> bool:
@@ -154,7 +151,7 @@ def clean_object_changes(df: pd.DataFrame) -> pd.DataFrame:
     if "ocel:type" in df.columns:
         df["ocel:type"] = df["ocel:type"].apply(_clean_str_value)
 
-    system_cols = {c for c in df.columns if c.startswith(_OCEL_PREFIX)}
+    system_cols = {c for c in df.columns if c.startswith(OCEL_PREFIX)}
     attr_cols = [c for c in df.columns if c not in system_cols]
 
     if not attr_cols:

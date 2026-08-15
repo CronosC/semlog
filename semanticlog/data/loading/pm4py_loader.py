@@ -19,6 +19,7 @@ import pm4py as pm
 from pm4py.objects.ocel.obj import OCEL
 
 from semanticlog.core.enums import OCELExtension
+from semanticlog.core.errors import InputError
 from semanticlog.data.loading.base import Inference, Loader
 from semanticlog.data.oced import OCEDStore
 
@@ -49,7 +50,7 @@ def _require_unique(ids: pd.Series, what: str) -> None:
     """Raise if any id occurs more than once, naming the first few."""
     duplicated = ids[ids.duplicated()].unique()
     if len(duplicated):
-        raise ValueError(
+        raise InputError(
             f"{what} are not unique across the log: "
             f"{', '.join(map(str, duplicated[:5]))}"
             + (f" and {len(duplicated) - 5} more" if len(duplicated) > 5 else "")
@@ -183,14 +184,14 @@ class PM4PyLoader(Loader):
         given = config.get("file_format")
         if given is not None:
             if given not in _READER_NAMES:
-                raise ValueError(
+                raise InputError(
                     f"Unsupported file_format '{given}'. "
                     f"Supported formats: {', '.join(sorted(_READER_NAMES))}."
                 )
             return given
         inferred = _FORMAT_BY_SUFFIX.get(Path(path).suffix.lower())
         if inferred is None:
-            raise ValueError(
+            raise InputError(
                 f"Cannot infer OCEL format from '{path}'. Supported extensions: "
                 f"{', '.join(sorted(_FORMAT_BY_SUFFIX))}."
             )
@@ -344,7 +345,7 @@ def _fill_store(frames: _Frames, load_attr_history: bool) -> OCEDStore:
         from_types = _object_types(frame["ocel:oid"], frames.objects)
         to_types = _object_types(frame["ocel:oid_2"], frames.objects)
         if not from_types or not to_types:
-            raise ValueError(
+            raise InputError(
                 f"Could not resolve object types for o2o relation {qualifier!r}: "
                 "one of its endpoints names no object in this log."
             )

@@ -8,13 +8,16 @@ themselves are private, so every stage goes through the methods here.
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator, Mapping
 from functools import partial
 from types import MappingProxyType
 
 import pandas as pd
 
+from semanticlog.core.errors import InputError
 from semanticlog.core.vocabulary import DEFAULT_IRI as _DEFAULT_IRI
+from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import (
     OCEL_PREFIX,
     EntityKind,
@@ -97,7 +100,7 @@ class OCEDStore:
         required = {"ocel:oid", "ocel:type", "ocel:timestamp", "ocel:field"}
         missing = required - set(data.columns)
         if missing:
-            raise ValueError(
+            raise InputError(
                 f"object_changes data is missing required columns: {missing}"
             )
         self._object_changes[obj_type] = data.copy()
@@ -111,7 +114,7 @@ class OCEDStore:
         """
         self._require_ocel_mode("get_object_changes")
         if obj_type not in self._object_changes:
-            raise ValueError(f"No object changes recorded for type '{obj_type}'.")
+            raise InputError(f"No object changes recorded for type '{obj_type}'.")
         return self._object_changes[obj_type]
 
     def get_object_change_types(self) -> list[str]:
@@ -134,7 +137,7 @@ class OCEDStore:
 
     def _require_ocel_mode(self, method: str) -> None:
         if not self._ocel_mode:
-            raise ValueError(
+            raise InputError(
                 f"{method} requires ocel_mode=True. "
                 "Create the OCEDStore with OCEDStore(ocel_mode=True)."
             )
@@ -155,14 +158,21 @@ class OCEDStore:
             ValueError: If a named column is missing, the activity exists, or
                 the ids are already used. The store is left as it was.
         """
-        if not {id_col, time_col}.issubset(data.columns):
-            raise ValueError(
-                "The given event column headers are not all included in the data."
+        absent = [c for c in (id_col, time_col) if c not in data.columns]
+        if absent:
+            raise InputError(
+                f"Activity {event_type!r} names {absent}, which the given data "
+                f"does not have. Its columns are {sorted(map(str, data.columns))}."
             )
         if event_type in self._events:
-            raise ValueError(f"Events of activity {event_type!r} already exist.")
-        if not self.ids_not_used(data[id_col].unique()):
-            raise ValueError("IDs in this data are already used.")
+            raise InputError(f"Events of activity {event_type!r} already exist.")
+        taken = self._used_ids.intersection(data[id_col].unique())
+        if taken:
+            raise InputError(
+                f"Activity {event_type!r} reuses {len(taken)} id(s) another table "
+                f"already holds, such as {sorted(map(str, taken))[:5]}. Ids have to "
+                f"be unique across the store, so prefix them with their type."
+            )
 
         self._events[event_type] = EventTable(id=id_col, time=time_col, data=data)
         self.update_used_ids()
@@ -182,7 +192,10 @@ class OCEDStore:
             ValueError: If the activity is not in the store.
         """
         if event_type not in self._events:
-            raise ValueError(f"Unknown activity {event_type}")
+            raise InputError(
+                f"Unknown activity {event_type!r}. This store holds "
+                f"{self.get_event_types()}."
+            )
         self._events[event_type].data = data
 
     def add_object(self, obj_type: str, id_col: str, data: pd.DataFrame) -> None:
@@ -199,13 +212,20 @@ class OCEDStore:
                 ids are already used. The store is left as it was.
         """
         if id_col not in data.columns:
-            raise ValueError(
-                f"The given object column header ({id_col}) is not included in the data."
+            raise InputError(
+                f"Object type {obj_type!r} names id column {id_col!r}, which the "
+                f"given data does not have. Its columns are "
+                f"{sorted(map(str, data.columns))}."
             )
         if obj_type in self._objects:
-            raise ValueError(f"Objects of type {obj_type!r} already exist.")
-        if not self.ids_not_used(data[id_col].unique()):
-            raise ValueError("IDs in this data are already used.")
+            raise InputError(f"Objects of type {obj_type!r} already exist.")
+        taken = self._used_ids.intersection(data[id_col].unique())
+        if taken:
+            raise InputError(
+                f"Object type {obj_type!r} reuses {len(taken)} id(s) another table "
+                f"already holds, such as {sorted(map(str, taken))[:5]}. Ids have to "
+                f"be unique across the store, so prefix them with their type."
+            )
 
         self._objects[obj_type] = ObjectTable(id=id_col, data=data)
         self.update_used_ids()
@@ -229,7 +249,7 @@ class OCEDStore:
             ValueError: If the object type is not in the store.
         """
         if obj_type not in self._objects:
-            raise ValueError(f"Unknown object {obj_type}")
+            raise InputError(f"Unknown object {obj_type}")
         self._objects[obj_type].data = data
 
     def get_most_common_objects(self, n: int = 1) -> list[str]:
@@ -248,7 +268,7 @@ class OCEDStore:
                 slice from the end and quietly drop the smallest types.
         """
         if n < 0:
-            raise ValueError(f"get_most_common_objects needs n >= 0, got {n}.")
+            raise InputError(f"get_most_common_objects needs n >= 0, got {n}.")
         objects = self.get_object_tables()
         return sorted(objects, key=lambda k: len(objects[k].data), reverse=True)[:n]
 
@@ -358,17 +378,21 @@ class OCEDStore:
             own_name, other_name = other_name, own_name
 
         if relation in other:
-            raise ValueError(
-                f"The relation ({relation}) already exists as a {other_name} relation!"
+            raise InputError(
+                f"Relation {relation!r} already exists as a {other_name} relation. "
+                f"Both families share one namespace, so give it another name."
             )
         if not overwrite and relation in own:
-            raise ValueError(
-                f"Relation ({relation}) already exists! Set overwrite to True if you want to disregard this."
+            raise InputError(
+                f"Relation {relation!r} already exists as a {own_name} relation. "
+                f"Pass overwrite=True to replace it."
             )
         unknown = set(object_types) - set(self._objects)
         if unknown:
-            raise ValueError(
-                f"Can not instantiate relation ({relation}). Unknown object type in ({object_types})!"
+            raise InputError(
+                f"Relation {relation!r} names {len(unknown)} unknown object type(s): "
+                f"{sorted(unknown)}. Add those object types before the relation. "
+                f"This store holds {sorted(self._objects)}."
             )
         missing = [
             f"{param} {column!r}"
@@ -379,9 +403,10 @@ class OCEDStore:
             if column not in data.columns
         ]
         if missing:
-            raise ValueError(
-                f"Can not instantiate relation ({relation}). {', '.join(missing)} "
-                f"not in the given data ({list(data.columns)})!"
+            raise InputError(
+                f"Relation {relation!r} names {', '.join(missing)}, which "
+                f"the given data does not have. Its columns are "
+                f"{sorted(map(str, data.columns))}."
             )
 
     def get_e2o(self) -> Mapping[str, RelationTable]:
@@ -415,7 +440,10 @@ class OCEDStore:
             return self._relations.event_to_object[relation]
         if relation in self._relations.object_to_object:
             return self._relations.object_to_object[relation]
-        raise ValueError(f"Relation {relation} does not exist!")
+        raise InputError(
+            f"Unknown relation {relation!r}. This store holds "
+            f"{self.get_relation_types()}."
+        )
 
     def get_relation_types(self, kind: RelationKind = RelationKind.ALL) -> list[str]:
         """Return relation names, optionally of one family only.
@@ -459,7 +487,7 @@ class OCEDStore:
             | self._relations.object_to_object.keys()
         )
         if new_name in all_relation_names:
-            raise ValueError(
+            raise InputError(
                 f"Cannot rename relation: '{new_name}' already exists as a relation."
             )
         for family in (
@@ -469,7 +497,10 @@ class OCEDStore:
             if old_name in family:
                 family[new_name] = family.pop(old_name)
                 return
-        raise ValueError("Cannot rename relation that does not exist!")
+        raise InputError(
+            f"Cannot rename relation {old_name!r}, which this store does not "
+            f"hold. It holds {sorted(all_relation_names)}."
+        )
 
     def rename_object(self, old_name: str, new_name: str) -> None:
         """Rename an object type everywhere it is referenced.
@@ -481,9 +512,12 @@ class OCEDStore:
             ValueError: If the old name is unknown, or the new name is taken.
         """
         if old_name not in self._objects:
-            raise ValueError("Cannot rename object that does not exist!")
+            raise InputError(
+                f"Cannot rename object type {old_name!r}, which this store does "
+                f"not hold. It holds {sorted(self._objects)}."
+            )
         if new_name in self._objects:
-            raise ValueError(
+            raise InputError(
                 f"Cannot rename object {old_name!r}: {new_name!r} already exists "
                 "as an object type and renaming onto it would discard its rows."
             )
@@ -510,9 +544,12 @@ class OCEDStore:
             ValueError: If the old name is unknown, or the new name is taken.
         """
         if old_name not in self._events:
-            raise ValueError("Cannot rename activity that does not exist!")
+            raise InputError(
+                f"Cannot rename activity {old_name!r}, which this store does not "
+                f"hold. It holds {sorted(self._events)}."
+            )
         if new_name in self._events:
-            raise ValueError(
+            raise InputError(
                 f"Cannot rename activity {old_name!r}: {new_name!r} already exists "
                 "as an activity and renaming onto it would discard its rows."
             )
@@ -594,11 +631,17 @@ class OCEDStore:
         """
         if kind is EntityKind.EVENT:
             if entity_type not in self.get_event_types():
-                raise ValueError(f"Unknown activity {entity_type}")
+                raise InputError(
+                    f"Unknown activity {entity_type!r}. This store holds "
+                    f"{self.get_event_types()}."
+                )
             table: EventTable | ObjectTable = self._events[entity_type]
         else:
             if entity_type not in self.get_object_types():
-                raise ValueError(f"Unknown object {entity_type}")
+                raise InputError(
+                    f"Unknown object type {entity_type!r}. This store holds "
+                    f"{self.get_object_types()}."
+                )
             table = self._objects[entity_type]
         return table.data[table.id].unique()
 
@@ -616,9 +659,35 @@ class OCEDStore:
             ids.extend(self.get_ids(EntityKind.OBJECT, object_type))
         unique_ids = set(ids)
         if len(unique_ids) != len(ids):
-            raise ValueError("Duplicated ids!")
+            repeated = sorted(str(i) for i, n in Counter(ids).items() if n > 1)
+            raise InputError(
+                f"{len(repeated)} id(s) appear in more than one table, such as "
+                f"{repeated[:5]}. Two entities under one id become one individual, "
+                f"so prefix the ids with their type."
+            )
         self._used_ids = unique_ids
 
     def ids_not_used(self, ids: Iterable) -> bool:
         """Report whether none of the given ids are in the store yet."""
         return self._used_ids.isdisjoint(ids)
+
+
+def attribute_owners(data: ReadableStore) -> dict[str, list[str]]:
+    """Find which entity types carry each attribute.
+
+    An attribute is carried by every table holding a column of that name, and
+    the attribute change history counts as its object type carrying it, since
+    an attribute that is empty for every object is dropped on load and would
+    otherwise appear to have no owner at all.
+
+    Args:
+        data: Store to scan.
+
+    Returns:
+        Attribute name to the sorted types that carry it.
+    """
+    owners: dict[str, set[str]] = defaultdict(set)
+    for view in data.tables():
+        for column in view.attributes:
+            owners[column].add(view.name)
+    return {attribute: sorted(types) for attribute, types in owners.items()}

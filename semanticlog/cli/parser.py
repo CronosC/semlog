@@ -46,11 +46,42 @@ _EPILOG = textwrap.dedent("""\
       semlog build --config runs/hiring.toml
       semlog build --config runs/hiring.toml --dry-run
       semlog mine-declare datasets/ocel/enron.json --constraints Response Precedence
-      semlog reason datasets/onto/hiring.owl --profile OWL2EL
+      semlog reason datasets/onto/hiring.ofn --profile OWL2EL
 
-    a build writes one file, <name>.owl, with the input checksum, the resolved
-    settings, the command and the semlog version annotated onto the ontology.
+    a build writes one file, <name>.ofn in functional syntax, or <name>.owl in
+    RDF/XML under --no-streaming. The input checksum, the resolved settings, the
+    command and the semlog version are annotated onto the ontology.
     """)
+
+
+COLUMN_KEYS: tuple[str, ...] = ("case_col", "act_col", "time_col", "object_cols")
+
+
+def _add_column_flags(parser: argparse.ArgumentParser) -> None:
+    """Add the column names a flat log is read with.
+
+    `build` takes these from `BUILD_SETTINGS`, so that they are also TOML keys.
+    The commands that have no config file declare them here from the same
+    entries, and the two spell them the same way.
+    """
+    by_key = {setting.key: setting for setting in BUILD_SETTINGS}
+    for key in COLUMN_KEYS:
+        setting = by_key[key]
+        parser.add_argument(
+            setting.flag,
+            default=None,
+            help=setting.help,
+            **(setting.argparse or {}),
+        )
+
+
+def _column_overrides(args: argparse.Namespace) -> dict[str, object]:
+    """Collect the column names that were given, leaving the rest to the loader."""
+    return {
+        key: value
+        for key in COLUMN_KEYS
+        if (value := getattr(args, key, None)) is not None
+    }
 
 
 def _verbosity_parser() -> argparse.ArgumentParser:
@@ -79,7 +110,7 @@ def _add_build_parser(sub, parent: argparse.ArgumentParser) -> None:
         help="Build an OWL ontology from one or more OCEL files.",
         description=(
             "Build an OWL ontology from OCEL 2.0 event data. Settings may come "
-            "from a TOML config, from flags, or from both; a flag always wins "
+            "from a TOML config, from flags, or from both. A flag always wins "
             "over the config. Relative paths in a config are resolved against "
             "the current directory."
         ),
@@ -118,15 +149,15 @@ def _add_inspect_parser(sub, parent: argparse.ArgumentParser) -> None:
     inspect = sub.add_parser(
         "inspect",
         parents=[parent],
-        help="Summarize an OCEL file without building anything.",
+        help="Summarize an event log without building anything.",
         description=(
             "Print the activities, object types, relations and time range of an "
-            "OCEL file, plus the case concepts a build would auto-select. Names "
+            "event log, plus the case concepts a build would auto-select. Names "
             "are shown in the cleaned form that --case-concepts expects."
         ),
     )
     inspect.add_argument(
-        "input", nargs="+", metavar="PATH", help="OCEL files to summarize."
+        "input", nargs="+", metavar="PATH", help="Event logs to summarize."
     )
     inspect.add_argument(
         "--suggest",
@@ -142,6 +173,7 @@ def _add_inspect_parser(sub, parent: argparse.ArgumentParser) -> None:
         metavar="EXT",
         help=f"OCEL 2.0 extensions to load: {' | '.join(OCELExtension.spellings())}.",
     )
+    _add_column_flags(inspect)
 
 
 def _add_mine_declare_parser(sub, parent: argparse.ArgumentParser) -> None:
@@ -156,7 +188,7 @@ def _add_mine_declare_parser(sub, parent: argparse.ArgumentParser) -> None:
             "extra and the Lydia backend, which is why it is separate from build."
         ),
     )
-    mine.add_argument("input", metavar="PATH", help="OCEL file to mine.")
+    mine.add_argument("input", metavar="PATH", help="Event log to mine.")
     mine.add_argument(
         "--output",
         metavar="CSV",
@@ -206,6 +238,7 @@ def _add_mine_declare_parser(sub, parent: argparse.ArgumentParser) -> None:
         metavar="EXT",
         help=f"OCEL 2.0 extensions to load: {' | '.join(OCELExtension.spellings())}.",
     )
+    _add_column_flags(mine)
 
 
 def _add_reason_parser(sub, parent: argparse.ArgumentParser) -> None:
@@ -215,12 +248,12 @@ def _add_reason_parser(sub, parent: argparse.ArgumentParser) -> None:
         parents=[parent],
         help="Materialize or consistency-check an existing ontology.",
         description=(
-            "Run a reasoner over an .owl file that has already been built. "
+            "Run a reasoner over an ontology that has already been built. "
             "Without --output the file is materialized in place."
         ),
     )
     reason_parser.add_argument(
-        "onto", metavar="OWL", help="Ontology file to reason over."
+        "onto", metavar="PATH", help="Ontology file to reason over."
     )
     reason_parser.add_argument(
         "--profile",
@@ -237,7 +270,7 @@ def _add_reason_parser(sub, parent: argparse.ArgumentParser) -> None:
     )
     reason_parser.add_argument(
         "--output",
-        metavar="OWL",
+        metavar="PATH",
         help="Write the materialized ontology here instead of overwriting the input.",
     )
     reason_parser.add_argument(

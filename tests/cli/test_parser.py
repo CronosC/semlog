@@ -19,11 +19,6 @@ from semanticlog.onto.settings import OntoBuildSettings
 
 SUBCOMMANDS = ("build", "inspect", "mine-declare", "reason")
 
-# Settings a build has but a run cannot name. `annotation_data` and
-# `declare_result` are the loaded content of the two file-backed settings, so
-# the file is what a run points at.
-SETTINGS_WITHOUT_A_CONFIG_KEY = {"annotation_data", "declare_result"}
-
 
 def parse(*argv: str):
     return build_parser().parse_args(list(argv))
@@ -153,16 +148,16 @@ def test_every_configurable_setting_has_a_command_line_flag():
 
 
 def test_every_build_setting_can_be_named_by_a_run():
+    """Every one of them, with no exceptions.
+
+    The settings hold only the choices a build is configured with, and each of
+    those is a config key. What is read off a log or out of a file is a
+    `BuildInputs`, which a run assembles rather than names.
+    """
     fields = {f.name for f in dataclasses.fields(OntoBuildSettings)}
 
-    unreachable = fields - set(BUILD_DEFAULTS) - SETTINGS_WITHOUT_A_CONFIG_KEY
+    unreachable = fields - set(BUILD_DEFAULTS)
     assert not unreachable, (
         f"{sorted(unreachable)} change what a build emits but no config key or "
         "flag sets them"
     )
-
-
-def test_the_excluded_settings_are_still_settings():
-    fields = {f.name for f in dataclasses.fields(OntoBuildSettings)}
-
-    assert SETTINGS_WITHOUT_A_CONFIG_KEY <= fields

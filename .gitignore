@@ -25,8 +25,15 @@ htmlcov/
 # Build logs
 logs/
 
-# Generated / temporary data
+# Generated / temporary data. The default output directories are tracked so a
+# build writes into a folder that is already there.
 datasets/*
+!datasets/onto/
+!datasets/declare/
+datasets/onto/*
+datasets/declare/*
+!datasets/onto/.gitkeep
+!datasets/declare/.gitkeep
 examples/out/
 simulated.csv
 *.semlog

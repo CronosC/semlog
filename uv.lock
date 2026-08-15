@@ -3106,10 +3106,11 @@ wheels = [
 
 [[package]]
 name = "semlog"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "owlapy" },
+    { name = "owlready2" },
     { name = "pandas" },
     { name = "pm4py" },
     { name = "scipy" },
@@ -3134,6 +3135,7 @@ requires-dist = [
     { name = "declare4py", marker = "extra == 'declare'" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "owlapy", specifier = ">=1.6,<2" },
+    { name = "owlready2", specifier = ">=0.40,<0.51" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pm4py", specifier = ">=2.7" },
     { name = "pre-commit", marker = "extra == 'dev'" },

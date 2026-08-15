@@ -12,15 +12,19 @@ logged, since the decision is read off the data.
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import pm4py as pm
 
+from semanticlog.core.errors import ConfigError, InputError
 from semanticlog.data.loading.base import Inference, Loader
 from semanticlog.data.oced import OCEDStore
 
 logger = logging.getLogger(__name__)
+
+CLASSICAL_SUFFIXES: frozenset[str] = frozenset({".csv", ".xes"})
 
 EVENT_ID = "event_id"
 
@@ -33,7 +37,7 @@ class ClassicalLoader(Loader):
 
         Args:
             path: Path to a `.xes` or `.csv` file.
-            config: Column names to read the log with. Recognised keys are
+            config: Column names to read the log with. Recognized keys are
                 `case_col`, `act_col` and `time_col`, which name one column
                 each, and `object_cols`, which names a list. They default to
                 the XES conventions and an empty object list. The dict is
@@ -43,8 +47,8 @@ class ClassicalLoader(Loader):
             ValueError: If the file is neither `.xes` nor `.csv`.
         """
         super().__init__(path, config)
-        if not (self.path.endswith(".xes") or self.path.endswith(".csv")):
-            raise ValueError("Can only load .xes or .csv classical event logs.")
+        if Path(self.path).suffix.lower() not in CLASSICAL_SUFFIXES:
+            raise InputError("Can only load .xes or .csv classical event logs.")
 
         config.setdefault("case_col", "case:concept:name")
         config.setdefault("act_col", "concept:name")
@@ -147,13 +151,13 @@ class ClassicalLoader(Loader):
             ("time_col", self.time_col),
         ):
             if column not in log.columns:
-                raise ValueError(
+                raise ConfigError(
                     f"{setting} {column!r} is not a column of {self.path}. "
                     f"Available columns: {sorted(map(str, log.columns))}"
                 )
         missing = [c for c in self.object_cols if c not in log.columns]
         if missing:
-            raise ValueError(
+            raise ConfigError(
                 f"object_cols names {missing}, which are not columns of "
                 f"{self.path}. Available columns: {sorted(map(str, log.columns))}"
             )

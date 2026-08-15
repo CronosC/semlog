@@ -6,14 +6,17 @@ consistent or write back everything the reasoner entails.
 """
 
 import logging
+from importlib import resources
 from pathlib import Path
 
+import jpype
 from owlapy.owl_axiom import OWLObjectPropertyAssertionAxiom
 from owlapy.owl_ontology import SyncOntology
 from owlapy.owl_reasoner import SyncReasoner
 
 from semanticlog.core.enums import REASONER_BACKENDS as REASONER_BACKENDS
 from semanticlog.core.enums import OWLProfile
+from semanticlog.core.errors import ConfigError, DependencyError, InputError
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +57,40 @@ _UNSUPPORTED: dict[str, frozenset[str]] = {
     ),
 }
 
+# Options for the JVM the OWL API runs on. The slf4j level silences the parser,
+# which reports the RDF/XML attempt it makes on a functional syntax file as a
+# warning and a stack trace. The other two quiet Java 24 and newer, which an
+# older JVM does not recognize and `ignoreUnrecognized` lets it skip.
+_JVM_OPTIONS: tuple[str, ...] = (
+    "-Dorg.slf4j.simpleLogger.defaultLogLevel=error",
+    "--enable-native-access=ALL-UNNAMED",
+    "--sun-misc-unsafe-memory-access=allow",
+)
+
+
+def start_jvm() -> None:
+    """Start the JVM the OWL API runs on, unless one is already running.
+
+    owlapy starts one without options the first time an ontology is loaded, so
+    this runs first and settles them.
+
+    Raises:
+        ValueError: If there is no JVM to start.
+    """
+    if jpype.isJVMStarted():
+        return
+    try:
+        jpype.getDefaultJVMPath()
+    except ValueError as exc:
+        raise DependencyError(
+            "no JVM found. Reasoning runs the OWL API on Java, so it needs a "
+            "JRE or JDK 17 or newer on PATH or named by JAVA_HOME."
+        ) from exc
+
+    jars = resources.files("owlapy") / "jar_dependencies"
+    classpath = [str(jar) for jar in jars.iterdir() if jar.name.endswith(".jar")]
+    jpype.startJVM(*_JVM_OPTIONS, classpath=classpath, ignoreUnrecognized=True)
+
 
 class Reasoner:
     """A reasoner bound to one ontology file.
@@ -84,20 +121,22 @@ class Reasoner:
                 that profile has no axioms for them.
 
         Raises:
-            ValueError: If the backend is not one of the three supported, or if
-                it refuses the ontology, such as HermiT on a timestamp carrying
+            ValueError: If the backend is not one of the three supported, if
+                there is no JVM to run the OWL API on, or if the backend
+                refuses the ontology, such as HermiT on a timestamp carrying
                 microseconds.
             FileNotFoundError: If there is no ontology at `path`. The OWL API
                 reports a missing file as a Java exception, which reaches the
                 caller as a stack trace rather than as a message.
         """
         if backend not in REASONER_BACKENDS:
-            raise ValueError(f"Unsupported reasoner backend: {backend}")
+            raise ConfigError(f"Unsupported reasoner backend: {backend}")
         if not Path(path).is_file():
             raise FileNotFoundError(
                 f"ontology file not found: {path}. 'semlog reason' reads an "
                 "ontology that has already been built."
             )
+        start_jvm()
 
         self.path = path
         self.backend = backend
@@ -106,7 +145,7 @@ class Reasoner:
             self.reasoner = SyncReasoner(self.ontology, reasoner=backend)
         except Exception as exc:
             others = ", ".join(b for b in REASONER_BACKENDS if b != backend)
-            raise ValueError(
+            raise InputError(
                 f"{backend} will not read {path}:\n"
                 f"  {exc}\n"
                 f"Try one of the other backends: {others}."

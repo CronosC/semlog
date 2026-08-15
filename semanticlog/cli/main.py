@@ -13,7 +13,12 @@ from semanticlog.cli.config import (
     resolve_run_config,
 )
 from semanticlog.cli.logs import setup_console_logging
-from semanticlog.cli.parser import _log_level, build_overrides, build_parser
+from semanticlog.cli.parser import (
+    _column_overrides,
+    _log_level,
+    build_overrides,
+    build_parser,
+)
 from semanticlog.cli.run import (
     build_all,
     inspect_input,
@@ -24,6 +29,7 @@ from semanticlog.core.enums import (
     OCELExtension,
     OWLProfile,
 )
+from semanticlog.core.errors import SemlogError
 
 logger = logging.getLogger("semlog.cli")
 
@@ -62,8 +68,9 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         parse_enum(OCELExtension, token, key="ocel_extensions")
         for token in args.ocel_extensions
     ]
+    columns = _column_overrides(args)
     reports = [
-        inspect_input(Path(path), extensions, suggest=args.suggest)
+        inspect_input(Path(path), extensions, suggest=args.suggest, columns=columns)
         for path in args.input
     ]
     print("\n\n".join(report.render() for report in reports))
@@ -91,6 +98,7 @@ def _cmd_mine_declare(args: argparse.Namespace) -> int:
         itemset_support=args.itemset_support,
         auto_case_concepts=args.auto_case_concepts,
         extensions=extensions,
+        columns=_column_overrides(args),
     )
     return EXIT_OK
 
@@ -118,9 +126,10 @@ _COMMANDS = {
 def main(argv: list[str] | None = None) -> int:
     """Run one semlog command.
 
-    A problem the caller can fix is reported as a message: a bad setting, a
-    missing file, a reasoner that will not read the ontology it was given.
-    Any other exception propagates, since it indicates a defect.
+    A `SemlogError` is a problem the caller can fix, and is reported as a
+    message: a bad setting, a log that cannot be read, a solver that is not
+    installed. Any other exception propagates with its traceback, since it
+    indicates a defect rather than something to fix in the input.
 
     Args:
         argv: Arguments without the program name. Defaults to the real ones.
@@ -142,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     setup_console_logging(_log_level(args))
     try:
         return _COMMANDS[args.command](args)
-    except (ValueError, FileNotFoundError, ImportError) as exc:
+    except (SemlogError, FileNotFoundError) as exc:
         print(f"semlog {args.command}: error: {exc}", file=sys.stderr)
         return EXIT_USAGE
 

@@ -51,6 +51,7 @@ from semanticlog.data.cleaning.names import (
 from semanticlog.data.cleaning.names import cleaned as _cleaned
 from semanticlog.data.cleaning.renames import RenameKind, RenameLog
 from semanticlog.data.oced import OCEDStore
+from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import (
     EventTable,
     ObjectTable,
@@ -156,7 +157,7 @@ def _report_renames(log: RenameLog) -> None:
             logger.info(line)
 
 
-def object_type_renames(data: OCEDStore) -> dict[str, str]:
+def object_type_renames(data: ReadableStore) -> dict[str, str]:
     """Return where cleaning moved the object types it renamed.
 
     A config or a command line names object types as the source log spells

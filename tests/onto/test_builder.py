@@ -8,7 +8,6 @@ keeps while a build runs.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -24,6 +23,7 @@ from semanticlog.core.enums import (
 from semanticlog.core.vocabulary import DEFAULT_IRI, NameCollisionError
 from semanticlog.data.oced import OCEDStore
 from semanticlog.onto.builder import OCEDOntoBuilder
+from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import InMemorySink
 
@@ -35,12 +35,12 @@ TEST_IRI = "https://test#"
 @pytest.fixture
 def plain() -> OntoBuildSettings:
     """Settings that emit the entities and nothing derived from them."""
-    return OntoBuildSettings(order_representations=[], case_concepts=[])
+    return OntoBuildSettings(order_representations=[])
 
 
 @pytest.fixture
 def sink(plain) -> InMemorySink:
-    return InMemorySink(TEST_IRI, plain)
+    return InMemorySink(TEST_IRI, plain.profile)
 
 
 # --------------------------------------------------------------------------
@@ -70,12 +70,13 @@ def test_a_refused_second_build_does_not_merge_the_two_logs(tiny_store, pipeline
 
 def test_a_build_rejected_on_its_input_leaves_a_fresh_builder_usable(tiny_store, store):
     settings = OntoBuildSettings(
-        case_concepts=["order"],
         order_representations=[EventOrderRepresentation.DECLARE],
     )
 
-    with pytest.raises(ValueError, match="no DECLARE constraints are available"):
-        OCEDOntoBuilder(NS, settings).build_ontology(tiny_store)
+    with pytest.raises(ValueError, match="no constraints were given"):
+        OCEDOntoBuilder(NS, settings).build_ontology(
+            tiny_store, BuildInputs(case_concepts=["order"])
+        )
 
     usable = OCEDOntoBuilder(NS, OntoBuildSettings())
     assert list(usable.build_ontology(store("tiny")).onto.classes_in_signature())
@@ -155,49 +156,35 @@ def test_a_build_rejected_on_a_name_spends_the_builder(tiny_store):
 
 def test_settings_cannot_be_changed_after_a_build(tiny_store):
     semlog = OCEDOntoBuilder(
-        NS, OntoBuildSettings(case_concepts=["order"])
+        NS, OntoBuildSettings(bin_labels=["low", "high"], bins=2)
     ).build_ontology(tiny_store)
 
     with pytest.raises(FrozenInstanceError):
         semlog.settings.derive_annotations = True
     with pytest.raises(AttributeError):
-        semlog.settings.case_concepts.append("sneaky")
+        semlog.settings.bin_labels.append("sneaky")
 
     assert semlog.settings.derive_annotations is False
-    assert semlog.settings.case_concepts == ("order",)
+    assert semlog.settings.bin_labels == ("low", "high")
 
 
 def test_replace_leaves_the_original_alone():
-    settings = OntoBuildSettings(case_concepts=["order"])
+    settings = OntoBuildSettings(bin_labels=["low", "high"], bins=2)
 
-    changed = settings.replace(profile=OWLProfile.OWL2EL, case_concepts=["item"])
+    changed = settings.replace(profile=OWLProfile.OWL2EL, bin_labels=["a", "b"])
 
-    assert settings.case_concepts == ("order",)
+    assert settings.bin_labels == ("low", "high")
     assert settings.profile is OWLProfile.OWL2DL
-    assert changed.case_concepts == ("item",)
+    assert changed.bin_labels == ("a", "b")
 
 
 def test_a_sequence_passed_in_is_not_shared_with_the_settings():
-    concepts = ["order"]
-    settings = OntoBuildSettings(case_concepts=concepts)
+    labels = ["low", "high"]
+    settings = OntoBuildSettings(bin_labels=labels, bins=2)
 
-    concepts.append("item")
+    labels.append("higher")
 
-    assert settings.case_concepts == ("order",)
-
-
-def test_a_file_backed_setting_is_read_once_at_construction(tmp_path):
-    document = tmp_path / "annotations.json"
-    document.write_text(json.dumps({"Event": {"label": "Occurrence"}}))
-    settings = OntoBuildSettings(annotation_document=str(document))
-    document.unlink()
-
-    assert settings.to_dict()["annotation_data"] == {"Event": {"label": "Occurrence"}}
-
-
-def test_a_missing_annotation_document_fails_at_construction(tmp_path):
-    with pytest.raises(FileNotFoundError):
-        OntoBuildSettings(annotation_document=str(tmp_path / "absent.json"))
+    assert settings.bin_labels == ("low", "high")
 
 
 def test_an_enum_setting_written_as_text_becomes_the_member():
@@ -249,7 +236,7 @@ def test_classes_can_be_declared_in_one_call(sink):
 def test_individuals_are_asserted_into_their_class(sink):
     sink.add_class("Letter")
 
-    sink.assert_individuals(["a", "b", "c", "d", "e"], "Letter")
+    sink.assert_individuals("Letter", ["a", "b", "c", "d", "e"])
 
     assert len(list(sink.onto.classes_in_signature())) == 1
     assert len(list(sink.onto.individuals_in_signature())) == 5
@@ -302,24 +289,13 @@ def test_two_properties_cannot_share_one_inverse_name(sink):
 def test_a_relation_and_a_literal_reach_the_written_file(sink, tmp_path):
     path = tmp_path / "written.owl"
     sink.add_class("Person")
-    sink.assert_individuals(["Alice", "Bob"], "Person")
+    sink.assert_individuals("Person", ["Alice", "Bob"])
     sink.add_property("knows", domain_class="Person", range_class="Person")
-    sink.assert_relations(
-        pd.DataFrame({"from": ["Alice"], "to": ["Bob"]}),
-        prop="knows",
-        from_key="from",
-        to_key="to",
-    )
+    sink.assert_relations("knows", [("Alice", "Bob")])
     sink.add_property(
         "hasAge", domain_class="Person", range_class="integer", data_prop=True
     )
-    sink.assert_relations(
-        pd.DataFrame({"from": ["Alice"], "to": [25]}),
-        prop="hasAge",
-        from_key="from",
-        to_key="to",
-        data_prop=True,
-    )
+    sink.assert_data("hasAge", [("Alice", 25)])
     sink.save(str(path))
 
     written = path.read_text(encoding="utf-8")
@@ -330,20 +306,12 @@ def test_a_relation_and_a_literal_reach_the_written_file(sink, tmp_path):
 def test_a_datetime_column_is_asserted_as_a_typed_literal(sink, tmp_path):
     path = tmp_path / "written.owl"
     sink.add_class("Event")
-    sink.assert_individuals(["e1", "e2"], "Event")
+    sink.assert_individuals("Event", ["e1", "e2"])
     sink.add_property("occurredAt", domain_class="Event", data_prop=True)
 
-    sink.assert_relations(
-        pd.DataFrame(
-            {
-                "from": ["e1", "e2"],
-                "to": pd.date_range("2022-01-01", periods=2, freq="D"),
-            }
-        ),
-        prop="occurredAt",
-        from_key="from",
-        to_key="to",
-        data_prop=True,
+    sink.assert_data(
+        "occurredAt",
+        zip(["e1", "e2"], pd.date_range("2022-01-01", periods=2), strict=True),
     )
     sink.save(str(path))
 

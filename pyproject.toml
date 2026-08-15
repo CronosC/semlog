@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "semlog"
-version = "0.5.0"
+version = "0.6.0"
 description = "Convert OCEL process mining event logs to OWL 2 ontologies. The [declare] extra requires the Lydia solver, which is not on PyPI. See README."
 authors = [{ name = "Christian Dormagen", email = "christian.dormagen@oth-regensburg.de" }]
 readme = "README.md"
@@ -13,6 +13,7 @@ requires-python = ">=3.12"
 dependencies = [
     "pm4py>=2.7",
     "owlapy>=1.6,<2",
+    "owlready2>=0.40,<0.51",
     "scipy<2",
     "pandas>=2.2",
 ]
@@ -29,7 +30,7 @@ declare = [
 dev = [
     "pytest",
     "pytest-cov",
-    # The suite is embarrassingly parallel and pre-commit runs all of it.
+    # The suite is embarrassingly parallel.
     "pytest-xdist",
     "ruff",
     "mypy",

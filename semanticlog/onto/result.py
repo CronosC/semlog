@@ -7,7 +7,7 @@ to instead.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from owlapy.owl_ontology import Ontology
 
@@ -23,12 +23,16 @@ class BuildResult:
         settings: Settings the build ran with.
         iri: Base IRI of the ontology.
         path: Where the ontology was written, for a streamed build.
+        stats: How many classes, properties and axioms it holds. The counts
+            come from the sink's name ledger, so a streamed build and an
+            in-memory one report the same keys and two runs can be compared.
     """
 
     onto: Ontology | None
     settings: OntoBuildSettings
     iri: str
     path: str | None = None
+    stats: dict[str, int] = field(default_factory=dict)
 
     def require_onto(self) -> Ontology:
         """Return the ontology, or explain why there is none.

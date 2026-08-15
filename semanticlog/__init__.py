@@ -1,16 +1,15 @@
 """Object-centric event data as OWL 2 ontologies.
 
-A build runs in four steps: read the log into an `OCEDStore`, clean the names
-it will emit, describe the ontology with `OntoBuildSettings`, and let
-`OCEDOntoBuilder` produce it. The names used most often are re-exported here,
-and the packages below hold the rest.
+A build runs in three steps: read and clean the log, resolve what has to be
+resolved against it, and build. The names used most often are re-exported
+here, and the packages below hold the rest.
 
-    from semanticlog import OCEDOntoBuilder, OntoBuildSettings, PM4PyLoader
-    from semanticlog import clean_oced_data, DEFAULT_IRI
+    from semanticlog import BuildInputs, OntoBuildSettings
+    from semanticlog import build_log, choose_case_concepts, load_and_clean
 
-    data = clean_oced_data(PM4PyLoader("log.jsonocel", {}).get_oced())
-    result = OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings()).build_ontology(data)
-    result.save("log.owl")
+    data = load_and_clean("log.jsonocel")
+    case_concepts, _ = choose_case_concepts(data, None)
+    build_log(data, OntoBuildSettings(), BuildInputs(case_concepts), "log.ofn")
 
 Each name is resolved on first use rather than on import. pm4py and the Java
 OWL API are between them most of the cost of loading this package, and a
@@ -31,13 +30,20 @@ if TYPE_CHECKING:
     from semanticlog.core.enums import OWLProfile as OWLProfile
     from semanticlog.core.vocabulary import DEFAULT_IRI as DEFAULT_IRI
     from semanticlog.data.cleaning import clean_oced_data as clean_oced_data
+    from semanticlog.data.flatten import (
+        choose_case_concepts as choose_case_concepts,
+    )
+    from semanticlog.data.loading import load_and_clean as load_and_clean
     from semanticlog.data.loading.classical_loader import (
         ClassicalLoader as ClassicalLoader,
     )
     from semanticlog.data.loading.pm4py_loader import PM4PyLoader as PM4PyLoader
     from semanticlog.data.oced import OCEDStore as OCEDStore
+    from semanticlog.data.readable import ReadableStore as ReadableStore
     from semanticlog.enrich.declare import DeclareResult as DeclareResult
     from semanticlog.onto.builder import OCEDOntoBuilder as OCEDOntoBuilder
+    from semanticlog.onto.inputs import BuildInputs as BuildInputs
+    from semanticlog.onto.pipeline import build_log as build_log
     from semanticlog.onto.reason import Reasoner as Reasoner
     from semanticlog.onto.result import BuildResult as BuildResult
     from semanticlog.onto.settings import OntoBuildSettings as OntoBuildSettings
@@ -48,6 +54,7 @@ except PackageNotFoundError:  # running from a checkout that was never installed
     __version__ = "unknown"
 
 _EXPORTS: dict[str, str] = {
+    "BuildInputs": "semanticlog.onto.inputs",
     "BuildResult": "semanticlog.onto.result",
     "ClassicalLoader": "semanticlog.data.loading.classical_loader",
     "DEFAULT_IRI": "semanticlog.core.vocabulary",
@@ -61,8 +68,12 @@ _EXPORTS: dict[str, str] = {
     "OWLProfile": "semanticlog.core.enums",
     "OntoBuildSettings": "semanticlog.onto.settings",
     "PM4PyLoader": "semanticlog.data.loading.pm4py_loader",
+    "ReadableStore": "semanticlog.data.readable",
     "Reasoner": "semanticlog.onto.reason",
+    "build_log": "semanticlog.onto.pipeline",
+    "choose_case_concepts": "semanticlog.data.flatten",
     "clean_oced_data": "semanticlog.data.cleaning",
+    "load_and_clean": "semanticlog.data.loading",
 }
 
 __all__ = [*sorted(_EXPORTS), "__version__"]

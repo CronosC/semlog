@@ -8,11 +8,15 @@ name added here is defended against collisions everywhere else.
 
 from __future__ import annotations
 
+import math
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from decimal import Decimal
 from typing import Any
 
 import pandas as pd
+
+from semanticlog.core.errors import InputError
 
 # The namespace a build puts its names in when it is given no other.
 DEFAULT_IRI: str = "https://oced#"
@@ -25,11 +29,11 @@ _NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
 SAFE_LOCAL_NAME = re.compile(r"[A-Za-z0-9_.-]+")
 
 
-class UnsafeLocalNameError(ValueError):
+class UnsafeLocalNameError(InputError):
     """A name cannot be used as the local part of an IRI."""
 
 
-class NameCollisionError(ValueError):
+class NameCollisionError(InputError):
     """Two different things would be emitted under one name."""
 
 
@@ -130,9 +134,45 @@ def inverse(prop: str, named: dict[str, str] | None = None) -> str:
     return pairs.get(prop, INVERSE_PREFIX + prop)
 
 
+# The annotation properties a build records itself under. They sit in the same
+# namespace as everything else, so they are reserved alongside it.
+BUILD_CONFIGURATION = "buildConfiguration"
+SOURCE_LOG = "sourceLog"
+SOURCE_LOG_SHA256 = "sourceLogSha256"
+SOURCE_LOG_BYTES = "sourceLogBytes"
+CASE_CONCEPTS = "caseConcepts"
+CASE_CONCEPT_SOURCE = "caseConceptSource"
+DECLARE_FILE = "declareFile"
+ANNOTATION_DOCUMENT = "annotationDocument"
+BUILD_COMMAND = "buildCommand"
+BUILD_CONFIG_FILE = "buildConfigFile"
+BUILD_INPUT_STATISTICS = "buildInputStatistics"
+BUILD_OUTPUTS = "buildOutputs"
+MATERIALIZE_REQUESTED = "materializeRequested"
+
+PROVENANCE_ANNOTATIONS: frozenset[str] = frozenset(
+    {
+        BUILD_CONFIGURATION,
+        SOURCE_LOG,
+        SOURCE_LOG_SHA256,
+        SOURCE_LOG_BYTES,
+        CASE_CONCEPTS,
+        CASE_CONCEPT_SOURCE,
+        DECLARE_FILE,
+        ANNOTATION_DOCUMENT,
+        BUILD_COMMAND,
+        BUILD_CONFIG_FILE,
+        BUILD_INPUT_STATISTICS,
+        BUILD_OUTPUTS,
+        MATERIALIZE_REQUESTED,
+    }
+)
+
+
 RESERVED_NAMES: frozenset[str] = (
     SCHEMA_CLASSES
     | SCHEMA_PROPERTIES
+    | PROVENANCE_ANNOTATIONS
     | frozenset(inverse(p) for p in _INVERTIBLE_PROPERTIES)
 )
 
@@ -177,6 +217,34 @@ def bin_class(attribute: str, label: Any) -> str:
     return f"{attribute}_bin_{label}"
 
 
+def format_number(value: float) -> str:
+    """Return a number in full, without an exponent.
+
+    `str` switches to exponent notation outside roughly 1e-4 to 1e16, and
+    neither an IRI local name nor an `xsd:decimal` literal can hold the `+` or
+    the `e` that comes with it.
+
+    Args:
+        value: The number. A numpy scalar is converted first, since its own
+            text form carries the type around the digits.
+
+    Returns:
+        Its digits, with a decimal point where it has one.
+
+    Raises:
+        ValueError: If the value is infinite or not a number, neither of which
+            names an individual or writes as a decimal.
+    """
+    number = float(value)
+    if not math.isfinite(number):
+        raise InputError(
+            f"{number!r} cannot be written as a number. An infinite or missing "
+            "value names nothing in the ontology, so remove it from the input "
+            "or replace it with a number."
+        )
+    return format(Decimal(repr(number)), "f")
+
+
 def attribute_value(attribute: str, value: Any) -> str:
     """Return the individual name for one value of an attribute.
 
@@ -186,13 +254,23 @@ def attribute_value(attribute: str, value: Any) -> str:
     Args:
         attribute: Attribute the value belongs to.
         value: The value itself. Timestamps are converted to their stable id
-            form first, because their text form is not a safe local name.
+            form first, and floats are written out in full, because neither
+            text form is a safe local name.
 
     Returns:
         The individual name.
+
+    Raises:
+        ValueError: If a float value is infinite or not a number, naming the
+            attribute it came from.
     """
     if isinstance(value, pd.Timestamp):
         return f"{attribute}_{timestamp_id(value)}"
+    if isinstance(value, float):
+        try:
+            return f"{attribute}_{format_number(value)}"
+        except ValueError as exc:
+            raise InputError(f"attribute {attribute!r}: {exc}") from exc
     return f"{attribute}_{value}"
 
 
@@ -225,6 +303,20 @@ def attribute_change_ids(
     return base.where(repeat == 0, base + "_" + (repeat + 1).astype(str))
 
 
+# Every builder above that turns log content into a schema name, grouped by
+# what it is keyed on. `derived_schema_names` walks these, and a test asserts
+# that no builder in this module is missing from them, so a name added above is
+# reserved against the log without being listed a second time by hand.
+CASE_CONCEPT_CLASSES: tuple[Callable[[str], str], ...] = (start_class, end_class)
+CASE_CONCEPT_PROPERTIES: tuple[Callable[[str], str], ...] = (df_property, ef_property)
+ATTRIBUTE_CLASSES: tuple[Callable[[str], str], ...] = (attribute_change_class,)
+ATTRIBUTE_PROPERTIES: tuple[Callable[[str], str], ...] = (
+    has_attribute_property,
+    change_value_property,
+)
+BIN_CLASSES: tuple[Callable[[str, Any], str], ...] = (bin_class,)
+
+
 def derived_schema_names(
     object_types: Iterable[str],
     attributes: Iterable[str],
@@ -250,15 +342,15 @@ def derived_schema_names(
     labels = list(bin_labels)
 
     for obj_type in object_types:
-        classes.update({start_class(obj_type), end_class(obj_type)})
-        properties.update({df_property(obj_type), ef_property(obj_type)})
+        classes.update(build(obj_type) for build in CASE_CONCEPT_CLASSES)
+        properties.update(build(obj_type) for build in CASE_CONCEPT_PROPERTIES)
 
     for attribute in attributes:
-        classes.add(attribute_change_class(attribute))
-        classes.update(bin_class(attribute, label) for label in labels)
-        properties.update(
-            {has_attribute_property(attribute), change_value_property(attribute)}
+        classes.update(build(attribute) for build in ATTRIBUTE_CLASSES)
+        classes.update(
+            build(attribute, label) for build in BIN_CLASSES for label in labels
         )
+        properties.update(build(attribute) for build in ATTRIBUTE_PROPERTIES)
 
     return frozenset(classes | properties | {inverse(p) for p in properties})
 

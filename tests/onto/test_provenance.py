@@ -7,6 +7,7 @@ the run record.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import pytest
@@ -18,6 +19,7 @@ from semanticlog.core.enums import (
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.emitters.provenance import build_configuration
+from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 from tests.conftest import emit
 
@@ -49,11 +51,11 @@ def test_the_semlog_version_is_recorded(record):
 def test_the_resolved_configuration_is_recorded_as_readable_json(record):
     settings = OntoBuildSettings(
         profile=OWLProfile.OWL2EL,
-        case_concepts=["order"],
         order_representations=[EventOrderRepresentation.DF],
     )
+    inputs = BuildInputs(case_concepts=["order"])
 
-    written = json.loads(record(settings)["buildConfiguration"])
+    written = json.loads(record(settings, inputs=inputs)["buildConfiguration"])
 
     assert written["profile"] == "OWL2EL"
     assert written["order_representations"] == ["df"]
@@ -67,12 +69,11 @@ def test_the_source_log_is_left_out_when_it_is_not(record):
     assert "sourceLog" not in record()
 
 
-def test_the_configuration_leaves_out_the_inputs_it_loaded(record):
+def test_the_configuration_records_every_setting(record):
+    """A setting left out of the record is one a reader cannot reproduce."""
     config = build_configuration(OntoBuildSettings())
 
-    assert "annotation_data" not in config
-    assert "declare_result" not in config
-    assert "annotation_document" in config
+    assert set(config) == {f.name for f in dataclasses.fields(OntoBuildSettings)}
 
 
 def test_each_entry_of_the_run_record_becomes_one_annotation(record):

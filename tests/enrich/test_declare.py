@@ -6,8 +6,8 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
+from semanticlog.core.errors import DependencyError
 from semanticlog.enrich.declare import DeclareEnricher, DeclareResult
-from semanticlog.onto.settings import OntoBuildSettings
 
 
 @pytest.fixture
@@ -67,48 +67,11 @@ def test_to_dict_is_json_shaped(result):
     assert d["case_concepts"] == ["order", "item"]
 
 
-def test_settings_read_declare_file_at_construction(result, tmp_path):
-    path = str(tmp_path / "declare.csv")
-    result.write(path)
-
-    settings = OntoBuildSettings(declare_file=path)
-    loaded = settings.declare_result
-
-    assert loaded is not None
-    assert_frame_equal(loaded.constraints, result.constraints)
-
-
-def test_settings_declare_result_wins_over_file(result, tmp_path):
-    path = str(tmp_path / "declare.csv")
-    result.write(path)
-    direct = DeclareResult(
-        constraints=pd.DataFrame({"trace_id": ["x"]}), case_concepts=[]
-    )
-
-    settings = OntoBuildSettings(declare_file=path, declare_result=direct)
-
-    assert settings.declare_result is direct
-
-
-def test_settings_reread_when_declare_file_changes(result, tmp_path):
-    first = str(tmp_path / "a.csv")
-    second = str(tmp_path / "b.csv")
-    result.write(first)
-    DeclareResult(
-        constraints=result.constraints.head(1), case_concepts=["order"]
-    ).write(second)
-
-    settings = OntoBuildSettings(declare_file=first)
-    assert len(settings.declare_result.constraints) == 3
-    settings = settings.replace(declare_file=second)
-    assert len(settings.declare_result.constraints) == 1
-
-
-def test_enricher_raises_import_error_without_declare4py(monkeypatch):
+def test_enricher_reports_a_missing_dependency_without_declare4py(monkeypatch):
     import semanticlog.enrich.declare as declare_module
 
     monkeypatch.setattr(declare_module, "_DECLARE4PY_AVAILABLE", False)
-    with pytest.raises(ImportError, match="Declare4Py"):
+    with pytest.raises(DependencyError, match="Declare4Py"):
         DeclareEnricher(data=None)
 
 

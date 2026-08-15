@@ -20,11 +20,25 @@ EXAMPLE_CONFIG = REPO / "examples" / "pipeline.toml"
 pytestmark = pytest.mark.slow
 
 
+def semlog_executable() -> str | None:
+    """Return the installed console script, or None if there is none.
+
+    The script sits beside the interpreter running the tests, which is where
+    it is looked for first. PATH only holds it when the environment has been
+    activated, and a test runner that calls the interpreter by path does not
+    activate anything.
+    """
+    beside = Path(sys.executable).parent / "semlog"
+    if beside.is_file():
+        return str(beside)
+    return shutil.which("semlog")
+
+
 def run(*argv: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
     """Run the installed command and return the finished process."""
-    executable = shutil.which("semlog")
+    executable = semlog_executable()
     if executable is None:
-        pytest.skip("semlog is not installed in this environment")
+        pytest.skip("no semlog console script beside the interpreter or on PATH")
     return subprocess.run(  # noqa: S603
         [executable, *argv],
         capture_output=True,
@@ -65,7 +79,7 @@ def test_the_console_script_builds_an_ontology(ocel, tmp_path):
     finished = run("build", str(ocel), "--output", str(tmp_path), "-q")
 
     assert finished.returncode == 0, finished.stderr
-    assert (tmp_path / "pipeline.owl").is_file()
+    assert (tmp_path / "pipeline.ofn").is_file()
 
 
 def test_the_committed_example_builds(tmp_path):
@@ -75,4 +89,4 @@ def test_the_committed_example_builds(tmp_path):
     )
 
     assert finished.returncode == 0, finished.stderr
-    assert (tmp_path / "pipeline.owl").is_file()
+    assert (tmp_path / "pipeline.ofn").is_file()

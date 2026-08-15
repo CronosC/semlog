@@ -1,13 +1,15 @@
 """Sink that builds an ontology object in memory, through owlapy.
 
-This is the default. It keeps every axiom as an object, so the result can be
-inspected or reasoned over without being written out first. A log too large to
-hold in memory needs `StreamingSink` instead.
+Every axiom is kept as an object, so the result can be inspected or reasoned
+over without being written out first. A log too large to hold in memory needs
+`StreamingSink` instead, which is what the CLI selects unless `streaming` is
+turned off. A builder given no sink of its own uses this one.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 from owlapy.class_expression import OWLClass, OWLObjectUnionOf
@@ -36,26 +38,32 @@ from owlapy.owl_literal import OWLLiteral
 from owlapy.owl_ontology import Ontology
 from owlapy.owl_property import OWLDataProperty, OWLObjectProperty
 
-from semanticlog.onto.settings import OntoBuildSettings
+from semanticlog.core.enums import OWLProfile
 from semanticlog.onto.sinks.base import (
     _RDFS,
     _XSD,
     OWL_DATATYPES,
+    PARTIAL_SUFFIX,
     AxiomSink,
-    normalize_value,
 )
+from semanticlog.onto.sinks.literals import resolve_literal
 
 _RDFS_LABEL = OWLAnnotationProperty(IRI(_RDFS, "label"))
 _RDFS_COMMENT = OWLAnnotationProperty(IRI(_RDFS, "comment"))
 
 
-def owl_literal(value: Any) -> Any:
+def owl_literal(value: Any, datatype: Any = None) -> Any:
     """Return the owlapy literal for a plain Python value.
 
     `OWLLiteral` is declared abstract and picks the concrete subclass for a
     value in `__new__`, which a type checker cannot follow.
+
+    Args:
+        value: The value to carry.
+        datatype: Type to declare it under, instead of the one owlapy would
+            infer from the Python type.
     """
-    return OWLLiteral(value)  # type: ignore[abstract]
+    return OWLLiteral(value, datatype)  # type: ignore[abstract]
 
 
 class InMemorySink(AxiomSink):
@@ -66,12 +74,11 @@ class InMemorySink(AxiomSink):
             and is what the build result carries afterwards.
     """
 
-    def __init__(self, iri: str, settings: OntoBuildSettings):
+    def __init__(self, iri: str, profile: OWLProfile):
         """Create an empty ontology to collect into."""
-        super().__init__(iri, settings)
+        super().__init__(iri, profile)
         self.onto = Ontology(IRI.create(iri), load=False)
         self._pending_inverses: list[tuple[str, str]] = []
-        self._inverses_written = False
         self._axiom_count = 0
 
     @property
@@ -81,6 +88,7 @@ class InMemorySink(AxiomSink):
 
     def _add(self, axioms: Any) -> None:
         """Add one axiom or a list of them, and count what went in."""
+        self._begin_write()
         self._axiom_count += len(axioms) if isinstance(axioms, list) else 1
         self.onto.add_axiom(axioms)
 
@@ -90,6 +98,8 @@ class InMemorySink(AxiomSink):
             return OWLClass(IRI.create(self.iri + name))
         if kind == "data":
             return OWLDataProperty(self.iri + name)
+        if kind == "annotation":
+            return OWLAnnotationProperty(IRI.create(self.iri + name))
         return OWLObjectProperty(self.iri + name)
 
     def _class_expression(self, disjuncts: list[str]) -> Any:
@@ -138,11 +148,12 @@ class InMemorySink(AxiomSink):
         """
         self._pending_inverses.append((prop, inverse))
 
-    def _write_pending_inverses(self) -> None:
-        """Write the inverse axioms held back during the build."""
-        if self._inverses_written:
-            return
-        self._inverses_written = True
+    def _finish(self) -> None:
+        """Write the inverse axioms held back during the build.
+
+        Anything asserted after this loses one direction of an inverse pair,
+        which is what the base class closing once is there to prevent.
+        """
         for prop, inverse in self._pending_inverses:
             self._add(
                 OWLInverseObjectPropertiesAxiom(
@@ -200,13 +211,17 @@ class InMemorySink(AxiomSink):
         if axioms:
             self._add(axioms)
 
-    @staticmethod
-    def _literal(value: Any) -> Any:
-        """Return the owlapy literal for a value, or None when it is missing."""
-        value = normalize_value(value)
-        if value is None:
+    def _literal(self, value: Any) -> Any:
+        """Return the owlapy literal for a value, or None when it is missing.
+
+        The value is the one `resolve_literal` settled for this profile, so an
+        EL build hands owlapy the text of a boolean or a date and gets the
+        `xsd:string` that profile has room for.
+        """
+        literal = resolve_literal(value, self.profile)
+        if literal is None:
             return None
-        return owl_literal(value)
+        return owl_literal(literal.value)
 
     def write_annotations(
         self, annotation: str, pairs: Iterable[tuple[str, str]]
@@ -238,29 +253,41 @@ class InMemorySink(AxiomSink):
                 "declared, so this is a build-order problem rather than bad input."
             ) from exc
 
-    def write_ontology_annotation(self, property_iri: str, value: str) -> None:
-        namespace, _, local = property_iri.rpartition("#")
-        self._add(
-            OWLAnnotationAssertionAxiom(
-                IRI.create(self.iri.rstrip("#")),
-                OWLAnnotation(
-                    OWLAnnotationProperty(IRI(namespace + "#", local)),
-                    owl_literal(value),
-                ),
-            )
-        )
+    def write_ontology_header(self, annotations: Mapping[str, str]) -> None:
+        """Annotate the ontology itself, which is what carries the record.
 
-    def close(self) -> None:
-        """Finish the ontology by writing the inverse axioms that were held back.
-
-        Anything asserted after this loses one direction of an inverse pair,
-        so a build closes its sink once and does not write again.
+        Nothing has to be opened here. The ontology object exists from the
+        start and takes an annotation whenever one arrives, which is why the
+        rule about the record coming first lives in the base class rather
+        than in this backend.
         """
-        self._write_pending_inverses()
+        for property_iri, value in annotations.items():
+            namespace, _, local = property_iri.rpartition("#")
+            self._add(
+                OWLAnnotationAssertionAxiom(
+                    IRI.create(self.iri.rstrip("#")),
+                    OWLAnnotation(
+                        OWLAnnotationProperty(IRI(namespace + "#", local)),
+                        owl_literal(value),
+                    ),
+                )
+            )
 
     def save(self, path: str) -> None:
+        """Finish the ontology and write it out, through a partial file.
+
+        A save that fails part-way then leaves whatever was at the destination
+        untouched, rather than a truncated file where a finished one used to
+        be.
+        """
         self.close()
-        self.onto.save(path)
+        partial = Path(path + PARTIAL_SUFFIX)
+        try:
+            self.onto.save(str(partial))
+            partial.replace(path)
+        except BaseException:
+            partial.unlink(missing_ok=True)
+            raise
 
     def result_target(self) -> tuple[Any, str | None]:
         """Hand back the ontology, which this sink held in memory."""

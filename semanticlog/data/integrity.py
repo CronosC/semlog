@@ -8,7 +8,8 @@ find both while the failure can still name the table and the ids.
 
 from __future__ import annotations
 
-from semanticlog.data.oced import OCEDStore
+from semanticlog.core.errors import InputError
+from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind, RelationKind
 
 _SAMPLE = 5
@@ -21,7 +22,7 @@ def _sample(ids: set) -> str:
     return ", ".join(shown) + (f" and {more} more" if more else "")
 
 
-def _missing_ids(data: OCEDStore) -> list[str]:
+def _missing_ids(data: ReadableStore) -> list[str]:
     """Find events and objects whose id is empty.
 
     An id becomes the local name of an individual, so a row without one has
@@ -41,7 +42,7 @@ def _missing_ids(data: OCEDStore) -> list[str]:
     return violations
 
 
-def check_integrity(data: OCEDStore) -> list[str]:
+def check_integrity(data: ReadableStore) -> list[str]:
     """Find rows a build could not emit an individual for.
 
     Every event and object has to carry an id. Both endpoints of every
@@ -107,7 +108,7 @@ def check_integrity(data: OCEDStore) -> list[str]:
     return violations
 
 
-def require_integrity(data: OCEDStore) -> None:
+def require_integrity(data: ReadableStore) -> None:
     """Raise unless the store passes `check_integrity`.
 
     Raises:
@@ -115,7 +116,7 @@ def require_integrity(data: OCEDStore) -> None:
     """
     violations = check_integrity(data)
     if violations:
-        raise ValueError(
+        raise InputError(
             "The store holds rows a build could not emit an individual for:\n"
             + "\n".join(f"  {v}" for v in violations)
             + "\n\nEvery such row would become an assertion about an individual "

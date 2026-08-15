@@ -5,6 +5,11 @@ adding a class or asserting a set of relations. It validates each one,
 suppresses schema statements it has already made, and hands the survivors to a
 backend through the abstract `write_*` methods. Name checking happens here.
 
+A sink also has a life: `open_ontology` with the record of the build, then the
+axioms, then `close`, or `abort` if the build gave up. Both ends are stated
+here rather than left to a backend, since a backend that needs one of them
+would otherwise impose it on everything above.
+
 Two backends implement those methods, one building an ontology in memory and
 one writing functional syntax straight to a file. Everything above this module
 works the same way with either.
@@ -13,62 +18,24 @@ works the same way with either.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping
 from typing import Any
 
-import numpy as np
-import pandas as pd
-
 from semanticlog.core.enums import OWLProfile
-from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks.ledger import NameLedger
 
 OWL_DATATYPES: frozenset[str] = frozenset({"integer", "double", "boolean", "dateTime"})
 
+PARTIAL_SUFFIX = ".partial"
+"""What an unfinished ontology is called while it is being written.
+
+A sink writes here and moves the file into place once the ontology is
+complete, so a build that fails leaves whatever was at the destination
+untouched rather than a truncated file where a finished one used to be.
+"""
+
 _XSD = "http://www.w3.org/2001/XMLSchema#"
 _RDFS = "http://www.w3.org/2000/01/rdf-schema#"
-
-
-def normalize_value(value: Any) -> Any:
-    """Convert a pandas value into something a literal can be made from.
-
-    Every flavour of missing value becomes None, and numpy scalars become
-    their Python equivalents, so that a backend only has to handle plain
-    types.
-
-    Args:
-        value: A cell from a table.
-
-    Returns:
-        The plain Python value, or None when it was missing.
-    """
-    if value is None or value is pd.NaT or value is pd.NA:
-        return None
-    if isinstance(value, pd.Timestamp):
-        return None if pd.isna(value) else value.to_pydatetime()
-    if isinstance(value, (str, bytes)):
-        return value
-    if isinstance(value, np.generic):
-        value = value.item()
-        return None if isinstance(value, float) and pd.isna(value) else value
-    if isinstance(value, float) and pd.isna(value):
-        return None
-    return value
-
-
-def _pairs(rows: pd.DataFrame, reverse: bool = False) -> Iterator[tuple[str, str]]:
-    """Yield the two columns of a table as pairs of names.
-
-    A generator rather than a list, because a relation of a large log holds one
-    pair per row and a backend that writes them out needs to see only one at a
-    time.
-
-    Args:
-        rows: Two columns, the subject and the target.
-        reverse: Swap the two, for asserting the inverse of a property.
-    """
-    for subject, target in rows.itertuples(index=False, name=None):
-        yield (str(target), str(subject)) if reverse else (str(subject), str(target))
 
 
 class AxiomSink(ABC):
@@ -78,38 +45,38 @@ class AxiomSink(ABC):
     A name that is unsafe in an IRI, or that would be used for two different
     things, is refused here with a message naming both sources.
 
+    What a sink knows about a build is its base IRI and its profile. Which
+    axioms are worth writing is decided above it, so that the boundary can be
+    described on its own terms rather than as whatever the two backends agree
+    on.
+
     Attributes:
         iri: Base IRI of the ontology, always ending in a fragment separator.
-        settings: The settings of this build, consulted for the profile and
-            for how inverses are represented.
+        profile: OWL 2 profile the output has to stay inside.
     """
 
     iri: str
-    settings: OntoBuildSettings
+    profile: OWLProfile
 
-    def __init__(self, iri: str, settings: OntoBuildSettings) -> None:
+    def __init__(self, iri: str, profile: OWLProfile) -> None:
         """Prepare a sink.
 
         Args:
             iri: Base IRI. A trailing separator is added when missing.
-            settings: Settings of the build this sink serves.
+            profile: Profile of the build this sink serves.
         """
         self.iri = iri if iri.endswith("#") else iri + "#"
-        self.settings = settings
+        self.profile = profile
         self.names = NameLedger()
         self._dropped_unions: list[int] = []
+        self._opened = False
+        self._closed = False
 
     def _declare_name(self, name: str, kind: str, source: str) -> None:
-        """Claim a name for one thing, and refuse a second claim on it."""
         self.names.declare(name, kind, source)
 
     def _check_name(self, name: str, source: str) -> None:
-        """Refuse a name that cannot be an IRI local name."""
         self.names.check_name(name, source)
-
-    def _check_individuals(self, names: Iterable[str], source: str) -> pd.Series:
-        """Check a batch of individual names, and return the ones to emit."""
-        return self.names.check_individuals(names, source)
 
     @property
     def declared_count(self) -> int:
@@ -149,17 +116,13 @@ class AxiomSink(ABC):
         """How many axioms were written, or -1 when the backend cannot say."""
         return -1
 
-    def _first_time(self, *key: object) -> bool:
-        """Report whether this schema statement is new, and record it."""
-        return self.names.first_time(*key)
-
     @abstractmethod
     def write_declaration(self, name: str, kind: str) -> None:
-        """Declare a class, object property or data property.
+        """Declare a class, a property or an annotation property.
 
         Args:
             name: Local name of the entity.
-            kind: One of `class`, `object` or `data`.
+            kind: One of `class`, `object`, `data` or `annotation`.
         """
 
     @abstractmethod
@@ -216,8 +179,8 @@ class AxiomSink(ABC):
         """
 
     @abstractmethod
-    def write_ontology_annotation(self, property_iri: str, value: str) -> None:
-        """Annotate the ontology itself, which is where provenance goes."""
+    def write_ontology_header(self, annotations: Mapping[str, str]) -> None:
+        """Begin the ontology and annotate it, which is where provenance goes."""
 
     @abstractmethod
     def save(self, path: str) -> None:
@@ -232,10 +195,87 @@ class AxiomSink(ABC):
         """
         return None, None
 
-    def close(self) -> None:  # noqa: B027
-        """Release whatever the backend holds open.
+    def open_ontology(self, annotations: Mapping[str, str] | None = None) -> None:
+        """Begin the ontology, annotated with the record of the build.
 
-        Optional. A sink that keeps nothing open need not override this.
+        An ontology annotation belongs inside the ontology header, and a sink
+        writing a file has put that header out as soon as it writes anything
+        else. So the whole record arrives here, once, before any axiom. A sink
+        nothing opened opens itself on its first axiom, and then carries no
+        record.
+
+        A build invents its own annotation properties for the record it keeps,
+        and OWL 2 DL wants every one of them declared. A property from another
+        namespace, such as `owl:versionInfo`, is already declared where it is
+        defined and is left alone.
+
+        Args:
+            annotations: Full IRI of each annotation property, to the text to
+                record under it.
+
+        Raises:
+            ValueError: If the ontology is already open, which means an axiom
+                was written before the record.
+        """
+        if self._opened:
+            raise ValueError(
+                f"{type(self).__name__} has already begun its ontology, and an "
+                "ontology annotation belongs inside the header. Open the sink "
+                "with the whole record before emitting anything."
+            )
+        self._opened = True
+        record = dict(annotations or {})
+        self.write_ontology_header(record)
+        for property_iri in record:
+            if not property_iri.startswith(self.iri):
+                continue
+            name = property_iri[len(self.iri) :]
+            if self.names.first_declaration(name, "annotation"):
+                self.write_declaration(name, "annotation")
+
+    def _ensure_open(self) -> None:
+        """Begin an ontology nothing opened, so it carries no record."""
+        if not self._opened:
+            self.open_ontology()
+
+    def _begin_write(self) -> None:
+        """Take one axiom, opening the ontology when it is the first.
+
+        Every backend calls this before it writes, so where an ontology begins
+        and where it stops taking axioms are the same two points either way.
+
+        Raises:
+            ValueError: If the sink is closed. A backend can finish an ontology
+                in a way that changes how the axioms before it read, so nothing
+                may arrive afterwards.
+        """
+        if self._closed:
+            raise ValueError(
+                f"{type(self).__name__} is closed and cannot take more axioms. "
+                "A sink closes once, when the build that owns it has finished."
+            )
+        self._ensure_open()
+
+    def close(self) -> None:
+        """Finish the ontology, which is the last thing a sink does.
+
+        Whatever a backend can only do once no further axioms are coming
+        happens in `_finish`. Closing twice is harmless, and an ontology
+        nothing opened is opened here so that an empty build still produces
+        one.
+        """
+        if self._closed:
+            return
+        self._ensure_open()
+        try:
+            self._finish()
+        finally:
+            self._closed = True
+
+    def _finish(self) -> None:  # noqa: B027
+        """Complete the ontology, once the last axiom has arrived.
+
+        Optional. A backend with nothing left to do need not override this.
         """
 
     def abort(self) -> None:
@@ -250,7 +290,7 @@ class AxiomSink(ABC):
     def _disjuncts(
         self, expression: str | list[str] | None, source: str = "a class expression"
     ) -> list[str] | None:
-        """Normalise a class expression to a checked list, or None if empty."""
+        """Normalize a class expression to a checked list, or None if empty."""
         if expression is None:
             return None
         parts = [expression] if isinstance(expression, str) else list(expression)
@@ -262,7 +302,7 @@ class AxiomSink(ABC):
         """Drop a union under OWL 2 EL, which has no disjunction."""
         if expression is None or len(expression) <= 1:
             return expression
-        if self.settings.profile == OWLProfile.OWL2EL:
+        if self.profile == OWLProfile.OWL2EL:
             self._dropped_unions.append(len(expression))
             return None
         return expression
@@ -291,9 +331,9 @@ class AxiomSink(ABC):
         parents = self._profile_allows(
             self._disjuncts(superclass, f"the superclass of {class_name!r}")
         )
-        if self._first_time("declare", class_name, "class"):
+        if self.names.first_declaration(class_name, "class"):
             self.write_declaration(class_name, "class")
-        if parents and self._first_time("sub_class", class_name, tuple(parents)):
+        if parents and self.names.first_sub_class(class_name, parents):
             self.write_sub_class_of(class_name, parents)
 
     def add_classes(
@@ -333,21 +373,37 @@ class AxiomSink(ABC):
         data_prop: bool,
         create_inverse: bool,
         inverse_name: str | None,
+        axiomatic_inverse: bool,
     ) -> None:
         """Reject property arguments that contradict each other."""
         if data_prop and create_inverse:
             raise ValueError(
-                "Data properties cannot have inverses; set create_inverse to False for data properties."
+                "A data property cannot have an inverse. Set create_inverse=False, "
+                "or data_prop=False if an object property was meant."
             )
         if inverse_name is not None and not create_inverse:
             raise ValueError(
-                "When adding an inverse via inverse_name create_inverse must be set to true!"
+                f"inverse_name={inverse_name!r} was given with create_inverse=False, "
+                f"so no inverse would be declared to carry it. Set "
+                f"create_inverse=True, or drop inverse_name."
+            )
+        if axiomatic_inverse and not create_inverse:
+            raise ValueError(
+                "axiomatic_inverse=True was given with create_inverse=False, so "
+                "there would be no inverse for the axiom to relate. Set "
+                "create_inverse=True, or drop axiomatic_inverse."
             )
         parts = self._disjuncts(range_class, "a property range")
         if data_prop and parts is not None and not set(parts) <= OWL_DATATYPES:
-            raise ValueError(f"Unknown range for a data property: {range_class}")
+            raise ValueError(
+                f"Range {range_class!r} is not a datatype, and a data property "
+                f"ranges over one of {sorted(OWL_DATATYPES)}."
+            )
         if not data_prop and parts is not None and set(parts) & OWL_DATATYPES:
-            raise ValueError("Can not create an object property with a data as range!")
+            raise ValueError(
+                f"Range {range_class!r} names a datatype, which an object property "
+                f"cannot range over. Set data_prop=True, or name a class."
+            )
 
     def add_property(
         self,
@@ -358,15 +414,11 @@ class AxiomSink(ABC):
         create_inverse: bool = False,
         inverse_name: str | None = None,
         data_prop: bool = False,
+        axiomatic_inverse: bool = False,
         *,
         source: str = "a build step",
     ) -> None:
         """Declare a property, with its domain, range and optional inverse.
-
-        The inverse is declared alongside the property. Whether the two are
-        also related by an axiom depends on the inverse representation of the
-        build, so an emitter asks for an inverse without deciding how it is
-        expressed.
 
         Args:
             prop_name: Local name of the property.
@@ -378,6 +430,9 @@ class AxiomSink(ABC):
             create_inverse: Also declare the inverse property.
             inverse_name: Name for the inverse, instead of the derived one.
             data_prop: Whether this is a data property.
+            axiomatic_inverse: Also state that the two are inverses of each
+                other. A build that materializes the reversed assertions
+                instead declares the inverse without the axiom.
             source: Where this property comes from.
 
         Raises:
@@ -389,28 +444,30 @@ class AxiomSink(ABC):
                 property.
         """
         self._validate_property_args(
-            range_class, data_prop, create_inverse, inverse_name
+            range_class, data_prop, create_inverse, inverse_name, axiomatic_inverse
         )
         kind = "data" if data_prop else "object"
         self._declare_name(prop_name, kind, source)
 
-        if self._first_time("declare", prop_name, kind):
+        if self.names.first_declaration(prop_name, kind):
             self.write_declaration(prop_name, kind)
         if superprop is not None:
             self.add_sub_property(prop_name, superprop, data_prop, source=source)
         domain = self._profile_allows(
             self._disjuncts(domain_class, f"the domain of {prop_name!r}")
         )
-        if domain and self._first_time("domain", prop_name, tuple(domain), data_prop):
+        if domain and self.names.first_domain(prop_name, domain, data_prop):
             self.write_domain(prop_name, domain, data_prop)
         range_ = self._profile_allows(
             self._disjuncts(range_class, f"the range of {prop_name!r}")
         )
-        if range_ and self._first_time("range", prop_name, tuple(range_), data_prop):
+        if range_ and self.names.first_range(prop_name, range_, data_prop):
             self.write_range(prop_name, range_, data_prop)
 
         if create_inverse:
-            self._declare_inverse(prop_name, inverse_name, kind, superprop, source)
+            self._declare_inverse(
+                prop_name, inverse_name, kind, superprop, source, axiomatic_inverse
+            )
 
     def _declare_inverse(
         self,
@@ -419,12 +476,9 @@ class AxiomSink(ABC):
         kind: str,
         superprop: str | None,
         source: str,
+        axiomatic: bool,
     ) -> None:
         """Declare the inverse of a property, and relate the two if asked.
-
-        Whether the pair also gets an axiom depends on the inverse
-        representation of the build, so the caller asks for an inverse without
-        deciding how it is expressed.
 
         Args:
             prop_name: Property the inverse belongs to.
@@ -433,16 +487,15 @@ class AxiomSink(ABC):
             superprop: Property the original sits below, whose own inverse the
                 new one is placed below.
             source: Where the property comes from.
+            axiomatic: Also state that the two are inverses of each other.
         """
         if inverse_name is None:
             inverse_name = self.inverse_name(prop_name)
         self.names.claim_inverse(prop_name, inverse_name, source)
         self._declare_name(inverse_name, kind, f"inverse of {source}")
-        if self._first_time("declare", inverse_name, kind):
+        if self.names.first_declaration(inverse_name, kind):
             self.write_declaration(inverse_name, kind)
-        if self.settings.axiomatic_inverses and self._first_time(
-            "inverse", prop_name, inverse_name
-        ):
+        if axiomatic and self.names.first_inverse(prop_name, inverse_name):
             self.write_inverse_properties(prop_name, inverse_name)
         if superprop is not None:
             self.add_sub_property(
@@ -467,70 +520,73 @@ class AxiomSink(ABC):
         """
         self._check_name(sub, source)
         self._check_name(parent, source)
-        if self._first_time("sub_property", sub, parent, data_prop):
+        if self.names.first_sub_property(sub, parent, data_prop):
             self.write_sub_property_of(sub, parent, data_prop)
 
     def add_transitive(self, prop: str) -> None:
         """Declare an object property transitive."""
         self._check_name(prop, "a transitivity axiom")
-        if self._first_time("transitive", prop):
+        if self.names.first_transitive(prop):
             self.write_transitive(prop)
 
-    def assert_individuals(self, individuals: Sequence[str], class_name: str) -> None:
+    def assert_individuals(self, class_name: str, individuals: Iterable[Any]) -> None:
         """Assert that each individual belongs to a class.
 
         Repeats and missing values are dropped, so a column can be passed
         straight from the store. A missing value carries no name to assert,
         and every one of them would otherwise become the same individual.
         """
-        names = self._check_individuals(
+        names = self.names.check_individuals(
             individuals, f"an individual of class {class_name!r}"
         )
-        if not names.empty:
+        if names:
             self.write_class_assertions(class_name, names)
 
-    def assert_relations(
-        self,
-        df: pd.DataFrame,
-        prop: str,
-        from_key: str,
-        to_key: str,
-        data_prop: bool = False,
-        inverse_name: str | None = None,
-    ) -> None:
-        """Assert one property for every row of a table.
+    def assert_relations(self, prop: str, pairs: Iterable[tuple[Any, Any]]) -> None:
+        """Assert an object property between each pair of individuals.
 
-        Rows with a missing endpoint are dropped and duplicate pairs are
-        collapsed, so callers can pass a table straight from the store. When
-        the build materialises inverses, the reversed pairs are asserted here
-        as well.
+        Every name of every assertion is checked, so the accepting case stays
+        cheap and only a refusal pays for the message naming where it came
+        from.
 
         Args:
-            df: Table holding the pairs.
             prop: Property to assert.
-            from_key: Column holding the subject.
-            to_key: Column holding the target, or the literal value.
-            data_prop: Whether this is a data property.
-            inverse_name: Name to use for the reversed pairs, instead of the
-                derived one.
+            pairs: Subject and target of each assertion.
         """
-        rows = df[[from_key, to_key]]
-        rows = rows[rows[from_key].notna() & rows[to_key].notna()]
-        rows = rows.drop_duplicates([from_key, to_key])
+        self.write_object_assertions(prop, self._checked_pairs(prop, pairs))
 
-        if data_prop:
-            self._check_individuals(rows[from_key], f"the subject of {prop!r}")
-            self.write_data_assertions(prop, rows.itertuples(index=False, name=None))
-            return
+    def assert_data(self, prop: str, pairs: Iterable[tuple[Any, Any]]) -> None:
+        """Assert a data property between each individual and its value.
 
-        if rows.empty:
-            return
-        self._check_individuals(rows[from_key], f"the subject of {prop!r}")
-        self._check_individuals(rows[to_key], f"the target of {prop!r}")
-        self.write_object_assertions(prop, _pairs(rows))
-        if self.settings.implicit_inverses:
-            inv = inverse_name or self.inverse_name(prop)
-            self.write_object_assertions(inv, _pairs(rows, reverse=True))
+        Args:
+            prop: Property to assert.
+            pairs: Subject and literal value of each assertion.
+        """
+        self.write_data_assertions(prop, self._checked_subjects(prop, pairs))
+
+    def _checked_pairs(
+        self, prop: str, pairs: Iterable[tuple[Any, Any]]
+    ) -> Iterator[tuple[str, str]]:
+        """Yield each pair as the two names to emit it under."""
+        accepts = self.names.accepts_individual
+        for subject, target in pairs:
+            name, other = str(subject), str(target)
+            if not accepts(name):
+                self.names.check_individual(name, f"the subject of {prop!r}")
+            if not accepts(other):
+                self.names.check_individual(other, f"the target of {prop!r}")
+            yield name, other
+
+    def _checked_subjects(
+        self, prop: str, pairs: Iterable[tuple[Any, Any]]
+    ) -> Iterator[tuple[str, Any]]:
+        """Yield each pair with its subject as a name and its value untouched."""
+        accepts = self.names.accepts_individual
+        for subject, value in pairs:
+            name = str(subject)
+            if not accepts(name):
+                self.names.check_individual(name, f"the subject of {prop!r}")
+            yield name, value
 
     def annotate_entity(
         self, iri_fragment: str, label: str | None = None, comment: str | None = None
@@ -552,9 +608,9 @@ class AxiomSink(ABC):
                 "class or a property. Declare it first, or filter the names with "
                 "is_declared()."
             )
-        if label and self._first_time("label", iri_fragment, label):
+        if label and self.names.first_annotation("label", iri_fragment, label):
             self.write_annotations("label", [(iri_fragment, label)])
-        if comment and self._first_time("comment", iri_fragment, comment):
+        if comment and self.names.first_annotation("comment", iri_fragment, comment):
             self.write_annotations("comment", [(iri_fragment, comment)])
 
     def annotate_individuals_bulk(self, pairs: list[tuple[str, str]]) -> None:

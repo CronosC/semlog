@@ -25,7 +25,8 @@ from typing import Any
 
 import pandas as pd
 
-from semanticlog.data.oced import OCEDStore
+from semanticlog.core.errors import ConfigError, DependencyError, InputError
+from semanticlog.data.readable import ReadableStore
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ def _check_templates(names: list[str]) -> None:
     """
     unknown = [name for name in names if name not in TEMPLATES]
     if unknown:
-        raise ValueError(
+        raise ConfigError(
             f"Unknown DECLARE template(s): {', '.join(map(repr, unknown))}. "
             f"Choose from: {', '.join(sorted(TEMPLATES))}."
         )
@@ -176,7 +177,7 @@ class DeclareResult:
 
         missing = [c for c in cls.INDEX_COLUMNS if c not in constraints.columns]
         if missing:
-            raise ValueError(
+            raise InputError(
                 f"{path} is not a DECLARE constraints table: it has no "
                 f"{' or '.join(repr(c) for c in missing)} column. Its columns are "
                 f"{', '.join(map(str, constraints.columns))}. Mine constraints with "
@@ -246,7 +247,7 @@ class DeclareEnricher:
     on its own, so a constraint is always about the traces of one case notion.
     """
 
-    def __init__(self, data: OCEDStore):
+    def __init__(self, data: ReadableStore):
         """Prepare to mine one store.
 
         Args:
@@ -256,7 +257,7 @@ class DeclareEnricher:
             ImportError: If declare4py or its solver is not installed.
         """
         if not _DECLARE4PY_AVAILABLE:
-            raise ImportError(
+            raise DependencyError(
                 "Declare4Py and its Lydia backend are required for DeclareEnricher. "
                 "Install declare4py and the Lydia LTLf/LDLf solver separately."
             )

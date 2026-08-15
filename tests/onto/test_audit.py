@@ -18,6 +18,7 @@ from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.oced import OCEDStore
 from semanticlog.onto.audit import audit_build
 from semanticlog.onto.builder import OCEDOntoBuilder
+from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 
 NS = DEFAULT_IRI
@@ -42,8 +43,14 @@ def _store(object_data: pd.DataFrame, activity: str = "act") -> OCEDStore:
     return data
 
 
-def _build(store: OCEDStore, settings: OntoBuildSettings | None = None):
-    return OCEDOntoBuilder(NS, settings or OntoBuildSettings()).build_ontology(store)
+def _build(
+    store: OCEDStore,
+    settings: OntoBuildSettings | None = None,
+    inputs: BuildInputs | None = None,
+):
+    return OCEDOntoBuilder(NS, settings or OntoBuildSettings()).build_ontology(
+        store, inputs
+    )
 
 
 def test_ambiguous_underscore_split_is_rejected():
@@ -160,12 +167,11 @@ def test_case_concept_property_colliding_with_a_relation_is_rejected():
         data=pd.DataFrame({"eid": ["e1"], "oid": ["o1"]}),
     )
     settings = OntoBuildSettings(
-        case_concepts=["order"],
         order_representations=[EventOrderRepresentation.DF],
     )
 
     with pytest.raises(NameCollisionError, match="df_order"):
-        _build(data, settings)
+        _build(data, settings, BuildInputs(case_concepts=["order"]))
 
 
 def test_an_activity_named_after_an_object_type_is_rejected():
@@ -250,4 +256,4 @@ def test_numeric_values_with_decimal_points_are_accepted():
 def test_audit_build_accepts_a_clean_store():
     store = clean_oced_data(_store(pd.DataFrame({"oid": ["o1"], "colour": ["red"]})))
 
-    audit_build(store, OntoBuildSettings())
+    audit_build(store, OntoBuildSettings(), BuildInputs())

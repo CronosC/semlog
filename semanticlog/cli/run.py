@@ -1,8 +1,9 @@
 """What each subcommand does.
 
 These functions take already-resolved values, so a command can be run and
-tested without a command line. `build` loads, cleans, chooses case concepts,
-builds, writes, and records what it did.
+tested without a command line. Loading, choosing case concepts and building
+are the library's, so `build` is the record it keeps and the reporting around
+them.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import json
 import logging
 import time
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,32 +22,27 @@ from typing import Any
 
 from semanticlog.cli.config import RunConfig
 from semanticlog.cli.logs import FileLog
+from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import (
     OCELExtension,
     OWLProfile,
 )
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.data.binning import DEFAULT_BIN_LABELS
-from semanticlog.data.cleaning import clean_oced_data, object_type_renames
-from semanticlog.data.flatten import case_concept_candidates
-from semanticlog.data.loading.pm4py_loader import PM4PyLoader
-from semanticlog.data.oced import OCEDStore
+from semanticlog.data.flatten import choose_case_concepts, rank_case_concepts
+from semanticlog.data.loading import load_and_clean
+from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind, RelationKind
-from semanticlog.onto.audit import warn_on_foreign_declare
-from semanticlog.onto.builder import OCEDOntoBuilder
+from semanticlog.enrich.declare import DeclareResult
+from semanticlog.onto.pipeline import build_log
 from semanticlog.onto.reason import Reasoner
 from semanticlog.onto.result import BuildResult
-from semanticlog.onto.sinks import AxiomSink, InMemorySink, StreamingSink
 
 logger = logging.getLogger("semlog.run")
 
 _MB = 1024 * 1024
 _HASH_CHUNK = 1 << 20
 
-PARTIAL_SUFFIX = ".partial"
 
-
-def write_backmap(data: OCEDStore, path: Path) -> None:
+def write_backmap(data: ReadableStore, path: Path) -> None:
     """Write the map of cleaned names back to what the log called them.
 
     The map is a build artifact rather than part of the data, so writing it
@@ -57,11 +53,29 @@ def write_backmap(data: OCEDStore, path: Path) -> None:
     )
 
 
+def warn_on_foreign_declare(declare: DeclareResult | None, digest: str) -> None:
+    """Warn when the DECLARE constraints were mined from a different file.
+
+    The build continues, because the trace ids still resolve and a filtered
+    copy of a log is a reasonable thing to mine from. Whether they belong to
+    this log at all is the audit's question, and it asks the store.
+    """
+    if declare is None or declare.source_sha256 is None:
+        return
+    if declare.source_sha256 != digest:
+        logger.warning(
+            f"DECLARE constraints were mined from {declare.source_log!r} "
+            f"(sha256 {declare.source_sha256[:12]}), which is not the file being "
+            f"built (sha256 {digest[:12]}). The trace ids still resolve, so the "
+            "build continues."
+        )
+
+
 def file_digest(path: Path) -> str:
     """Return the SHA-256 of a file, read in chunks.
 
-    This identifies the exact input behind a result, and is what lets a build
-    notice DECLARE constraints mined from a different file.
+    This identifies the exact input behind a result. A build compares it
+    against the digest recorded with a set of DECLARE constraints.
     """
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -111,99 +125,14 @@ class BuildReport:
         return ", ".join(parts)
 
 
-def load_and_clean(
-    path: Path,
-    extensions: Sequence[OCELExtension],
-    bin_labels: Sequence[str] = DEFAULT_BIN_LABELS,
-) -> OCEDStore:
-    """Read one OCEL file and make its names safe to emit.
-
-    Args:
-        path: OCEL file to read.
-        extensions: OCEL extensions to load as well.
-        bin_labels: Bin labels the build will use, which cleaning reserves
-            along with the rest of the names a build derives for itself. The
-            default is what a build reserves when the labels are left alone,
-            so `inspect` reports the names a build would use. A run with its
-            own labels passes them, and only then can the two differ.
-    """
-    data = PM4PyLoader(str(path), {}, ocel_extensions=list(extensions)).get_oced()
-    return clean_oced_data(data, bin_labels=bin_labels)
-
-
-def follow_renames(data: OCEDStore, case_concepts: Sequence[str]) -> list[str]:
-    """Map given case concepts onto the names the store holds them under.
-
-    A case concept is written as the source log spells it, and cleaning renames
-    an object type whose name something else in the log already claims. A name
-    that matches no object type and no rename is passed through, so the audit
-    is what reports it.
-
-    Args:
-        data: Store the names have to resolve against.
-        case_concepts: Object types as they were given.
-
-    Returns:
-        The same types, in the same order, under their current names.
-    """
-    object_types = set(data.get_object_types())
-    renames = object_type_renames(data)
-    chosen = []
-    for case_concept in case_concepts:
-        moved = renames.get(case_concept)
-        if case_concept in object_types or moved is None:
-            chosen.append(case_concept)
-            continue
-        logger.info(f"  case concept {case_concept} is called {moved} after cleaning")
-        chosen.append(moved)
-    return chosen
-
-
-def rank_case_concepts(data: OCEDStore, n: int) -> list[str]:
-    """Return the n largest object types a build could project onto.
-
-    Types no event-to-object relation reaches are left out before the count is
-    applied, so choosing three never spends one of them on a type that has no
-    events to order.
-
-    Args:
-        data: Store to choose from.
-        n: How many types to return.
-
-    Returns:
-        Type names, most instances first.
-    """
-    reachable = set(case_concept_candidates(data))
-    ranked = data.get_most_common_objects(n=len(data.get_object_types()))
-    return [obj_type for obj_type in ranked if obj_type in reachable][:n]
-
-
-def choose_case_concepts(cfg: RunConfig, data: OCEDStore) -> tuple[list[str], str]:
-    """Take the configured case concepts, or pick the most common object types.
-
-    Returns:
-        The chosen types and where the choice came from, which is recorded as
-        provenance so a result says whether it was chosen or given.
-    """
-    if cfg.case_concepts is not None:
-        return follow_renames(data, cfg.case_concepts), "config"
-    chosen = rank_case_concepts(data, cfg.auto_case_concepts)
-    if not chosen and data.get_object_types():
-        logger.warning(
-            "No object type of this log is reached by an event-to-object relation, "
-            "so there is nothing to project onto and no case concept was chosen."
-        )
-    return chosen, f"auto(n={cfg.auto_case_concepts})"
-
-
-def _relation_rows(data: OCEDStore, kind: RelationKind) -> int:
+def _relation_rows(data: ReadableStore, kind: RelationKind) -> int:
     """Count the rows across one relation family."""
     return sum(
         len(data.get_relation(name).data) for name in data.get_relation_types(kind)
     )
 
 
-def _store_stats(data: OCEDStore) -> dict[str, int]:
+def _store_stats(data: ReadableStore) -> dict[str, int]:
     """Measure the loaded log, for the provenance record."""
     rows = _rows_by_kind(data)
     events, objects = rows[EntityKind.EVENT], rows[EntityKind.OBJECT]
@@ -217,7 +146,9 @@ def _store_stats(data: OCEDStore) -> dict[str, int]:
     }
 
 
-def _rows_by_kind(data: OCEDStore) -> dict[EntityKind | None, list[tuple[str, int]]]:
+def _rows_by_kind(
+    data: ReadableStore,
+) -> dict[EntityKind | None, list[tuple[str, int]]]:
     """Return each entity type with its row count, grouped by which half it is in."""
     grouped: dict[EntityKind | None, list[tuple[str, int]]] = defaultdict(list)
     for view in data.tables(changes=False):
@@ -225,14 +156,13 @@ def _rows_by_kind(data: OCEDStore) -> dict[EntityKind | None, list[tuple[str, in
     return grouped
 
 
-def _ontology_stats(semlog: BuildResult, sink: AxiomSink) -> dict[str, int]:
+def _ontology_stats(semlog: BuildResult) -> dict[str, int]:
     """Measure the built ontology, however it was built.
 
-    The counts come from the sink's name ledger, so a streamed build and an
-    in-memory one report the same keys and two runs can be compared. Only an
-    in-memory build can count individuals, so that one is extra.
+    The build counts what it declared and wrote. Only an in-memory build can
+    count individuals, so that one is added here.
     """
-    stats = {**sink.declared_by_kind(), "axioms": sink.axiom_count}
+    stats = dict(semlog.stats)
     if semlog.onto is not None:
         stats["individuals"] = sum(1 for _ in semlog.onto.individuals_in_signature())
     return stats
@@ -242,18 +172,22 @@ def run_record(
     cfg: RunConfig,
     input_path: Path,
     digest: str,
+    case_concepts: Sequence[str],
     case_concept_source: str,
-    data: OCEDStore,
+    data: ReadableStore,
 ) -> dict[str, Any]:
     """Assemble what to record about this run.
 
     The result is annotated onto the ontology, so it has to say everything
-    needed to identify the input and reproduce the run.
+    needed to identify the input and reproduce the run. The settings record
+    themselves under `buildConfiguration`, and what is resolved per log rather
+    than configured in advance is recorded here.
 
     Args:
         cfg: The resolved run.
         input_path: Log being built.
         digest: Checksum of that log.
+        case_concepts: Object types this input resolved to.
         case_concept_source: Whether the case concepts were given or chosen.
         data: The loaded log, measured for the record.
 
@@ -267,24 +201,27 @@ def run_record(
         outputs["backmap"] = str(cfg.backmap_path(input_path))
 
     return {
-        "sourceLogSha256": digest,
-        "sourceLogBytes": input_path.stat().st_size,
-        "caseConceptSource": case_concept_source,
-        "buildCommand": cfg.command,
-        "buildConfigFile": None if cfg.config_file is None else str(cfg.config_file),
-        "buildInputStatistics": _store_stats(data),
-        "buildOutputs": outputs or None,
-        "materializeRequested": cfg.materialize,
+        vocab.SOURCE_LOG_SHA256: digest,
+        vocab.SOURCE_LOG_BYTES: input_path.stat().st_size,
+        vocab.CASE_CONCEPTS: list(case_concepts) or None,
+        vocab.CASE_CONCEPT_SOURCE: case_concept_source,
+        vocab.DECLARE_FILE: cfg.declare_file,
+        vocab.ANNOTATION_DOCUMENT: cfg.annotation_document,
+        vocab.BUILD_COMMAND: cfg.command,
+        vocab.BUILD_CONFIG_FILE: None
+        if cfg.config_file is None
+        else str(cfg.config_file),
+        vocab.BUILD_INPUT_STATISTICS: _store_stats(data),
+        vocab.BUILD_OUTPUTS: outputs or None,
+        vocab.MATERIALIZE_REQUESTED: cfg.materialize,
     }
 
 
 def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
     """Build one input, from loading the log to writing the ontology.
 
-    The provenance record is assembled before the build, so the ontology
-    carries it from the start. The ontology itself goes to a `.partial` file
-    that is renamed into place once it is complete, so a build that fails
-    leaves whatever was there before it untouched.
+    The steps themselves are the library's. What is here is the record this
+    run keeps, the artifacts only a run produces, and the reporting.
 
     Args:
         cfg: The resolved run.
@@ -301,44 +238,38 @@ def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
 
     digest = file_digest(input_path)
 
-    logger.info("Loading OCEL data..")
+    logger.info("Loading event data..")
     with _timed(timings, "load"):
         data = load_and_clean(
-            input_path, cfg.settings.ocel_extensions, cfg.settings.bin_labels
+            input_path,
+            cfg.settings.ocel_extensions,
+            cfg.settings.bin_labels,
+            cfg.loader_columns(),
         )
 
-    case_concepts, source = choose_case_concepts(cfg, data)
+    case_concepts, source = choose_case_concepts(
+        data, cfg.case_concepts, cfg.auto_case_concepts
+    )
     logger.info(f"Case concepts ({source}): {case_concepts or 'none'}")
-    settings = cfg.settings_for(case_concepts)
-    warn_on_foreign_declare(settings, digest)
+    declare = cfg.declare_result()
+    warn_on_foreign_declare(declare, digest)
+    inputs = cfg.build_inputs(case_concepts, declare)
+
+    settings = cfg.settings
+    record = run_record(cfg, input_path, digest, case_concepts, source, data)
 
     logger.info("Building ontology..")
-    onto_path.parent.mkdir(parents=True, exist_ok=True)
-    partial_path = onto_path.with_name(onto_path.name + PARTIAL_SUFFIX)
-    sink: AxiomSink
-    if cfg.streaming:
-        sink = StreamingSink(str(partial_path), DEFAULT_IRI, settings)
-    else:
-        sink = InMemorySink(DEFAULT_IRI, settings)
-
-    record = run_record(cfg, input_path, digest, source, data)
-
-    try:
-        with _timed(timings, "build"):
-            semlog = OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
-                data, source=str(input_path), run=record
-            )
-
-        with _timed(timings, "write"):
-            if semlog.onto is not None:
-                semlog.save(str(partial_path))
-            partial_path.replace(onto_path)
-            if semlog.path is not None:
-                semlog = dataclasses.replace(semlog, path=str(onto_path))
-    except BaseException:
-        sink.abort()
-        partial_path.unlink(missing_ok=True)
-        raise
+    with _timed(timings, "build"):
+        semlog = build_log(
+            data,
+            settings,
+            inputs,
+            onto_path,
+            iri=cfg.iri,
+            source=str(input_path),
+            record=record,
+            streaming=cfg.streaming,
+        )
     logger.info(f"Ontology saved: {onto_path}")
 
     if cfg.save_backmap:
@@ -356,7 +287,7 @@ def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
             ).materialize()
         logger.info("Materialization complete.")
 
-    stats = _ontology_stats(semlog, sink)
+    stats = _ontology_stats(semlog)
     logger.info("Ontology: " + ", ".join(f"{k}={v:,}" for k, v in stats.items()))
     logger.info("Timings:  " + ", ".join(f"{k}={v:.2f}s" for k, v in timings.items()))
     return record
@@ -463,6 +394,7 @@ def inspect_input(
     path: Path,
     extensions: Sequence[OCELExtension] = (),
     suggest: int = 3,
+    columns: Mapping[str, Any] | None = None,
 ) -> InspectReport:
     """Summarize one log without building anything.
 
@@ -473,11 +405,12 @@ def inspect_input(
         path: Log to summarize.
         extensions: OCEL extensions to load as well.
         suggest: How many case concepts to suggest.
+        columns: Column names for a flat `.csv` or `.xes` log.
 
     Returns:
         The summary.
     """
-    data = load_and_clean(path, extensions)
+    data = load_and_clean(path, extensions, columns=columns)
 
     def by_count(counted: list[tuple[str, int]]) -> list[tuple[str, int]]:
         return sorted(counted, key=lambda item: item[1], reverse=True)
@@ -532,6 +465,7 @@ def mine_declare(
     itemset_support: float,
     auto_case_concepts: int = 3,
     extensions: Sequence[OCELExtension] = (),
+    columns: Mapping[str, Any] | None = None,
 ) -> Path:
     """Mine DECLARE constraints from a log and write them to a CSV.
 
@@ -548,6 +482,7 @@ def mine_declare(
         itemset_support: Share of traces an activity set has to occur in.
         auto_case_concepts: How many case concepts to choose when choosing.
         extensions: OCEL extensions to load as well.
+        columns: Column names for a flat `.csv` or `.xes` log.
 
     Returns:
         The file written.
@@ -557,14 +492,10 @@ def mine_declare(
     """
     from semanticlog.enrich.declare import DeclareEnricher
 
-    logger.info(f"Loading OCEL data from {input_path}..")
-    data = load_and_clean(input_path, extensions)
+    logger.info(f"Loading event data from {input_path}..")
+    data = load_and_clean(input_path, extensions, columns=columns)
 
-    chosen = (
-        follow_renames(data, case_concepts)
-        if case_concepts is not None
-        else rank_case_concepts(data, auto_case_concepts)
-    )
+    chosen, _ = choose_case_concepts(data, case_concepts, auto_case_concepts)
     logger.info(f"Case concepts: {chosen}")
 
     logger.info("Mining DECLARE constraints via discovery..")

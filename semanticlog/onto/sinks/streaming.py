@@ -1,28 +1,34 @@
 """Sink that writes OWL functional syntax straight to a file.
 
-Nothing is kept beyond the name bookkeeping of the base class, so memory stays
-roughly flat however many events the log has. Writing the syntax here also puts
-the literal types under this module's control instead of the backend's.
+An axiom goes out as it arrives and is not kept, so what a build holds does not
+grow with the number of events. It does grow with what the log is made of: one
+entry per declared name, and one per distinct attribute value and moment. The
+log itself is held in full by the store either way, and for a large log that is
+the floor. `benchmarks/streaming_memory.py` measures all three.
 
-The file is only a valid ontology once it has been closed, because the closing
-bracket is written then.
+Writing the syntax here also puts the literal types under this module's control
+instead of the backend's.
+
+The ontology is written under a partial name and moved into place on close,
+because the closing bracket is written then and what came before it is not an
+ontology.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from datetime import date, datetime
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
-from semanticlog.onto.settings import OntoBuildSettings
+from semanticlog.core.enums import OWLProfile
 from semanticlog.onto.sinks.base import (
     _RDFS,
     _XSD,
     OWL_DATATYPES,
+    PARTIAL_SUFFIX,
     AxiomSink,
-    normalize_value,
 )
+from semanticlog.onto.sinks.literals import resolve_literal
 
 
 class StreamingSink(AxiomSink):
@@ -34,19 +40,25 @@ class StreamingSink(AxiomSink):
         path: File being written.
     """
 
-    def __init__(self, path: str, iri: str, settings: OntoBuildSettings):
-        """Open the file and write the prefixes and ontology header.
+    def __init__(self, path: str, iri: str, profile: OWLProfile):
+        """Open the file to write to.
+
+        Writing goes to a partial file beside the destination, which is moved
+        into place on close. The header is written when the sink is opened
+        rather than here, because the ontology annotations belong inside it
+        and they arrive after the sink exists.
 
         Args:
-            path: File to write. An existing file is replaced.
+            path: Where the finished ontology belongs. An existing file there
+                is replaced only once this one is complete.
             iri: Base IRI of the ontology.
-            settings: Settings of the build this sink serves.
+            profile: Profile of the build this sink serves.
         """
-        super().__init__(iri, settings)
+        super().__init__(iri, profile)
         self.path = path
-        self._file: TextIO | None = open(path, "w", encoding="utf-8")
+        self._partial = Path(path + PARTIAL_SUFFIX)
+        self._file: TextIO | None = open(self._partial, "w", encoding="utf-8")
         self._axiom_count = 0
-        self._write_header()
 
     @property
     def axiom_count(self) -> int:
@@ -66,8 +78,14 @@ class StreamingSink(AxiomSink):
             raise ValueError(f"StreamingSink for {self.path} is already closed.")
         return self._file
 
-    def _write_header(self) -> None:
-        """Write the prefix declarations and open the ontology."""
+    def write_ontology_header(self, annotations: Mapping[str, str]) -> None:
+        """Write the prefixes, open the ontology, and annotate it.
+
+        The annotations go inside `Ontology(...)`, which is what makes them
+        annotations on the ontology rather than on an IRI that happens to be
+        its name. That is why they all arrive at once and why nothing can be
+        added to them afterwards.
+        """
         base = self.iri.rstrip("#")
         self._out.write(
             f"Prefix(:=<{self.iri}>)\n"
@@ -77,9 +95,13 @@ class StreamingSink(AxiomSink):
             f"Prefix(xsd:=<{_XSD}>)\n\n"
             f"Ontology(<{base}>\n"
         )
+        for property_iri, value in annotations.items():
+            self._out.write(f'Annotation(<{property_iri}> "{self._escape(value)}")\n')
+            self._axiom_count += 1
 
     def _axiom(self, text: str) -> None:
-        """Write one axiom and count it."""
+        """Write one axiom and count it, opening the ontology if it is not open."""
+        self._begin_write()
         self._out.write(text)
         self._out.write("\n")
         self._axiom_count += 1
@@ -104,6 +126,7 @@ class StreamingSink(AxiomSink):
         "class": "Class",
         "object": "ObjectProperty",
         "data": "DataProperty",
+        "annotation": "AnnotationProperty",
     }
 
     def write_declaration(self, name: str, kind: str) -> None:
@@ -167,23 +190,12 @@ class StreamingSink(AxiomSink):
                 f"DataPropertyAssertion({ref} {self._ref(str(subject))} {literal})"
             )
 
-    @classmethod
-    def _literal(cls, value: Any) -> str | None:
+    def _literal(self, value: Any) -> str | None:
         """Render a value as a typed literal, or None when it is missing."""
-        value = normalize_value(value)
-        if value is None:
+        literal = resolve_literal(value, self.profile)
+        if literal is None:
             return None
-        if isinstance(value, bool):
-            return f'"{str(value).lower()}"^^xsd:boolean'
-        if isinstance(value, datetime):
-            return f'"{value.isoformat()}"^^xsd:dateTime'
-        if isinstance(value, date):
-            return f'"{value.isoformat()}"^^xsd:date'
-        if isinstance(value, int):
-            return f'"{value}"^^xsd:integer'
-        if isinstance(value, float):
-            return f'"{value}"^^xsd:double'
-        return f'"{cls._escape(str(value))}"^^xsd:string'
+        return f'"{self._escape(literal.text)}"^^xsd:{literal.datatype}'
 
     @staticmethod
     def _escape(text: str) -> str:
@@ -204,37 +216,33 @@ class StreamingSink(AxiomSink):
                 f'"{self._escape(str(text))}")'
             )
 
-    def write_ontology_annotation(self, property_iri: str, value: str) -> None:
-        self._axiom(
-            f"AnnotationAssertion(<{property_iri}> <{self.iri.rstrip('#')}> "
-            f'"{self._escape(value)}")'
-        )
-
-    def close(self) -> None:
-        """Close the ontology and the file. Closing twice is harmless."""
-        if self._file is None:
-            return
-        self._file.write(")\n")
-        self._file.close()
+    def _finish(self) -> None:
+        """Close the ontology and the file, then move it into place."""
+        out = self._out
+        out.write(")\n")
+        out.close()
         self._file = None
+        self._partial.replace(self.path)
 
     def abort(self) -> None:
         """Close the file without finishing the ontology, and remove it.
 
         What has been written so far is missing its closing bracket, so it is
-        not an ontology. Removing it also means a failed build cannot leave a
-        truncated file where a finished one used to be.
+        not an ontology. It is still under the partial name, so removing it
+        leaves whatever was at the destination untouched.
         """
         if self._file is not None:
             self._file.close()
             self._file = None
-        Path(self.path).unlink(missing_ok=True)
+        self._closed = True
+        self._partial.unlink(missing_ok=True)
 
     def save(self, path: str) -> None:
         """Finish the file this sink has been writing.
 
-        The ontology has been going to disk all along, so this only closes it
-        and cannot write it somewhere else.
+        The ontology has been going to disk all along, so this only closes it,
+        which is what moves it into place, and it cannot write it somewhere
+        else.
 
         Raises:
             ValueError: If the path is not the one this sink was opened on.
