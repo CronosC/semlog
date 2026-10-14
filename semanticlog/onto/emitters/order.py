@@ -29,7 +29,10 @@ logger = logging.getLogger(__name__)
 
 
 def declare_membership(constraints: pd.DataFrame, constraint: str) -> pd.Series:
-    """Return which traces satisfy one constraint. A missing cell counts as False."""
+    """Return the traces asserted as members of one constraint class.
+
+    A True cell makes the trace a member. A False or empty cell asserts nothing.
+    """
     return constraints[constraint].fillna(False).astype(bool)
 
 

@@ -481,8 +481,10 @@ class DeclareEnricher:
         """Rewrite the miner output into class names and membership columns.
 
         Brackets and commas in column names become underscores and spaces are
-        removed. An empty cell counts as not satisfied. A boolean column with
-        one value across all traces of all case concepts is dropped.
+        removed. Within a case concept, an empty cell counts as not satisfied.
+        A constraint the miner did not check for a case concept is empty for
+        that concept's traces. A boolean column with one value across every
+        trace it was checked for is dropped.
 
         Args:
             results: One frame per case concept.
@@ -515,13 +517,13 @@ class DeclareEnricher:
             [df.assign(case_concept=key) for key, df in results.items()],
             ignore_index=True,
         )
-        constant = [
-            col
-            for col in results_df.columns
-            if col not in CONSTRAINT_INDEX_COLUMNS
-            and results_df[col].dtype == bool
-            and results_df[col].nunique(dropna=False) <= 1
-        ]
+        constant = []
+        for col in results_df.columns:
+            if col in CONSTRAINT_INDEX_COLUMNS:
+                continue
+            checked = results_df[col].dropna()
+            if checked.isin([True, False]).all() and checked.nunique() <= 1:
+                constant.append(col)
         return results_df.drop(columns=constant)
 
     def get_log(self, case_concept: str) -> tuple[Any, list[Any]]:

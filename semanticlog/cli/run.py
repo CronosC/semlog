@@ -26,6 +26,7 @@ from semanticlog.data.readable import ReadableStore
 from semanticlog.data.stats import file_digest, store_stats
 from semanticlog.enrich.declare import DeclareResult
 from semanticlog.onto.emitters.provenance import build_configuration
+from semanticlog.onto.inputs import constraint_names
 from semanticlog.onto.pipeline import build_log
 from semanticlog.onto.reason import Reasoner
 from semanticlog.onto.record import recorded_annotation, recorded_configuration
@@ -347,7 +348,19 @@ def mine_declare(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result.write(str(output_path))
-    logger.info("%s constraints saved: %s", len(result.constraints), output_path)
+    kept = constraint_names(result.constraints)
+    logger.info(
+        "Saved %d DECLARE constraint(s) over %d trace(s) to %s",
+        len(kept),
+        len(result.constraints),
+        output_path,
+    )
+    if not kept:
+        logger.warning(
+            "Mining kept no DECLARE constraints. Each constraint discovery "
+            "proposed held for every trace it was checked against, or for none. "
+            "Lower itemset_support to include activities only some traces contain."
+        )
     return output_path
 
 

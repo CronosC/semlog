@@ -358,9 +358,26 @@ def test_a_constraint_that_holds_of_every_trace_is_dropped(enricher):
 def test_a_constraint_constant_within_one_case_concept_only_is_kept(enricher):
     frames = {
         "order": pd.DataFrame(
+            {"Response[a, b] | | |": [1, 1], "trace_id": ["o1", "o2"]}
+        ),
+        "item": pd.DataFrame(
+            {"Response[a, b] | | |": [1, 0], "trace_id": ["i1", "i2"]}
+        ),
+    }
+
+    result = enricher.postprocess_results(frames)
+
+    assert result["Response__a__b__"].tolist() == [True, True, True, False]
+
+
+def test_a_constraint_checked_for_one_case_concept_and_held_by_all_is_dropped(
+    enricher,
+):
+    frames = {
+        "order": pd.DataFrame(
             {
-                "Response[a, b] | | |": [1, 1],
                 "Init[a] | |": [1, 1],
+                "Response[a, b] | | |": [1, 0],
                 "trace_id": ["o1", "o2"],
             }
         ),
@@ -371,12 +388,8 @@ def test_a_constraint_constant_within_one_case_concept_only_is_kept(enricher):
 
     result = enricher.postprocess_results(frames)
 
-    assert result["Response__a__b__"].tolist() == [True, True, True, False]
-    assert result.loc[result["case_concept"] == "order", "Init__a__"].tolist() == [
-        True,
-        True,
-    ]
-    assert result.loc[result["case_concept"] == "item", "Init__a__"].isna().all()
+    assert "Init__a__" not in result.columns
+    assert result["Response__a__b__"].tolist() == [True, False, True, False]
 
 
 def test_two_constraints_that_clean_to_one_name_are_rejected(enricher):

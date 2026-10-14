@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 
 import pandas as pd
 import pytest
 
 from semanticlog.cli import EXIT_OK, EXIT_USAGE, main
 from semanticlog.cli.config import resolve_run_config
-from semanticlog.cli.run import build_all, build_one, warn_on_foreign_declare
+from semanticlog.cli.run import (
+    build_all,
+    build_one,
+    mine_declare,
+    warn_on_foreign_declare,
+)
 from semanticlog.core.errors import ConfigError, DependencyError
 from semanticlog.enrich.declare import DeclareResult
 from tests.support.owlapi import ontology_annotations
@@ -396,6 +402,38 @@ def test_mine_declare_writes_constraints_that_record_their_log(
     assert result.case_concepts == ["order"]
     assert result.source_log == str(ocel)
     assert len(result.source_sha256) == 64
+
+
+def test_mine_declare_logs_the_constraint_count_over_the_trace_count(
+    ocel, tmp_path, fake_enricher, caplog
+):
+    with caplog.at_level(logging.INFO, logger="semanticlog"):
+        mine_declare(ocel, tmp_path / "c.csv")
+
+    assert "Saved 1 DECLARE constraint(s) over 2 trace(s)" in caplog.text
+
+
+class _EmptyEnricher(_FakeEnricher):
+    """Fake `DeclareEnricher` whose mining keeps no constraint."""
+
+    def get_constraints_via_discovery(self, **kwargs):
+        result = super().get_constraints_via_discovery(**kwargs)
+        constraints = result.constraints[["case_concept", "trace_id"]]
+        return dataclasses.replace(result, constraints=constraints)
+
+
+def test_mine_declare_warns_when_no_constraint_is_kept(
+    ocel, tmp_path, monkeypatch, caplog
+):
+    import semanticlog.enrich.declare as declare
+
+    monkeypatch.setattr(declare, "DeclareEnricher", _EmptyEnricher)
+
+    with caplog.at_level(logging.WARNING, logger="semanticlog"):
+        mine_declare(ocel, tmp_path / "c.csv")
+
+    assert "Mining kept no DECLARE constraints" in caplog.text
+    assert "itemset_support" in caplog.text
 
 
 def test_mine_declare_passes_the_thresholds_and_templates_through(
