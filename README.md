@@ -41,7 +41,7 @@ Without `--case-concepts`, the three most common object types are chosen. Withou
 |---|---|
 | `semlog build` | Build one ontology per event log. |
 | `semlog inspect` | Summarize a log: activities, object types, relations, time range, and the activity and object type names cleaning changed. |
-| `semlog mine-declare` | Mine DECLARE constraints into a CSV for `--order-representations declare`. Needs Lydia. |
+| `semlog mine-declare` | Mine DECLARE constraints into a JSON file for `--order-representations declare`. Needs Lydia. |
 | `semlog reason` | Materialize or consistency-check an existing ontology. |
 
 `semlog <command> --help` lists every flag.
@@ -83,11 +83,11 @@ uv run semlog build --config runs/el-explicit.toml
 
 ### Mining DECLARE constraints
 
-`mine-declare` needs Lydia, see [DECLARE support](#declare-support). It writes to `--output`, else to the config's `declare_file`, else to `<input stem>.csv` in the current directory. Pass the CSV to a build with `--declare-file`:
+`mine-declare` needs Lydia, see [DECLARE support](#declare-support). It writes to `--output`, else to the config's `declare_file`, else to `<input stem>.declare.json` in the current directory. The file holds, per case concept, the traces checked and the traces that satisfy each constraint, with the templates and thresholds it was mined with. Pass it to a build with `--declare-file`:
 
 ```bash
-uv run semlog mine-declare tests/fixtures/pipeline.jsonocel --case-concepts order --output runs/pipeline.csv
-uv run semlog build tests/fixtures/pipeline.jsonocel --case-concepts order --order-representations df declare --declare-file runs/pipeline.csv
+uv run semlog mine-declare tests/fixtures/pipeline.jsonocel --case-concepts order --output runs/pipeline.declare.json
+uv run semlog build tests/fixtures/pipeline.jsonocel --case-concepts order --order-representations df declare --declare-file runs/pipeline.declare.json
 ```
 
 `mine-declare --config` and `build --config` read the same file. It can hold the mining settings `constraints`, `constraint_support` and `itemset_support` beside the build settings.
@@ -129,7 +129,7 @@ The record of how the file was produced is annotated onto the ontology itself: t
 | `iri` | `https://oced#` | Base IRI the ontology puts its names in. A trailing `#` is added when missing. |
 | `profile` | `OWL2DL` | Which OWL 2 profile the output stays inside. `OWL2EL` rejects `ef` and `axiomatic` inverses, drops a domain or range that is a union of classes, and writes a float as `xsd:decimal` and a boolean or date as `xsd:string`. |
 | `order_representations` | none | How event order is written: `df`, `ef`, `ef_explicit`, `declare`. Several can be combined. `ef` declares eventually-follows transitive over `df` and leaves the pairs to a reasoner, so it needs `df` beside it and `OWL2DL`. `ef_explicit` asserts every pair itself. |
-| `case_concepts` | the 3 most common object types | Object types whose instances act as cases, spelled as the source log spells them. `df`, `ef` and `ef_explicit` need at least one. `declare` takes its traces from the mined CSV. |
+| `case_concepts` | the 3 most common object types | Object types whose instances act as cases, spelled as the source log spells them. `df`, `ef` and `ef_explicit` need at least one. `declare` takes its traces from the mined file. |
 | `auto_case_concepts` | `3` | How many object types are chosen when `case_concepts` is not set. |
 | `data_representations` | `values` | How numeric attributes appear: `values` keeps the number, `equal_bins` buckets by frequency, `dist_bins` fits a distribution first. Each attribute is cut once, over every value it takes anywhere in the log. A column with too few distinct values to bin keeps its numbers. |
 | `inverse_representations` | none | `axiomatic` writes inverse property axioms (OWL2DL only), `implicit` materializes the inverse assertions. |
@@ -139,7 +139,7 @@ The record of how the file was produced is annotated onto the ontology itself: t
 | `size_limit_mb` | `0` | Skip inputs larger than this many MB. Zero for no limit. |
 | `derive_annotations` | `false` | Emit `rdfs:label` and `rdfs:comment` derived from the original names in the log. |
 | `annotation_document` | none | JSON file mapping entity names to `{label, comment}`. |
-| `declare_file` | none | CSV written by `semlog mine-declare`. Required for `declare`. |
+| `declare_file` | none | File written by `semlog mine-declare`. Required for `declare`. |
 | `materialize` | `false` | Run a reasoner over the result and save what it entails. Needs a JVM. |
 | `reasoner_backend` | `HermiT` | Reasoner `materialize` runs: `HermiT`, `Pellet`, `ELK`. |
 | `streaming` | `true` | Write OWL functional syntax to disk as `<name>.ofn`. Off builds the ontology in memory and writes `<name>.owl` in RDF/XML, which rdflib reads. |

@@ -8,6 +8,7 @@ import pytest
 from semanticlog.core.enums import EventOrderRepresentation
 from semanticlog.core.errors import ConfigError, InputError
 from semanticlog.data.cleaning import clean_oced_data
+from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.audit import audit_build
@@ -43,13 +44,19 @@ def _store(object_type: str = "order", relation_eid: str = "e1") -> OCEDStore:
     return data
 
 
-def _declare_audit(constraints: dict) -> None:
+def _declare_audit(case_concept: str, trace_ids: tuple[str, ...]) -> None:
+    declare = DeclareResult(
+        concepts=(
+            ConceptConstraints(
+                case_concept, trace_ids, {"Response__a__b__": frozenset(trace_ids[:1])}
+            ),
+        ),
+        mining=MiningSettings("discovery", None, 0.5, 0.5),
+    )
     audit_build(
         clean_oced_data(_store()),
         DECLARE,
-        BuildInputs(
-            case_concepts=["order"], declare_constraints=pd.DataFrame(constraints)
-        ),
+        BuildInputs(case_concepts=["order"], declare=declare),
     )
 
 
@@ -85,42 +92,14 @@ def test_a_case_concept_the_log_cannot_be_projected_onto_is_rejected(
 # --------------------------------------------------------------------------
 
 
-def test_constraints_missing_an_index_column_name_it():
-    with pytest.raises(InputError, match="no 'case_concept' column"):
-        _declare_audit({"trace_id": ["o1"], "Response__a__b__": [True]})
-
-
-def test_a_constraint_row_with_no_case_concept_is_rejected():
-    with pytest.raises(InputError, match="1 row\\(s\\) have no case concept"):
-        _declare_audit(
-            {
-                "case_concept": ["order", None],
-                "trace_id": ["o1", "ghost"],
-                "Response__a__b__": [True, True],
-            }
-        )
-
-
 def test_a_constraint_case_concept_the_log_lacks_is_rejected():
     with pytest.raises(InputError, match="case concept 'invoice' is not an object"):
-        _declare_audit(
-            {
-                "case_concept": ["invoice"],
-                "trace_id": ["i1"],
-                "Response__a__b__": [True],
-            }
-        )
+        _declare_audit("invoice", ("i1",))
 
 
 def test_a_trace_id_that_is_no_object_of_its_case_concept_is_rejected():
     with pytest.raises(InputError, match="1 of 2 'order' trace id.* starting with o9"):
-        _declare_audit(
-            {
-                "case_concept": ["order", "order"],
-                "trace_id": ["o1", "o9"],
-                "Response__a__b__": [True, False],
-            }
-        )
+        _declare_audit("order", ("o1", "o9"))
 
 
 # --------------------------------------------------------------------------

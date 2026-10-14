@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -202,6 +202,11 @@ def attribute_change_class(attribute: str) -> str:
 def bin_class(attribute: str, label: Any) -> str:
     """Return the class name for one bin of a binned numeric attribute."""
     return f"{attribute}_bin_{label}"
+
+
+def declare_constraint(template: str, activities: Sequence[str]) -> str:
+    """Return the class name of a DECLARE constraint, such as `Response__a__b__`."""
+    return f"{template.replace(' ', '')}__{'__'.join(activities)}__"
 
 
 def format_number(value: float) -> str:

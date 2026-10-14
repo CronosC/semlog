@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 
-import pandas as pd
 import pytest
 
 from semanticlog.core.enums import EventOrderRepresentation
 from semanticlog.core.vocabulary import DEFAULT_IRI, UnsafeLocalNameError
+from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.pipeline import build_log
 from semanticlog.onto.settings import OntoBuildSettings
@@ -77,8 +77,11 @@ def test_the_iri_and_the_run_record_reach_the_file(tiny_store, tmp_path):
 
 def test_a_rejected_build_leaves_no_file_behind(tiny_store, tmp_path):
     output = tmp_path / "rejected" / "out.ofn"
-    constraints = pd.DataFrame(
-        {"case_concept": ["order"], "trace_id": ["o1"], "Response@1": [True]}
+    declare = DeclareResult(
+        concepts=(
+            ConceptConstraints("order", ("o1",), {"Response@1": frozenset({"o1"})}),
+        ),
+        mining=MiningSettings("discovery", None, 0.5, 0.5),
     )
 
     with pytest.raises(UnsafeLocalNameError, match="Response@1"):
@@ -87,7 +90,7 @@ def test_a_rejected_build_leaves_no_file_behind(tiny_store, tmp_path):
             OntoBuildSettings(
                 order_representations=[DF, EventOrderRepresentation.DECLARE]
             ),
-            BuildInputs(case_concepts=["order"], declare_constraints=constraints),
+            BuildInputs(case_concepts=["order"], declare=declare),
             output,
         )
 

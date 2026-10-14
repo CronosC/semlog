@@ -9,10 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import pandas as pd
-
 from semanticlog.core.errors import ConfigError
-from semanticlog.data.tables import CONSTRAINT_INDEX_COLUMNS
+from semanticlog.data.declare import DeclareResult
 from semanticlog.onto.settings import OntoBuildSettings
 
 
@@ -23,15 +21,14 @@ class BuildInputs:
     Attributes:
         case_concepts: Object types whose instances act as cases. Every order
             representation but DECLARE needs at least one.
-        declare_constraints: One row per trace, with `case_concept` and
-            `trace_id` saying which trace and every other column naming one
-            constraint. None when the build emits no DECLARE membership.
+        declare: The mined DECLARE constraints. None when the build emits no
+            DECLARE membership.
         annotations: Entity name to its label and comment. Applied after
             every name has been declared.
     """
 
     case_concepts: tuple[str, ...] = ()
-    declare_constraints: pd.DataFrame | None = None
+    declare: DeclareResult | None = None
     annotations: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -42,11 +39,6 @@ class BuildInputs:
             )
         if not isinstance(self.case_concepts, tuple):
             object.__setattr__(self, "case_concepts", tuple(self.case_concepts))
-        if self.declare_constraints is not None:
-            # A copy, so a caller holding the original cannot change frozen inputs.
-            object.__setattr__(
-                self, "declare_constraints", self.declare_constraints.copy()
-            )
 
     def validate(self, settings: OntoBuildSettings) -> None:
         """Check that these inputs hold what the settings need.
@@ -64,19 +56,14 @@ class BuildInputs:
                 "case_concepts."
             )
 
-        if settings.emits_declare and self.declare_constraints is None:
+        if settings.emits_declare and self.declare is None:
             errors.append(
                 "order_representations includes declare but no constraints were "
                 "given. Mine them with 'semlog mine-declare' and set "
-                "declare_file to the table it writes."
+                "declare_file to the file it writes."
             )
 
         if errors:
             raise ConfigError(
                 "Invalid BuildInputs:\n" + "\n".join(f"  - {e}" for e in errors)
             )
-
-
-def constraint_names(constraints: pd.DataFrame) -> list[str]:
-    """Return the constraint columns of a table, without the ones that index it."""
-    return [c for c in constraints.columns if c not in CONSTRAINT_INDEX_COLUMNS]

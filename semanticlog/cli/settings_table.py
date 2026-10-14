@@ -473,11 +473,11 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         _optional(_as_str),
         "run",
         help=(
-            "DECLARE constraints CSV, as written by 'semlog mine-declare' "
+            "DECLARE constraints file, as written by 'semlog mine-declare' "
             "(default: none). Required when --order-representations includes "
             "declare."
         ),
-        argparse={"metavar": "CSV"},
+        argparse={"metavar": "FILE"},
     ),
     Setting(
         "constraints",

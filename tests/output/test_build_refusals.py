@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pandas as pd
 import pytest
 
 from semanticlog.core.enums import EventOrderRepresentation, OCELExtension
@@ -11,7 +10,7 @@ from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 from tests.support import stores
-from tests.support.settings import settings
+from tests.support.settings import declare_constraints, settings
 
 NS = DEFAULT_IRI
 DF = EventOrderRepresentation.DF
@@ -41,13 +40,7 @@ def test_case_concepts_are_not_checked_when_no_order_is_emitted(tiny_store):
 def test_a_constraint_named_after_an_object_type_is_rejected():
     config = settings(
         order_representations=[DF, EventOrderRepresentation.DECLARE],
-        declare_constraints=pd.DataFrame(
-            {
-                "trace_id": ["o1", "o2"],
-                "case_concept": ["order", "order"],
-                "order": [True, False],
-            }
-        ),
+        declare=declare_constraints("order"),
     )
 
     with pytest.raises(NameCollisionError, match="'order'"):

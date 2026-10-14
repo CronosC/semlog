@@ -8,9 +8,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 
-import numpy as np
-import pandas as pd
-
 from semanticlog.core.enums import (
     DataRepresentation,
     EventOrderRepresentation,
@@ -18,30 +15,39 @@ from semanticlog.core.enums import (
     OCELExtension,
     OWLProfile,
 )
+from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 
+DISCOVERY = MiningSettings("discovery", ("Response",), 0.1, 0.9)
 
-def declare_constraints() -> pd.DataFrame:
-    """Constraints over one case concept, for the DECLARE order representation."""
-    return pd.DataFrame(
-        {
-            "trace_id": ["o1", "o2"],
-            "case_concept": ["order", "order"],
-            "Response__place_order__ship__": [True, False],
-        }
+
+def declare_constraints(
+    constraint: str = "Response__place_order__ship__",
+) -> DeclareResult:
+    """One constraint over the orders o1 and o2, which o1 satisfies."""
+    return DeclareResult(
+        concepts=(
+            ConceptConstraints("order", ("o1", "o2"), {constraint: frozenset({"o1"})}),
+        ),
+        mining=DISCOVERY,
     )
 
 
-def ragged_declare_constraints() -> pd.DataFrame:
-    """Constraints over two case concepts, where neither holds of the other's traces."""
-    return pd.DataFrame(
-        {
-            "trace_id": ["o1", "o2", "i1", "i2"],
-            "case_concept": ["order", "order", "item", "item"],
-            "Response__place_order__ship__": [True, False, np.nan, np.nan],
-            "Existence__ship__": [np.nan, np.nan, True, False],
-        }
+def ragged_declare_constraints() -> DeclareResult:
+    """Constraints over two case concepts, each mined for one of them only."""
+    return DeclareResult(
+        concepts=(
+            ConceptConstraints(
+                "order",
+                ("o1", "o2"),
+                {"Response__place_order__ship__": frozenset({"o1"})},
+            ),
+            ConceptConstraints(
+                "item", ("i1", "i2"), {"Existence__ship__": frozenset({"i1"})}
+            ),
+        ),
+        mining=DISCOVERY,
     )
 
 
@@ -124,7 +130,7 @@ MATRIX: dict[str, Callable[[], Configuration]] = {
             EventOrderRepresentation.DF,
             EventOrderRepresentation.DECLARE,
         ],
-        declare_constraints=ragged_declare_constraints(),
+        declare=ragged_declare_constraints(),
         inverse_representations=[InverseRepresentation.IMPLICIT],
         data_representations=[],
         derive_annotations=True,

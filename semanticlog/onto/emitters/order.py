@@ -15,25 +15,18 @@ import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.errors import ConfigError
+from semanticlog.data.declare import DeclareResult
 from semanticlog.data.flatten import iter_logs
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters.base import Emitter
-from semanticlog.onto.inputs import BuildInputs, constraint_names
+from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import AxiomSink
 
 logger = logging.getLogger(__name__)
-
-
-def declare_membership(constraints: pd.DataFrame, constraint: str) -> pd.Series:
-    """Return the traces asserted as members of one constraint class.
-
-    A True cell makes the trace a member. A False or empty cell asserts nothing.
-    """
-    return constraints[constraint].fillna(False).astype(bool)
 
 
 class OrderEmitter(Emitter):
@@ -53,8 +46,8 @@ class OrderEmitter(Emitter):
         """Emit whichever order representations the settings selected."""
         if self.settings.emits_traces:
             self._emit_trace_order(data, inputs.case_concepts)
-        if self.settings.emits_declare and inputs.declare_constraints is not None:
-            self._emit_declare(data, inputs.declare_constraints)
+        if self.settings.emits_declare and inputs.declare is not None:
+            self._emit_declare(data, inputs.declare)
 
     def _emit_trace_order(
         self, data: ReadableStore, case_concepts: Sequence[str]
@@ -245,7 +238,7 @@ class OrderEmitter(Emitter):
             f"{total:,}",
         )
 
-    def _emit_declare(self, data: ReadableStore, df_declare: pd.DataFrame) -> None:
+    def _emit_declare(self, data: ReadableStore, declare: DeclareResult) -> None:
         """Type each trace by the DECLARE constraints it satisfies.
 
         Every mined constraint becomes a class. The case object of a trace
@@ -254,13 +247,13 @@ class OrderEmitter(Emitter):
         Args:
             data: Store being built from. Its activity names split the
                 constraint names for labels.
-            df_declare: One row per trace, as `BuildInputs` carries it.
+            declare: The mined constraints.
 
         Raises:
             NameCollisionError: If a constraint has the name of a class the
                 build declared from the log. The sink raises it.
         """
-        constraints = constraint_names(df_declare)
+        constraints = declare.constraint_names()
 
         self.sink.add_class(
             vocab.DECLARE_CONSTRAINT, source="the DECLARE constraint hierarchy"
@@ -276,7 +269,4 @@ class OrderEmitter(Emitter):
         )
 
         for constraint in constraints:
-            trace_ids = df_declare.loc[
-                declare_membership(df_declare, constraint), "trace_id"
-            ]
-            self.sink.assert_individuals(constraint, trace_ids)
+            self.sink.assert_individuals(constraint, declare.members(constraint))

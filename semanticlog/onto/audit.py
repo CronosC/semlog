@@ -11,14 +11,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
-import pandas as pd
-
 from semanticlog.core.checks import CheckReport, Fixed, raise_reports
 from semanticlog.data.cleaning import object_type_renames
+from semanticlog.data.declare import DeclareResult
 from semanticlog.data.flatten import case_concept_candidates
 from semanticlog.data.integrity import check_integrity
 from semanticlog.data.readable import ReadableStore
-from semanticlog.data.tables import CONSTRAINT_INDEX_COLUMNS, EntityKind
+from semanticlog.data.tables import EntityKind
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 
@@ -40,7 +39,7 @@ def audit_build(
         [
             check_case_concepts(data, settings, inputs.case_concepts),
             check_integrity(data),
-            check_declare_input(data, settings, inputs.declare_constraints),
+            check_declare_input(data, settings, inputs.declare),
         ]
     )
 
@@ -103,41 +102,21 @@ def check_case_concepts(
 
 
 def check_declare_input(
-    data: ReadableStore, settings: OntoBuildSettings, constraints: pd.DataFrame | None
+    data: ReadableStore, settings: OntoBuildSettings, declare: DeclareResult | None
 ) -> CheckReport | None:
     """Check that every trace id in the DECLARE constraints is an object of its case concept.
-
-    Args:
-        data: Store being built from.
-        settings: Settings. The check applies only when DECLARE is emitted.
-        constraints: The mined constraints, one row per trace.
 
     Returns:
         Everything about the constraints that does not match this log, or None
         when the check passes or does not apply.
     """
-    if not settings.emits_declare or constraints is None:
+    if not settings.emits_declare or declare is None:
         return None
-
-    absent = [c for c in CONSTRAINT_INDEX_COLUMNS if c not in constraints.columns]
-    if absent:
-        return CheckReport(
-            header=(
-                f"DECLARE constraints have no "
-                f"{' or '.join(repr(c) for c in absent)} column. Its columns "
-                f"are {', '.join(map(str, constraints.columns))}. "
-                "'semlog mine-declare' writes both."
-            ),
-            about=Fixed.INPUT,
-        )
 
     object_types = set(data.types(EntityKind.OBJECT))
     problems: list[str] = []
-    unnamed = int(constraints["case_concept"].isna().sum())
-    if unnamed:
-        problems.append(f"{unnamed} row(s) have no case concept")
-    for case_concept, group in constraints.groupby("case_concept"):
-        case_concept = str(case_concept)
+    for concept in declare.concepts:
+        case_concept = concept.case_concept
         if case_concept not in object_types:
             problems.append(
                 f"case concept {case_concept!r} is not an object type of "
@@ -145,10 +124,10 @@ def check_declare_input(
             )
             continue
         known = set(map(str, data.ids(EntityKind.OBJECT, case_concept)))
-        unknown = sorted(set(group["trace_id"].astype(str)) - known)
+        unknown = sorted(set(concept.trace_ids) - known)
         if unknown:
             problems.append(
-                f"{len(unknown)} of {group['trace_id'].nunique()} "
+                f"{len(unknown)} of {len(concept.trace_ids)} "
                 f"{case_concept!r} trace id(s) are not objects of that type, "
                 f"starting with {', '.join(unknown[:5])}"
             )

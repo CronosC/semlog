@@ -6,7 +6,6 @@ import dataclasses
 import json
 import logging
 
-import pandas as pd
 import pytest
 
 from semanticlog.cli import EXIT_OK, EXIT_USAGE, main
@@ -15,13 +14,11 @@ from semanticlog.cli.run import (
     build_all,
     build_one,
     mine_declare,
-    warn_on_foreign_declare,
 )
 from semanticlog.core.errors import ConfigError, DependencyError
-from semanticlog.enrich.declare import DeclareResult
+from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
 from tests.support.owlapi import ontology_annotations
 from tests.support.rdf import read_rdf
-from tests.support.settings import declare_constraints
 from tests.support.written import read_built, record
 
 # --------------------------------------------------------------------------
@@ -328,19 +325,6 @@ def test_an_oversized_input_is_skipped_and_reported(tmp_path):
     assert list((tmp_path / "onto").iterdir()) == []
 
 
-def test_constraints_mined_from_another_log_warn(caplog):
-    declare = DeclareResult(
-        constraints=declare_constraints(),
-        case_concepts=["order"],
-        source_log="somewhere/else.xml",
-        source_sha256="a" * 64,
-    )
-
-    warn_on_foreign_declare(declare, "b" * 64)
-
-    assert "not the file being built" in caplog.text
-
-
 @pytest.mark.reasoner
 def test_materializing_during_a_build_grows_the_file_and_is_recorded(ocel, tmp_path):
     main(["build", str(ocel), "--output", str(tmp_path / "plain"), "-q"])
@@ -370,17 +354,17 @@ class _FakeEnricher:
 
     def get_constraints_via_discovery(self, **kwargs):
         _FakeEnricher.last_call = kwargs
+        # Order ids of the fixture log, since a build rejects constraints whose
+        # traces it cannot find.
         return DeclareResult(
-            constraints=pd.DataFrame(
-                {
-                    "case_concept": ["order", "order"],
-                    # Order ids of the fixture log, since a build rejects
-                    # constraints whose traces it cannot find.
-                    "trace_id": ["ord_1", "ord_2"],
-                    "Response__place_order__pay__": [True, False],
-                }
+            concepts=(
+                ConceptConstraints(
+                    "order",
+                    ("ord_1", "ord_2"),
+                    {"Response__place_order__pay__": frozenset({"ord_1"})},
+                ),
             ),
-            case_concepts=["order"],
+            mining=MiningSettings("discovery", None, 0.5, 0.5),
         )
 
 
@@ -395,22 +379,23 @@ def fake_enricher(monkeypatch):
 def test_mine_declare_writes_constraints_that_record_their_log(
     ocel, tmp_path, fake_enricher
 ):
-    out = tmp_path / "constraints.csv"
+    out = tmp_path / "constraints.declare.json"
 
     assert main(["mine-declare", str(ocel), "--output", str(out), "-q"]) == EXIT_OK
-    result = DeclareResult.read(str(out))
+    result = DeclareResult.read(out)
     assert result.case_concepts == ["order"]
     assert result.source_log == str(ocel)
-    assert len(result.source_sha256) == 64
+    assert result.mining == MiningSettings("discovery", None, 0.5, 0.5)
 
 
-def test_mine_declare_logs_the_constraint_count_over_the_trace_count(
+def test_mine_declare_logs_the_constraint_count_of_each_case_concept(
     ocel, tmp_path, fake_enricher, caplog
 ):
     with caplog.at_level(logging.INFO, logger="semanticlog"):
-        mine_declare(ocel, tmp_path / "c.csv")
+        mine_declare(ocel, tmp_path / "c.declare.json")
 
-    assert "Saved 1 DECLARE constraint(s) over 2 trace(s)" in caplog.text
+    assert "order: 1 DECLARE constraint(s) over 2 trace(s)" in caplog.text
+    assert "Saved 1 DECLARE constraint(s) to" in caplog.text
 
 
 class _EmptyEnricher(_FakeEnricher):
@@ -418,8 +403,9 @@ class _EmptyEnricher(_FakeEnricher):
 
     def get_constraints_via_discovery(self, **kwargs):
         result = super().get_constraints_via_discovery(**kwargs)
-        constraints = result.constraints[["case_concept", "trace_id"]]
-        return dataclasses.replace(result, constraints=constraints)
+        (order,) = result.concepts
+        empty = ConceptConstraints(order.case_concept, order.trace_ids, {})
+        return dataclasses.replace(result, concepts=(empty,))
 
 
 def test_mine_declare_warns_when_no_constraint_is_kept(
@@ -430,7 +416,7 @@ def test_mine_declare_warns_when_no_constraint_is_kept(
     monkeypatch.setattr(declare, "DeclareEnricher", _EmptyEnricher)
 
     with caplog.at_level(logging.WARNING, logger="semanticlog"):
-        mine_declare(ocel, tmp_path / "c.csv")
+        mine_declare(ocel, tmp_path / "c.declare.json")
 
     assert "Mining kept no DECLARE constraints" in caplog.text
     assert "itemset_support" in caplog.text
@@ -444,7 +430,7 @@ def test_mine_declare_passes_the_thresholds_and_templates_through(
             "mine-declare",
             str(ocel),
             "--output",
-            str(tmp_path / "c.csv"),
+            str(tmp_path / "c.declare.json"),
             "--constraints",
             "Response",
             "Precedence",
@@ -472,13 +458,13 @@ def test_mine_declare_writes_into_the_current_directory_without_an_output(
     monkeypatch.chdir(tmp_path)
 
     assert main(["mine-declare", str(ocel), "-q"]) == EXIT_OK
-    assert (tmp_path / "pipeline.csv").is_file()
+    assert (tmp_path / "pipeline.declare.json").is_file()
 
 
 def test_mine_declare_writes_to_the_output_flag_over_the_declare_file(
     ocel, tmp_path, write_config, fake_enricher
 ):
-    from_config = tmp_path / "declare" / "config.csv"
+    from_config = tmp_path / "declare" / "config.declare.json"
     config = write_config(
         "mine.toml", f'input = "{ocel}"\ndeclare_file = "{from_config}"\n'
     )
@@ -493,11 +479,11 @@ def test_mine_declare_writes_to_the_output_flag_over_the_declare_file(
             "--config",
             str(config),
             "--output",
-            str(tmp_path / "named.csv"),
+            str(tmp_path / "named.declare.json"),
             "-q",
         ]
     )
-    assert (tmp_path / "named.csv").is_file()
+    assert (tmp_path / "named.declare.json").is_file()
     assert not from_config.exists()
 
 
@@ -516,7 +502,7 @@ def test_mine_declare_rejects_an_unknown_template_before_reading_the_log(
             "--constraints",
             "Responce",
             "--output",
-            str(tmp_path / "c.csv"),
+            str(tmp_path / "c.declare.json"),
             "-q",
         ]
     )
@@ -537,7 +523,9 @@ def test_mine_declare_without_the_solver_exits_two_with_a_message(
 
     monkeypatch.setattr(declare, "DeclareEnricher", missing)
 
-    code = main(["mine-declare", str(ocel), "--output", str(tmp_path / "c.csv"), "-q"])
+    code = main(
+        ["mine-declare", str(ocel), "--output", str(tmp_path / "c.declare.json"), "-q"]
+    )
 
     assert code == EXIT_USAGE
     assert "declare4py is not installed" in capsys.readouterr().err
@@ -547,7 +535,7 @@ def test_mine_declare_without_the_solver_exits_two_with_a_message(
 def test_a_build_reads_the_constraints_mine_declare_wrote(
     ocel, tmp_path, fake_enricher
 ):
-    constraints = tmp_path / "constraints.csv"
+    constraints = tmp_path / "constraints.declare.json"
     main(["mine-declare", str(ocel), "--output", str(constraints), "-q"])
 
     code = main(

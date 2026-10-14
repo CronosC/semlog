@@ -101,16 +101,16 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
 
 
 def _cmd_mine_declare(args: argparse.Namespace) -> int:
-    """Mine DECLARE constraints into a CSV.
+    """Mine DECLARE constraints into a JSON file.
 
-    Without --output the CSV goes to `declare_file`, or to `<input stem>.csv`
-    in the current directory.
+    Without --output the file goes to `declare_file`, or to
+    `<input stem>.declare.json` in the current directory.
     """
     inputs = resolve_log_inputs(flag_overrides(args), config_file=args.config)
     for message in inputs.warnings:
         logger.warning(message)
 
-    output = args.csv_output or inputs.declare_file
+    output = args.declare_output or inputs.declare_file
     written = mine_declare(
         input_path=inputs.one_input(),
         output_path=Path(output) if output else None,

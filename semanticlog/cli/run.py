@@ -24,9 +24,7 @@ from semanticlog.data.flatten import choose_case_concepts
 from semanticlog.data.loading import load_and_clean
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.stats import file_digest, store_stats
-from semanticlog.enrich.declare import DeclareResult
 from semanticlog.onto.emitters.provenance import build_configuration
-from semanticlog.onto.inputs import constraint_names
 from semanticlog.onto.pipeline import build_log
 from semanticlog.onto.reason import Reasoner
 from semanticlog.onto.record import recorded_annotation, recorded_configuration
@@ -43,24 +41,6 @@ def _save_backmap(data: ReadableStore, path: Path) -> None:
     path.write_text(
         json.dumps(data.backmap, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-
-
-def warn_on_foreign_declare(declare: DeclareResult | None, digest: str) -> None:
-    """Warn when the DECLARE constraints were mined from a different file.
-
-    The audit checks whether the trace ids resolve.
-    """
-    if declare is None or declare.source_sha256 is None:
-        return
-    if declare.source_sha256 != digest:
-        logger.warning(
-            "DECLARE constraints were mined from %r "
-            "(sha256 %s), which is not the file being "
-            "built (sha256 %s).",
-            declare.source_log,
-            declare.source_sha256[:12],
-            digest[:12],
-        )
 
 
 def _warn_on_changed_settings(
@@ -208,7 +188,6 @@ def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
     )
     logger.info("Case concepts (%s): %s", source, case_concepts or "none")
     declare = cfg.declare_result()
-    warn_on_foreign_declare(declare, digest)
     inputs = cfg.build_inputs(case_concepts, declare)
 
     settings = cfg.settings
@@ -301,14 +280,14 @@ def mine_declare(
     extensions: Sequence[OCELExtension] = (),
     columns: Mapping[str, Any] | None = None,
 ) -> Path:
-    """Mine DECLARE constraints from a log and write them to a CSV.
+    """Mine DECLARE constraints from a log and write them to a JSON file.
 
-    The source log and its checksum are recorded with the constraints. The
-    templates are checked before the log is read.
+    The source log and the mining settings are recorded with the constraints.
+    The templates are checked before the log is read.
 
     Args:
-        output_path: CSV to write, or None for `<input stem>.csv` in the
-            current directory.
+        output_path: File to write, or None for `<input stem>.declare.json` in
+            the current directory.
         case_concepts: Object types to project onto, or None to choose them.
         constraints: Constraint templates to keep, or None to keep everything
             discovery proposes.
@@ -328,7 +307,7 @@ def mine_declare(
 
     check_templates(list(constraints or []))
     if output_path is None:
-        output_path = Path(f"{input_path.stem}.csv")
+        output_path = Path(f"{input_path.stem}.declare.json")
 
     logger.info("Loading event data from %s..", input_path)
     data = load_and_clean(input_path, extensions, columns=columns)
@@ -343,18 +322,18 @@ def mine_declare(
         constraint_support_threshold=constraint_support,
         itemset_support_threshold=itemset_support,
     )
-    result = dataclasses.replace(
-        result, source_log=str(input_path), source_sha256=file_digest(input_path)
-    )
+    result = dataclasses.replace(result, source_log=str(input_path))
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    result.write(str(output_path))
-    kept = constraint_names(result.constraints)
-    logger.info(
-        "Saved %d DECLARE constraint(s) over %d trace(s) to %s",
-        len(kept),
-        len(result.constraints),
-        output_path,
-    )
+    result.write(output_path)
+    for concept in result.concepts:
+        logger.info(
+            "%s: %d DECLARE constraint(s) over %d trace(s)",
+            concept.case_concept,
+            len(concept.satisfied),
+            len(concept.trace_ids),
+        )
+    kept = result.constraint_names()
+    logger.info("Saved %d DECLARE constraint(s) to %s", len(kept), output_path)
     if not kept:
         logger.warning(
             "Mining kept no DECLARE constraints. Each constraint discovery "

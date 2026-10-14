@@ -1,116 +1,23 @@
-"""`DeclareResult` files, and `DeclareEnricher` with the Declare4Py classes replaced by fakes."""
+"""`DeclareEnricher` with the Declare4Py classes replaced by fakes, and how its output becomes a `DeclareResult`."""
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import pandas as pd
 import pytest
-from pandas.testing import assert_frame_equal
 
 from semanticlog.core.errors import ConfigError, DependencyError, InputError
+from semanticlog.data.declare import ConceptConstraints, MiningSettings
 from semanticlog.data.tables import EntityKind
 from semanticlog.enrich import declare as declare_module
 from semanticlog.enrich.declare import (
-    META_SUFFIX,
     DeclareEnricher,
-    DeclareResult,
+    concept_constraints,
+    drop_uninformative,
     template_of,
 )
 from tests.support import stores
-
-# --------------------------------------------------------------------------
-# Reading and writing a constraints table
-# --------------------------------------------------------------------------
-
-
-@pytest.fixture
-def result():
-    return DeclareResult(
-        constraints=pd.DataFrame(
-            {
-                "case_concept": ["order", "order", "item"],
-                "trace_id": ["o1", "o2", "i1"],
-                "Response__A__B__": [True, False, True],
-                "Existence1__A__": [True, True, False],
-            }
-        ),
-        case_concepts=["order", "item"],
-    )
-
-
-@pytest.fixture
-def written(result, tmp_path) -> Path:
-    path = tmp_path / "declare.csv"
-    result.write(str(path))
-    return path
-
-
-def test_a_written_table_reads_back_unchanged(result, written):
-    restored = DeclareResult.read(str(written))
-
-    assert_frame_equal(restored.constraints, result.constraints)
-    assert restored.case_concepts == ["order", "item"]
-
-
-def test_a_written_table_has_no_index_column(written):
-    header = written.read_text(encoding="utf-8").splitlines()[0]
-
-    assert header.startswith("case_concept,trace_id,")
-
-
-def test_a_table_without_its_meta_file_reads_with_a_warning(written, caplog):
-    Path(str(written) + META_SUFFIX).unlink()
-
-    with caplog.at_level(logging.WARNING):
-        reread = DeclareResult.read(str(written))
-
-    assert reread.source_log is None
-    assert "cannot check which log" in caplog.text
-
-
-@pytest.mark.parametrize(
-    ("meta", "match"),
-    [("{not json", "not readable as JSON"), ('["oops"]', "not an object")],
-)
-def test_a_meta_file_that_is_not_a_json_object_is_rejected(written, meta, match):
-    Path(str(written) + META_SUFFIX).write_text(meta, encoding="utf-8")
-
-    with pytest.raises(InputError, match=match):
-        DeclareResult.read(str(written))
-
-
-def test_a_csv_of_another_shape_is_rejected(tmp_path):
-    path = tmp_path / "not-constraints.csv"
-    pd.DataFrame({"a": [1], "b": [2]}).to_csv(path, index=False)
-
-    with pytest.raises(InputError, match="is not a DECLARE constraints table"):
-        DeclareResult.read(str(path))
-
-
-def test_a_missing_index_column_is_named_with_the_columns_found(tmp_path):
-    path = tmp_path / "half-constraints.csv"
-    pd.DataFrame({"trace_id": ["o1"], "Response__A__B__": [True]}).to_csv(
-        path, index=False
-    )
-
-    with pytest.raises(InputError, match="no 'case_concept' column") as failure:
-        DeclareResult.read(str(path))
-
-    assert "Response__A__B__" in str(failure.value)
-
-
-def test_an_unnamed_index_column_from_another_tool_is_dropped(result, tmp_path, caplog):
-    path = tmp_path / "constraints.csv"
-    result.constraints.to_csv(path, index=True)
-
-    with caplog.at_level(logging.INFO, logger="semanticlog.enrich.declare"):
-        reread = DeclareResult.read(str(path))
-
-    assert list(reread.constraints.columns) == list(result.constraints.columns)
-    assert "dropping 1 unnamed index column(s)" in caplog.text
-
 
 # --------------------------------------------------------------------------
 # Mining, with fakes for Declare4Py
@@ -258,13 +165,11 @@ def test_enumeration_checks_each_case_concept_against_the_model_it_built(enriche
     assert [call["model"].text for call in FakeAnalyzer.calls] == [
         enricher.construct_model_string(log, constraint_set=["Init"])
     ] * 2
-    assert list(result.constraints["case_concept"]) == ["order"] * 2 + ["item"] * 2
-    assert list(result.constraints["trace_id"]) == [
-        "order1",
-        "order2",
-        "item1",
-        "item2",
+    assert [(c.case_concept, c.trace_ids) for c in result.concepts] == [
+        ("order", ("order1", "order2")),
+        ("item", ("item1", "item2")),
     ]
+    assert result.mining == MiningSettings("enumeration", ("Init",))
 
 
 def test_enumeration_passes_the_vacuity_setting_through(enricher):
@@ -276,7 +181,7 @@ def test_enumeration_passes_the_vacuity_setting_through(enricher):
 
 
 def test_discovery_checks_the_model_the_miner_found_with_its_thresholds(enricher):
-    enricher.get_constraints_via_discovery(
+    result = enricher.get_constraints_via_discovery(
         ["order"], constraint_support_threshold=0.7, itemset_support_threshold=0.3
     )
 
@@ -288,15 +193,15 @@ def test_discovery_checks_the_model_the_miner_found_with_its_thresholds(enricher
         0.3,
     )
     assert FakeAnalyzer.calls[0]["model"].text == "discovered"
+    assert result.mining == MiningSettings("discovery", None, 0.7, 0.3)
 
 
 def test_discovery_keeps_only_the_templates_it_was_restricted_to(enricher):
     """The miner proposes whatever the log supports."""
     result = enricher.get_constraints_via_discovery(["order"], constraint_set=["Init"])
 
-    assert set(result.constraints.columns) - {"trace_id", "case_concept"} == {
-        "Init__a__"
-    }
+    assert result.constraint_names() == ["Init__a__"]
+    assert result.mining.templates == ("Init",)
 
 
 @pytest.mark.parametrize(
@@ -312,95 +217,73 @@ def test_the_template_of_a_column_is_the_text_before_the_activities(column, expe
 # --------------------------------------------------------------------------
 
 
-def test_a_constraint_column_becomes_a_boolean_column_named_safely(enricher):
-    frame = pd.DataFrame({"Response[a, b] | | |": [1, 0], "trace_id": ["t1", "t2"]})
-
-    result = enricher.postprocess_results({"order": frame})
-
-    assert result["Response__a__b__"].tolist() == [True, False]
-    assert result["Response__a__b__"].dtype == bool
+def _concept(name: str, columns: dict, trace_ids: list) -> ConceptConstraints:
+    return concept_constraints(name, pd.DataFrame(columns | {"trace_id": trace_ids}))
 
 
-def test_a_trace_with_no_answer_does_not_satisfy_the_constraint(enricher):
-    frame = pd.DataFrame(
-        {"Response[a, b] | | |": [1, 0, float("nan")], "trace_id": ["t1", "t2", "t3"]}
+def test_a_constraint_column_becomes_a_class_name_with_its_satisfying_traces():
+    concept = _concept("order", {"Response[a, b] | | |": [1, 0]}, ["t1", "t2"])
+
+    assert dict(concept.satisfied) == {"Response__a__b__": frozenset({"t1"})}
+
+
+def test_a_trace_with_no_answer_does_not_satisfy_the_constraint():
+    concept = _concept(
+        "order", {"Response[a, b] | | |": [1, 0, float("nan")]}, ["t1", "t2", "t3"]
     )
 
-    result = enricher.postprocess_results({"order": frame})
-
-    assert result["Response__a__b__"].tolist() == [True, False, False]
+    assert concept.satisfied["Response__a__b__"] == frozenset({"t1"})
 
 
-def test_a_zero_one_trace_id_column_is_left_as_it_is(enricher):
-    frame = pd.DataFrame({"Response[a, b] | | |": [1, 0], "trace_id": [0, 1]})
+def test_numeric_trace_ids_are_kept_as_text():
+    concept = _concept("order", {"Response[a, b] | | |": [1, 0]}, [0, 1])
 
-    result = enricher.postprocess_results({"order": frame})
-
-    assert result["trace_id"].tolist() == [0, 1]
-    assert result["trace_id"].dtype != bool
+    assert concept.trace_ids == ("0", "1")
 
 
-def test_a_constraint_that_holds_of_every_trace_is_dropped(enricher):
-    frame = pd.DataFrame(
-        {
-            "Init[a] | |": [1, 1],
-            "Response[a, b] | | |": [1, 0],
-            "trace_id": ["t1", "t2"],
-        }
+def test_two_constraints_that_get_one_class_name_are_rejected():
+    columns = {"Response[a__b, c] | | |": [1, 0], "Response[a, b__c] | | |": [0, 1]}
+
+    with pytest.raises(InputError, match="'order' both get the class name"):
+        _concept("order", columns, ["t1", "t2"])
+
+
+def test_a_column_that_names_no_constraint_is_rejected():
+    with pytest.raises(InputError, match="names no constraint"):
+        _concept("order", {"state": [1, 0]}, ["t1", "t2"])
+
+
+def test_a_constraint_that_holds_of_every_trace_is_dropped():
+    order = _concept(
+        "order", {"Init[a] | |": [1, 1], "Response[a, b] | | |": [1, 0]}, ["o1", "o2"]
     )
 
-    result = enricher.postprocess_results({"order": frame})
+    (kept,) = drop_uninformative([order])
 
-    assert "Init__a__" not in result.columns
-    assert "Response__a__b__" in result.columns
-
-
-def test_a_constraint_constant_within_one_case_concept_only_is_kept(enricher):
-    frames = {
-        "order": pd.DataFrame(
-            {"Response[a, b] | | |": [1, 1], "trace_id": ["o1", "o2"]}
-        ),
-        "item": pd.DataFrame(
-            {"Response[a, b] | | |": [1, 0], "trace_id": ["i1", "i2"]}
-        ),
-    }
-
-    result = enricher.postprocess_results(frames)
-
-    assert result["Response__a__b__"].tolist() == [True, True, True, False]
+    assert list(kept.satisfied) == ["Response__a__b__"]
 
 
-def test_a_constraint_checked_for_one_case_concept_and_held_by_all_is_dropped(
-    enricher,
-):
-    frames = {
-        "order": pd.DataFrame(
-            {
-                "Init[a] | |": [1, 1],
-                "Response[a, b] | | |": [1, 0],
-                "trace_id": ["o1", "o2"],
-            }
-        ),
-        "item": pd.DataFrame(
-            {"Response[a, b] | | |": [1, 0], "trace_id": ["i1", "i2"]}
-        ),
-    }
+def test_a_constraint_constant_within_one_case_concept_only_is_kept():
+    order = _concept("order", {"Response[a, b] | | |": [1, 1]}, ["o1", "o2"])
+    item = _concept("item", {"Response[a, b] | | |": [1, 0]}, ["i1", "i2"])
 
-    result = enricher.postprocess_results(frames)
+    kept = drop_uninformative([order, item])
 
-    assert "Init__a__" not in result.columns
-    assert result["Response__a__b__"].tolist() == [True, False, True, False]
+    assert [dict(c.satisfied) for c in kept] == [
+        {"Response__a__b__": frozenset({"o1", "o2"})},
+        {"Response__a__b__": frozenset({"i1"})},
+    ]
 
 
-def test_two_constraints_that_clean_to_one_name_are_rejected(enricher):
-    frame = pd.DataFrame(
-        {"Init[a]] | |": [1, 0], "Init[a__] | |": [0, 1], "trace_id": ["t1", "t2"]}
+def test_a_constraint_checked_for_one_case_concept_and_held_by_all_is_dropped():
+    order = _concept(
+        "order", {"Init[a] | |": [1, 1], "Response[a, b] | | |": [1, 0]}, ["o1", "o2"]
     )
+    item = _concept("item", {"Response[a, b] | | |": [1, 0]}, ["i1", "i2"])
 
-    with pytest.raises(InputError, match="Init__a____") as failure:
-        enricher.postprocess_results({"order": frame})
+    kept = drop_uninformative([order, item])
 
-    assert "order" in str(failure.value)
+    assert [list(c.satisfied) for c in kept] == [["Response__a__b__"]] * 2
 
 
 # --------------------------------------------------------------------------

@@ -16,6 +16,20 @@ def test_a_number_is_written_as_plain_digits(value, expected):
     assert vocab.format_number(value) == expected
 
 
+@pytest.mark.parametrize(
+    ("template", "activities", "expected"),
+    [
+        ("Response", ["a", "b"], "Response__a__b__"),
+        ("Exclusive Choice", ["a", "b"], "ExclusiveChoice__a__b__"),
+        ("Init", ["a"], "Init__a__"),
+    ],
+)
+def test_a_declare_constraint_name_joins_its_template_and_activities(
+    template, activities, expected
+):
+    assert vocab.declare_constraint(template, activities) == expected
+
+
 def test_a_number_that_is_not_finite_is_rejected():
     with pytest.raises(InputError, match="inf cannot be written as a number"):
         vocab.format_number(float("inf"))

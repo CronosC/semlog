@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from semanticlog.core.enums import OWLProfile as OWLProfile
     from semanticlog.core.vocabulary import DEFAULT_IRI as DEFAULT_IRI
     from semanticlog.data.cleaning import clean_oced_data as clean_oced_data
+    from semanticlog.data.declare import DeclareResult as DeclareResult
     from semanticlog.data.flatten import (
         choose_case_concepts as choose_case_concepts,
     )
@@ -41,7 +42,6 @@ if TYPE_CHECKING:
     from semanticlog.data.readable import ReadableStore as ReadableStore
     from semanticlog.data.tables import EntityKind as EntityKind
     from semanticlog.data.tables import RelationKind as RelationKind
-    from semanticlog.enrich.declare import DeclareResult as DeclareResult
     from semanticlog.onto.builder import OCEDOntoBuilder as OCEDOntoBuilder
     from semanticlog.onto.inputs import BuildInputs as BuildInputs
     from semanticlog.onto.pipeline import build_log as build_log
@@ -60,7 +60,7 @@ _EXPORTS: dict[str, str] = {
     "ClassicalLoader": "semanticlog.data.loading.classical_loader",
     "DEFAULT_IRI": "semanticlog.core.vocabulary",
     "DataRepresentation": "semanticlog.core.enums",
-    "DeclareResult": "semanticlog.enrich.declare",
+    "DeclareResult": "semanticlog.data.declare",
     "EntityKind": "semanticlog.data.tables",
     "EventOrderRepresentation": "semanticlog.core.enums",
     "InverseRepresentation": "semanticlog.core.enums",

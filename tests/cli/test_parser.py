@@ -90,9 +90,9 @@ def test_reason_takes_its_backend_default_from_the_table():
 
 
 def test_mine_declare_output_is_not_a_build_setting():
-    args = parse("mine-declare", "log.json", "--output", "x.csv")
+    args = parse("mine-declare", "log.json", "--output", "x.declare.json")
 
-    assert args.csv_output == "x.csv"
+    assert args.declare_output == "x.declare.json"
     assert "output" not in flag_overrides(args)
 
 

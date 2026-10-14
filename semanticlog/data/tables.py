@@ -13,8 +13,6 @@ import pandas as pd
 
 OCEL_PREFIX = "ocel:"
 
-CONSTRAINT_INDEX_COLUMNS: tuple[str, ...] = ("case_concept", "trace_id")
-
 
 class EntityKind(str, Enum):
     """The kind of an entity, an event or an object.

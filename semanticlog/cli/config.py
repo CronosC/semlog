@@ -27,8 +27,8 @@ from semanticlog.cli.settings_table import (
 from semanticlog.cli.toml import RENAMED_KEYS, load_config_file, toml_value
 from semanticlog.core.enums import OCELExtension
 from semanticlog.core.errors import ConfigError
+from semanticlog.data.declare import DeclareResult
 from semanticlog.data.loading import CLASSICAL_SUFFIXES
-from semanticlog.enrich.declare import DeclareResult
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 
@@ -81,7 +81,7 @@ class LogInputs:
         case_concepts: Object types to use as cases, or None to choose them
             from the log.
         auto_case_concepts: How many to choose when choosing automatically.
-        declare_file: CSV of mined constraints. `mine-declare` writes here
+        declare_file: File of mined constraints. `mine-declare` writes here
             without --output.
         constraints: Constraint templates to keep, or None to keep every one
             discovery proposes.
@@ -175,7 +175,7 @@ class RunConfig:
         object_cols: Further columns of a flat log that each become an object
             type.
         annotation_document: JSON file of entity name to label and comment.
-        declare_file: CSV of mined DECLARE constraints.
+        declare_file: File of mined DECLARE constraints.
         constraints: Constraint templates `mine-declare` keeps. Not used by a
             build.
         constraint_support: Share of traces a constraint has to hold in.
@@ -292,7 +292,7 @@ class RunConfig:
         """
         return BuildInputs(
             case_concepts=tuple(case_concepts),
-            declare_constraints=None if declare is None else declare.constraints,
+            declare=declare,
             annotations=self._annotations(),
         )
 
@@ -412,7 +412,7 @@ def resolve_run_config(
         raise ConfigError(
             "order_representations includes 'declare' but no declare_file is "
             "set. Mine the constraints first with 'semlog mine-declare', then "
-            "point declare_file at the CSV it writes."
+            "point declare_file at the file it writes."
         )
 
     if run["name"] is not None:

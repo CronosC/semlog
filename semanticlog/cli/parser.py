@@ -179,20 +179,20 @@ def _add_mine_declare_parser(
     mine = sub.add_parser(
         "mine-declare",
         parents=[parent],
-        help="Mine DECLARE constraints from an event log into a CSV.",
+        help="Mine DECLARE constraints from an event log into a JSON file.",
         description=(
             "Mine DECLARE constraints from one event log and write them to a "
-            "CSV for 'semlog build --declare-file'. Requires the [declare] "
+            "JSON file for 'semlog build --declare-file'. Requires the [declare] "
             "extra and the Lydia solver."
         ),
     )
     mine.add_argument(
         "--output",
-        dest="csv_output",
-        metavar="CSV",
+        dest="declare_output",
+        metavar="FILE",
         help=(
             "Where to write the constraints (default: the declare_file of "
-            "--config, or <input>.csv)."
+            "--config, or <input stem>.declare.json)."
         ),
     )
     _add_settings_flags(mine, DECLARE_MINING_KEYS)

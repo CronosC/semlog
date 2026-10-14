@@ -1,33 +1,28 @@
-"""DECLARE constraints: mining them and carrying the result.
+"""Mining DECLARE constraints with Declare4Py.
 
 A DECLARE constraint is a rule about the order of activities in a trace, such
 as one activity always being followed by another. `DeclareEnricher` mines them
-with Declare4Py and the Lydia solver, and `DeclareResult` writes and reads them
-as a CSV, which a build reads to type each trace by the constraints it
-satisfies.
+per case concept and returns a `DeclareResult`.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import warnings
-from collections.abc import Callable, Iterator
+from collections import Counter
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from semanticlog.core import vocabulary as vocab
 from semanticlog.core.errors import ConfigError, DependencyError, InputError
+from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
 from semanticlog.data.readable import ReadableStore
-from semanticlog.data.tables import CONSTRAINT_INDEX_COLUMNS
 
 logger = logging.getLogger(__name__)
-
-META_SUFFIX = ".meta.json"
 
 # The templates Declare4Py parses, from its DeclareModel grammar. Unary ones
 # take one activity, the rest take an ordered pair.
@@ -91,34 +86,78 @@ def _keep_templates(constraints: pd.DataFrame, wanted: list[str]) -> pd.DataFram
     return constraints[keep].copy()
 
 
-def _check_distinct_columns(
-    renamed: list[str], sources: list[str], case_concept: str
-) -> None:
-    """Raise if two constraint names are equal after rewriting.
+_CONSTRAINT_COLUMN = re.compile(r"^\s*(?P<template>[^\[]+?)\s*\[(?P<args>[^\]]*)\]")
 
-    Brackets and commas become underscores and spaces are removed.
+
+def _constraint_name(column: str) -> str:
+    """Return the class name of a Declare4Py column such as `Response[a, b] | | |`."""
+    match = _CONSTRAINT_COLUMN.match(str(column))
+    if match is None:
+        raise InputError(
+            f"Declare4Py returned the column {column!r}, which names no "
+            "constraint. Check the installed Declare4Py version."
+        )
+    activities = [a.strip() for a in match["args"].split(",")]
+    return vocab.declare_constraint(match["template"], activities)
+
+
+def concept_constraints(case_concept: str, frame: pd.DataFrame) -> ConceptConstraints:
+    """Return the constraints of one case concept from Declare4Py's output.
 
     Args:
-        renamed: The rewritten names, in order.
-        sources: The names they were rewritten from, in the same order.
-        case_concept: Case concept the frame belongs to, for the message.
+        case_concept: Object type whose instances are the traces.
+        frame: One row per trace, with a `trace_id` column and one column per
+            constraint holding 1 where the trace satisfies it.
 
     Raises:
-        InputError: If two names collide. The message names the pair.
+        InputError: If a column names no constraint, or two constraints get
+            the same class name.
     """
-    seen: dict[str, str] = {}
-    for new, old in zip(renamed, sources, strict=True):
-        if new in seen:
+    trace_ids = frame["trace_id"].astype(str).tolist()
+    satisfied: dict[str, frozenset[str]] = {}
+    sources: dict[str, str] = {}
+    for column in frame.columns:
+        if column == "trace_id":
+            continue
+        name = _constraint_name(column)
+        if name in sources:
             raise InputError(
-                f"Two constraints mined over {case_concept!r} are both called "
-                f"{new!r} once their names are made safe to emit:\n"
-                f"  {seen[new]!r}\n"
-                f"  {old!r}\n\n"
-                "Brackets and commas become underscores and spaces are "
-                "removed. Clean the log before mining, which renames such "
-                "activities apart."
+                f"Two constraints mined over {case_concept!r} both get the class "
+                f"name {name!r}:\n  {sources[name]!r}\n  {column!r}\n\n"
+                "Their activity names join to the same text. Rename one of the "
+                "activities in the log."
             )
-        seen[new] = old
+        sources[name] = column
+        holds = frame[column].eq(1).tolist()
+        satisfied[name] = frozenset(
+            t for t, h in zip(trace_ids, holds, strict=True) if h
+        )
+    return ConceptConstraints(case_concept, tuple(trace_ids), satisfied)
+
+
+def drop_uninformative(
+    concepts: Sequence[ConceptConstraints],
+) -> tuple[ConceptConstraints, ...]:
+    """Drop every constraint that holds for all traces it was checked against, or for none.
+
+    A constraint checked for several case concepts is judged over the traces
+    of all of them.
+    """
+    checked: Counter[str] = Counter()
+    held: Counter[str] = Counter()
+    for concept in concepts:
+        for name, ids in concept.satisfied.items():
+            checked[name] += len(concept.trace_ids)
+            held[name] += len(ids)
+    constant = {name for name in checked if held[name] in (0, checked[name])}
+    return tuple(
+        ConceptConstraints(
+            c.case_concept,
+            c.trace_ids,
+            {n: ids for n, ids in c.satisfied.items() if n not in constant},
+        )
+        for c in concepts
+    )
 
 
 def check_templates(names: list[str]) -> None:
@@ -133,122 +172,6 @@ def check_templates(names: list[str]) -> None:
             f"Unknown DECLARE template(s): {', '.join(map(repr, unknown))}. "
             f"Choose from: {', '.join(sorted(TEMPLATES))}."
         )
-
-
-@dataclass(frozen=True)
-class DeclareResult:
-    """Which traces satisfy which constraints, and where they came from.
-
-    Attributes:
-        constraints: One row per trace. `case_concept` and `trace_id` say
-            which trace, and every other column is one constraint.
-        case_concepts: The case concepts that were mined.
-        source_log: Path of the log the constraints were mined from.
-        source_sha256: Checksum of that log.
-    """
-
-    constraints: pd.DataFrame
-    case_concepts: list[str]
-    source_log: str | None = None
-    source_sha256: str | None = None
-
-    def write(self, path: str) -> None:
-        """Write the constraints as CSV, with the origin in a JSON file beside it."""
-        self.constraints.to_csv(path, index=False)
-        Path(path + META_SUFFIX).write_text(
-            json.dumps(
-                {
-                    "case_concepts": self.case_concepts,
-                    "source_log": self.source_log,
-                    "source_sha256": self.source_sha256,
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-
-    _UNNAMED_COLUMN = re.compile(r"^Unnamed: \d+$")
-
-    INDEX_COLUMNS = CONSTRAINT_INDEX_COLUMNS
-
-    @classmethod
-    def read(cls, path: str) -> DeclareResult:
-        """Read constraints from a CSV, with their origin if it is recorded.
-
-        Unnamed index columns are dropped.
-
-        Args:
-            path: CSV to read.
-
-        Returns:
-            The constraints, with no origin recorded when the JSON file beside
-            the CSV is missing.
-
-        Raises:
-            InputError: If the file does not have the shape of a constraints
-                table, or the JSON file beside it is not a JSON object.
-        """
-        constraints = pd.read_csv(path)
-        dropped = [c for c in constraints.columns if cls._UNNAMED_COLUMN.match(str(c))]
-        if dropped:
-            logger.info(
-                "%s: dropping %s unnamed index column(s) (%s).",
-                path,
-                len(dropped),
-                ", ".join(dropped),
-            )
-            constraints = constraints.drop(columns=dropped)
-
-        missing = [c for c in cls.INDEX_COLUMNS if c not in constraints.columns]
-        if missing:
-            raise InputError(
-                f"{path} is not a DECLARE constraints table: it has no "
-                f"{' or '.join(repr(c) for c in missing)} column. Its columns are "
-                f"{', '.join(map(str, constraints.columns))}. Mine constraints with "
-                "'semlog mine-declare'."
-            )
-
-        case_concepts = constraints["case_concept"].unique().tolist()
-        meta = cls._read_meta(path)
-        return cls(
-            constraints=constraints,
-            case_concepts=case_concepts,
-            source_log=meta.get("source_log"),
-            source_sha256=meta.get("source_sha256"),
-        )
-
-    @staticmethod
-    def _read_meta(path: str) -> dict:
-        """Read the origin file beside a CSV, warning when there is none.
-
-        Raises:
-            InputError: If the file is not a JSON object.
-        """
-        meta_path = Path(path + META_SUFFIX)
-        if not meta_path.is_file():
-            logger.warning(
-                "No %s beside %s. The build cannot check "
-                "which log the constraints were mined from. Re-run "
-                "'semlog mine-declare' to write it.",
-                meta_path.name,
-                path,
-            )
-            return {}
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise InputError(
-                f"{meta_path} is not readable as JSON ({exc}). It records which "
-                "log the constraints beside it were mined from. Delete it to "
-                "build without that check, or re-run 'semlog mine-declare'."
-            ) from exc
-        if not isinstance(meta, dict):
-            raise InputError(
-                f"{meta_path} holds {type(meta).__name__}, not an object with a "
-                "'source_log' and a 'source_sha256'. Delete it to build without "
-                "that check, or re-run 'semlog mine-declare'."
-            )
-        return meta
 
 
 @contextmanager
@@ -344,6 +267,7 @@ class DeclareEnricher:
                 self.construct_model_string(log, constraint_set=constraint_set)
             ),
             vacuous_is_considered,
+            MiningSettings("enumeration", tuple(constraint_set)),
         )
 
     def _check_each_trace(
@@ -351,7 +275,7 @@ class DeclareEnricher:
         case_concepts: list[str],
         model_for: Callable[[Any], Any],
         vacuous_is_considered: bool,
-        keep_templates: list[str] | None = None,
+        mining: MiningSettings,
     ) -> DeclareResult:
         """Check one model per case concept against the traces of that concept.
 
@@ -360,8 +284,8 @@ class DeclareEnricher:
             model_for: Returns the DECLARE model to check one flat log against.
             vacuous_is_considered: Count a constraint as satisfied when it
                 holds only because its trigger never occurs.
-            keep_templates: Template names to keep of what the model produced.
-                None keeps everything.
+            mining: How the constraints are mined. Its templates, when set,
+                are the ones kept of what the model produced.
 
         Returns:
             The result, with no origin recorded yet.
@@ -375,7 +299,7 @@ class DeclareEnricher:
                 "least one object type. 'semlog inspect' lists the ones this "
                 "log can be projected onto."
             )
-        results: dict[str, pd.DataFrame] = {}
+        concepts: list[ConceptConstraints] = []
         with _quiet_declare4py():
             for case_concept in case_concepts:
                 log, case_ids = self.get_log(case_concept)
@@ -385,15 +309,12 @@ class DeclareEnricher:
                     consider_vacuity=vacuous_is_considered,
                 )
                 result_df = checker.run().get_metric(metric="state")
-                if keep_templates is not None:
-                    result_df = _keep_templates(result_df, keep_templates)
+                if mining.templates:
+                    result_df = _keep_templates(result_df, list(mining.templates))
                 result_df["trace_id"] = case_ids
-                results[case_concept] = result_df
+                concepts.append(concept_constraints(case_concept, result_df))
 
-        return DeclareResult(
-            constraints=self.postprocess_results(results),
-            case_concepts=case_concepts,
-        )
+        return DeclareResult(concepts=drop_uninformative(concepts), mining=mining)
 
     def construct_model_string(
         self,
@@ -473,58 +394,15 @@ class DeclareEnricher:
                 max_declare_cardinality=3,
             ).run()
 
+        mining = MiningSettings(
+            "discovery",
+            tuple(wanted) or None,
+            constraint_support_threshold,
+            itemset_support_threshold,
+        )
         return self._check_each_trace(
-            case_concepts, discovered, vacuous_is_considered, keep_templates=wanted
+            case_concepts, discovered, vacuous_is_considered, mining
         )
-
-    def postprocess_results(self, results: dict[str, pd.DataFrame]) -> pd.DataFrame:
-        """Rewrite the miner output into class names and membership columns.
-
-        Brackets and commas in column names become underscores and spaces are
-        removed. Within a case concept, an empty cell counts as not satisfied.
-        A constraint the miner did not check for a case concept is empty for
-        that concept's traces. A boolean column with one value across every
-        trace it was checked for is dropped.
-
-        Args:
-            results: One frame per case concept.
-
-        Returns:
-            The frames stacked, with a `case_concept` column added.
-
-        Raises:
-            InputError: If two constraint names are equal after rewriting.
-        """
-        for key, result_df in results.items():
-            stripped = [col.strip(" |") for col in result_df.columns]
-            renamed = [
-                col.replace("[", "__")
-                .replace("]", "__")
-                .replace(", ", "__")
-                .replace(" ", "")
-                for col in stripped
-            ]
-            _check_distinct_columns(renamed, stripped, key)
-            result_df.columns = renamed
-            for col in result_df.columns:
-                if col in CONSTRAINT_INDEX_COLUMNS:
-                    continue
-                if result_df[col].dropna().isin([0, 1]).all():
-                    result_df[col] = result_df[col].eq(1)
-            results[key] = result_df
-
-        results_df = pd.concat(
-            [df.assign(case_concept=key) for key, df in results.items()],
-            ignore_index=True,
-        )
-        constant = []
-        for col in results_df.columns:
-            if col in CONSTRAINT_INDEX_COLUMNS:
-                continue
-            checked = results_df[col].dropna()
-            if checked.isin([True, False]).all() and checked.nunique() <= 1:
-                constant.append(col)
-        return results_df.drop(columns=constant)
 
     def get_log(self, case_concept: str) -> tuple[Any, list[Any]]:
         """Flatten the store onto one case concept, in the form Declare4Py reads.
