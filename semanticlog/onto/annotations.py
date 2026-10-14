@@ -1,21 +1,16 @@
-"""The human-readable text attached to an ontology.
+"""The labels and comments attached to an ontology.
 
-Cleaning makes names safe at the cost of making them uglier, and an ontology
-of `place_order` and `AttrChange_o_1_status_20240101T000000_000000` is hard to
-read. Labels and comments put the original wording back, without letting it
-into an IRI.
-
-Two sources feed this. The fixed text for the upper schema lives in
-`tbox_annotations.json` beside this module, and everything else is derived
-from the log through the store backmap. All of it is optional and only written
-when a build asks for it.
+`AnnotationWriter` writes the fixed text of the upper schema from
+`tbox_annotations.json`, and fills the templates of `derived_annotations.json`
+with the names the log used. It writes only when `derive_annotations` is on.
 """
 
 from __future__ import annotations
 
 import functools
 import json
-from collections.abc import Callable, Iterable, Mapping, Sequence
+import re
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from importlib import resources
 from typing import Any, Protocol
 
@@ -26,67 +21,185 @@ from semanticlog.data.tables import EntityKind
 from semanticlog.onto.settings import OntoBuildSettings
 
 TBOX_ANNOTATION_DOCUMENT = "tbox_annotations.json"
+DERIVED_ANNOTATION_DOCUMENT = "derived_annotations.json"
+
+_FIELD = re.compile(r"\{(\w+)\}")
 
 
-@functools.cache
-def tbox_annotations() -> dict[str, dict[str, str]]:
-    """Return the fixed labels and comments of the upper schema.
-
-    Read once from the JSON document shipped with the package, so the wording
-    can be reviewed and changed without touching Python.
-    """
+def _document(name: str) -> dict[str, dict[str, str]]:
+    """Read one annotation document shipped with the package."""
     text = (
-        resources.files("semanticlog.onto")
-        .joinpath(TBOX_ANNOTATION_DOCUMENT)
-        .read_text(encoding="utf-8")
+        resources.files("semanticlog.onto").joinpath(name).read_text(encoding="utf-8")
     )
     document: dict[str, dict[str, str]] = json.loads(text)
     return document
 
 
+@functools.cache
+def tbox_annotations() -> dict[str, dict[str, str]]:
+    """Return the fixed labels and comments of the upper schema, keyed by name."""
+    return _document(TBOX_ANNOTATION_DOCUMENT)
+
+
+@functools.cache
+def derived_annotations() -> dict[str, dict[str, str]]:
+    """Return the templates for labels and comments derived from the log.
+
+    Each entry holds a `label`, and a `comment` unless it is for individuals.
+    An entry for a property with an inverse also holds `inverse_label` and
+    `inverse_comment`.
+    """
+    return _document(DERIVED_ANNOTATION_DOCUMENT)
+
+
+def _entry(template: str) -> dict[str, str]:
+    """Return one template.
+
+    Raises:
+        ValueError: If no template of that name is in the document.
+    """
+    try:
+        return derived_annotations()[template]
+    except KeyError:
+        raise ValueError(
+            f"{template!r} is not an annotation template. "
+            f"{DERIVED_ANNOTATION_DOCUMENT} holds "
+            f"{', '.join(sorted(derived_annotations()))}."
+        ) from None
+
+
+def _field(fields: Mapping[str, Any], name: str, template: str) -> Any:
+    """Return one field of a template.
+
+    Raises:
+        ValueError: If the caller supplied no value for it.
+    """
+    if name not in fields:
+        raise ValueError(
+            f"The {template!r} annotation template names {name!r}, which was "
+            f"not supplied. It was given {sorted(fields)}."
+        )
+    return fields[name]
+
+
+def _fill(text: str, template: str, fields: Mapping[str, Any]) -> str:
+    """Fill one template with the names a caller supplied."""
+    return _FIELD.sub(lambda m: str(_field(fields, m.group(1), template)), text)
+
+
+def _fill_series(text: str, template: str, fields: Mapping[str, Any]) -> pd.Series:
+    """Fill one template where a field holds a value per individual.
+
+    Raises:
+        ValueError: If no field holds a series.
+    """
+    pieces: list[Any] = []
+    at = 0
+    for match in _FIELD.finditer(text):
+        pieces.append(text[at : match.start()])
+        pieces.append(_field(fields, match.group(1), template))
+        at = match.end()
+    pieces.append(text[at:])
+
+    length = next((len(p) for p in pieces if isinstance(p, pd.Series)), None)
+    if length is None:
+        raise ValueError(
+            f"The {template!r} annotation template was given no series. Pass "
+            "at least one field as a series."
+        )
+    labels = pd.Series([""] * length, dtype="object")
+    for piece in pieces:
+        if isinstance(piece, pd.Series):
+            labels = labels + piece.astype(str).reset_index(drop=True)
+        elif piece:
+            labels = labels + piece
+    return labels
+
+
 _TIMESTAMP_LABEL_FORMAT = "%Y-%m-%d %H:%M:%S"
+_SUB_SECOND_LABEL_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 
 
 def timestamp_labels(values: pd.Series) -> pd.Series:
-    """Render timestamps for display. Not safe as part of a name."""
+    """Return timestamps as display labels, which are not safe as names.
+
+    A fraction of a second is kept where there is one, so two timestamps
+    within one second get different labels.
+    """
     if pd.api.types.is_datetime64_any_dtype(values):
-        return values.dt.strftime(_TIMESTAMP_LABEL_FORMAT)
+        whole = values.dt.microsecond == 0
+        return values.dt.strftime(_SUB_SECOND_LABEL_FORMAT).where(
+            ~whole, values.dt.strftime(_TIMESTAMP_LABEL_FORMAT)
+        )
     return values.astype(str)
 
 
 def _format_value(value: Any) -> str:
-    """Render one attribute value as its label."""
+    """Return the label of one attribute value."""
     if isinstance(value, pd.Timestamp):
+        if value.microsecond:
+            return value.strftime(_SUB_SECOND_LABEL_FORMAT)
         return value.strftime(_TIMESTAMP_LABEL_FORMAT)
     return str(value)
 
 
-def _declare_label(constraint: str, original: Callable[[str], str]) -> str:
-    """Render a mined constraint name as its template and its activities.
+def _split_activities(rest: str, known: Collection[str]) -> list[str]:
+    """Split the activity part of a mined constraint name.
 
-    Mining writes `Response[a, b]` as `Response__a__b__`, which is safe in an
-    IRI and hard to read.
+    Activities are joined with `__`. A cleaned activity name can contain
+    `__`, so known activity names are matched whole first, longest first. The
+    separator is used only where no known name matches.
+
+    Args:
+        rest: Everything after the template name.
+        known: Activity names the log holds, as cleaning left them.
+
+    Returns:
+        The activities, in the order they appear.
+    """
+    parts: list[str] = []
+    while rest:
+        match = max(
+            (a for a in known if a and (rest == a or rest.startswith(a + "__"))),
+            key=len,
+            default="",
+        )
+        if match:
+            parts.append(match)
+            rest = rest[len(match) :].removeprefix("__")
+            continue
+        head, separator, rest = rest.partition("__")
+        if head:
+            parts.append(head)
+        if not separator:
+            break
+    return parts
+
+
+def _declare_label(
+    constraint: str, original: Callable[[str], str], known: Collection[str]
+) -> str:
+    """Return a mined constraint name as its template and its activities.
+
+    Mining writes `Response[a, b]` as `Response__a__b__`.
 
     Args:
         constraint: The constraint as it was mined.
         original: Resolver for what the log called an activity.
+        known: Activity names of the log, used to split the name.
 
     Returns:
         The constraint written out, such as `Response (place order, ship)`.
     """
     template, _, rest = constraint.partition("__")
-    activities = [original(part) for part in rest.split("__") if part]
+    activities = [original(part) for part in _split_activities(rest, known)]
     if not activities:
         return template
     return f"{template} ({', '.join(activities)})"
 
 
 class AnnotationSink(Protocol):
-    """The part of a sink an annotation writer needs.
-
-    Stated as a protocol so the writer can be tested against anything that
-    records these four calls.
-    """
+    """The sink methods an annotation writer calls."""
 
     def annotate_entity(
         self, iri_fragment: str, label: str | None = ..., comment: str | None = ...
@@ -107,22 +220,15 @@ class AnnotationSink(Protocol):
         ...
 
 
-def _when_enabled(fn: Callable) -> Callable:
-    """Make a method do nothing unless the build asked for annotations."""
-
-    @functools.wraps(fn)
-    def wrapper(self: AnnotationWriter, *args: Any, **kwargs: Any) -> None:
-        if self.enabled:
-            fn(self, *args, **kwargs)
-
-    return wrapper
-
-
 class AnnotationWriter:
     """Writes the labels and comments that go with the axioms.
 
-    Every method here does nothing unless the build asked for derived
-    annotations, so emitters can call them unconditionally.
+    Every method does nothing unless `derive_annotations` is on.
+
+    Args:
+        sink: Where the annotations go.
+        settings: Settings of the build.
+        backmap: Cleaned name to the name in the log.
     """
 
     def __init__(
@@ -131,14 +237,6 @@ class AnnotationWriter:
         settings: OntoBuildSettings,
         backmap: Mapping[str, str],
     ) -> None:
-        """Prepare a writer.
-
-        Args:
-            sink: Where the annotations go.
-            settings: Settings of the build, for whether to write any at all.
-            backmap: Cleaned name to what the log called it, which is what
-                every derived label is made of.
-        """
         self.sink = sink
         self.settings = settings
         self._backmap = backmap
@@ -150,16 +248,65 @@ class AnnotationWriter:
 
     @property
     def has_inverses(self) -> bool:
-        """Whether inverse properties exist and so need annotating too."""
+        """Whether the build declares inverse properties."""
         return self.settings.has_inverses
 
     def original(self, name: str) -> str:
-        """Return what the log called a name, or the name if it never changed."""
+        """Return the name as the log wrote it.
+
+        A name cleaning did not change is returned as is.
+        """
         return self._backmap.get(name, name)
 
-    @_when_enabled
+    def write(self, template: str, name: str, **fields: Any) -> None:
+        """Annotate one class or property, and its inverse where it has one.
+
+        Args:
+            template: Entry of `derived_annotations.json` to fill.
+            name: Local name of the entity to annotate.
+            **fields: A value for each `{}` field the entry names.
+
+        Raises:
+            ValueError: If the template is not in the document, or names a
+                field that was not supplied.
+        """
+        if not self.enabled:
+            return
+        entry = _entry(template)
+        self.sink.annotate_entity(
+            name,
+            label=_fill(entry["label"], template, fields),
+            comment=_fill(entry["comment"], template, fields),
+        )
+        if "inverse_label" not in entry or not self.has_inverses:
+            return
+        self.sink.annotate_entity(
+            self.sink.inverse_name(name),
+            label=_fill(entry["inverse_label"], template, fields),
+            comment=_fill(entry["inverse_comment"], template, fields),
+        )
+
+    def label_series(self, template: str, names: pd.Series, **fields: Any) -> None:
+        """Label many individuals at once, from one template.
+
+        Args:
+            template: Entry to fill. Only its label is used.
+            names: Local name of each individual.
+            **fields: A string, or a series holding one value per individual.
+
+        Raises:
+            ValueError: If the template is not in the document, names a field
+                that was not supplied, or was given no series.
+        """
+        if not self.enabled:
+            return
+        labels = _fill_series(_entry(template)["label"], template, fields)
+        self.sink.annotate_individuals_bulk(list(zip(names, labels, strict=True)))
+
     def tbox(self) -> None:
         """Annotate the parts of the TBox this build declared."""
+        if not self.enabled:
+            return
         for name, ann in tbox_annotations().items():
             if not self.sink.is_declared(name):
                 continue
@@ -167,123 +314,74 @@ class AnnotationWriter:
                 name, label=ann.get("label"), comment=ann.get("comment")
             )
 
-    @_when_enabled
     def entity_class(self, name: str, kind: EntityKind) -> None:
         """Label an activity or object type class with its name from the log."""
-        orig = self.original(name)
-        noun = "Events" if kind is EntityKind.EVENT else "Objects"
-        self.sink.annotate_entity(name, label=orig, comment=f"{noun} of type '{orig}'.")
+        original = self.original(name)
+        if kind is EntityKind.EVENT:
+            self.write("entity.event", name, original=original)
+        else:
+            self.write("entity.object", name, original=original)
 
-    @_when_enabled
     def entity_individuals(self, entity_type: str, ids: Iterable[Any]) -> None:
         """Label events or objects with their type and their id from the log.
 
-        An entity with no id is not asserted, so it is not labeled either.
+        An entity with no id is skipped.
         """
-        orig_type = self.original(entity_type)
-        self.sink.annotate_individuals_bulk(
-            [
-                (str(eid), f"{orig_type} ({self.original(str(eid))})")
-                for eid in ids
-                if pd.notna(eid)
-            ]
+        if not self.enabled:
+            return
+        kept = pd.Series([str(eid) for eid in ids if pd.notna(eid)], dtype="object")
+        self.label_series(
+            "entity.individual",
+            kept,
+            type=self.original(entity_type),
+            id=kept.map(self.original),
         )
 
-    @_when_enabled
     def order_superproperties(self, include_df: bool, include_ef: bool) -> None:
-        """Annotate the order properties that every case concept sits below."""
+        """Annotate the `df` and `ef` super-properties."""
         if include_df:
-            self._pair(
-                vocab.DF,
-                "directly followed by",
-                "Holds between two events when one immediately precedes the other "
-                "within any case. Supertype of all case-specific directly-follows "
-                "properties.",
-                "directly preceded by",
-                "Relates an event to the event that directly precedes it within any "
-                "case. Inverse of 'directly followed by'.",
-            )
+            self.write("order.df", vocab.DF)
         if include_ef:
-            self._pair(
-                vocab.EF,
-                "eventually followed by",
-                "Holds between two events whenever one comes at or before the other "
-                "within any case, including itself. Supertype of all case-specific "
-                "eventually-follows properties.",
-                "eventually preceded by",
-                "Relates an event to any event that comes at or before it within any "
-                "case, including itself. Inverse of 'eventually followed by'.",
-            )
+            self.write("order.ef", vocab.EF)
 
-    @_when_enabled
     def trace_boundary_classes(
         self, case_concept: str, start_cls: str, end_cls: str
     ) -> None:
         """Annotate the start and end event classes of one case concept."""
-        cc = self.original(case_concept)
-        self.sink.annotate_entity(
-            start_cls,
-            label=f"Start Event (via {cc})",
-            comment=f"Events with no directly-follows predecessor in the '{cc}' case trace.",
-        )
-        self.sink.annotate_entity(
-            end_cls,
-            label=f"End Event (via {cc})",
-            comment=f"Events with no directly-follows successor in the '{cc}' case trace.",
-        )
+        case = self.original(case_concept)
+        self.write("order.start", start_cls, case=case)
+        self.write("order.end", end_cls, case=case)
 
-    @_when_enabled
     def df_property(self, case_concept: str, prop: str) -> None:
         """Annotate the directly-follows property of one case concept."""
-        cc = self.original(case_concept)
-        self._pair(
-            prop,
-            f"directly followed (via {cc}) by",
-            f"Holds between two events when one immediately precedes the other in the "
-            f"same '{cc}' case trace.",
-            f"directly preceded (via {cc}) by",
-            f"Relates an event to its direct predecessor in the same '{cc}' case trace. "
-            f"Inverse of 'directly followed (via {cc}) by'.",
-        )
+        self.write("order.df_case", prop, case=self.original(case_concept))
 
-    @_when_enabled
     def ef_property(self, case_concept: str, prop: str) -> None:
         """Annotate the eventually-follows property of one case concept."""
-        cc = self.original(case_concept)
-        self._pair(
-            prop,
-            f"eventually followed (via {cc}) by",
-            f"Holds between two events whenever one comes at or before the other in the "
-            f"same '{cc}' case trace, including itself.",
-            f"eventually preceded (via {cc}) by",
-            f"Relates an event to any event that comes at or before it in the same "
-            f"'{cc}' case trace, including itself. Inverse of 'eventually followed "
-            f"(via {cc}) by'.",
-        )
+        self.write("order.ef_case", prop, case=self.original(case_concept))
 
-    @_when_enabled
     def time_individuals(self, ids: pd.Series, labels: pd.Series) -> None:
         """Label time individuals with a readable timestamp."""
+        if not self.enabled:
+            return
         self.sink.annotate_individuals_bulk(list(zip(ids, labels, strict=True)))
 
-    @_when_enabled
     def attribute(self, attr: str, prop: str, owner: str) -> None:
-        """Annotate an attribute class and the property that reaches its values."""
-        orig = self.original(attr)
-        self.sink.annotate_entity(
-            attr, label=orig, comment=f"Attribute '{orig}' of a {owner}."
-        )
-        self._pair(
-            prop,
-            f"has {orig}",
-            f"Links a {owner} to its '{orig}' attribute value.",
-            f"is {orig} of",
-            f"Links a '{orig}' attribute value to its owning {owner}.",
-        )
+        """Annotate an attribute class and its `has_` property.
 
-    @_when_enabled
+        Args:
+            attr: Attribute class name.
+            prop: The `has_` property of the attribute.
+            owner: Either `event` or `object`.
+        """
+        original = self.original(attr)
+        self.write("attribute.class", attr, original=original, owner=owner)
+        self.write("attribute.property", prop, original=original, owner=owner)
+
     def attribute_values(self, value_to_name: dict[Any, str]) -> None:
         """Label value individuals with the value as the log wrote it."""
+        if not self.enabled:
+            return
         self.sink.annotate_individuals_bulk(
             [
                 (name, self._backmap.get(name, _format_value(value)))
@@ -291,67 +389,48 @@ class AnnotationWriter:
             ]
         )
 
-    @_when_enabled
     def relation(
         self, relation: str, from_types: Sequence[str], to_types: Sequence[str]
     ) -> None:
         """Annotate a relation property with the types it connects."""
-        orig = self.original(relation)
-        source = " or ".join(self.original(t) for t in from_types) or "event"
-        target = " or ".join(self.original(t) for t in to_types)
-        self._pair(
+        self.write(
+            "relation",
             relation,
-            orig,
-            f"Relates '{source}' to '{target}' via the '{orig}' relationship.",
-            f"inverse of {orig}",
-            f"Inverse of '{orig}': relates '{target}' back to '{source}'.",
+            original=self.original(relation),
+            source=" or ".join(self.original(t) for t in from_types) or "event",
+            target=" or ".join(self.original(t) for t in to_types) or "object",
         )
 
-    @_when_enabled
-    def declare_constraints(self, hierarchy: str, constraints: Sequence[str]) -> None:
+    def declare_constraints(
+        self,
+        hierarchy: str,
+        constraints: Sequence[str],
+        activities: Collection[str] = (),
+    ) -> None:
         """Annotate the constraint hierarchy and every constraint under it.
 
         Args:
             hierarchy: Class the mined constraints sit under.
             constraints: The mined constraint class names.
+            activities: Activity names of the log, used to split each
+                constraint name.
         """
-        self.sink.annotate_entity(
-            hierarchy,
-            label="DECLARE constraint",
-            comment=(
-                "A rule about the order of activities within a trace. Its members "
-                "are the traces that satisfy it."
-            ),
-        )
+        self.write("declare.hierarchy", hierarchy)
         for constraint in constraints:
-            written = _declare_label(constraint, self.original)
-            self.sink.annotate_entity(
+            self.write(
+                "declare.constraint",
                 constraint,
-                label=written,
-                comment=f"Traces satisfying the DECLARE constraint '{written}'.",
+                constraint=_declare_label(constraint, self.original, activities),
             )
 
-    @_when_enabled
     def attribute_change_schema(
         self, attr: str, change_class: str, change_prop: str
     ) -> None:
         """Annotate the change class and change property of one attribute."""
-        orig = self.original(attr)
-        self.sink.annotate_entity(
-            change_class,
-            label=f"{orig} Change",
-            comment=f"A timestamped record of the attribute '{orig}' taking a new value.",
-        )
-        self._pair(
-            change_prop,
-            f"changes {orig} to",
-            f"Links an attribute change record to the new value of '{orig}'.",
-            f"is new {orig} in change",
-            f"Links a '{orig}' value to the attribute change record in which it became "
-            f"the new value.",
-        )
+        original = self.original(attr)
+        self.write("change.class", change_class, original=original)
+        self.write("change.property", change_prop, original=original)
 
-    @_when_enabled
     def attribute_change_individuals(
         self,
         change_ids: pd.Series,
@@ -360,28 +439,12 @@ class AnnotationWriter:
         object_ids: pd.Series,
         timestamps: pd.Series,
     ) -> None:
-        """Label change records with the attribute, the object and the moment."""
-        orig_attr = self.original(attr)
-        orig_type = self.original(obj_type)
-        owners = orig_type + " (" + object_ids.astype(str) + ")"
-        labels = (
-            f"{orig_attr} Change for " + owners + " at " + timestamp_labels(timestamps)
+        """Label change records with the attribute, the object and the timestamp."""
+        self.label_series(
+            "change.individual",
+            change_ids,
+            attribute=self.original(attr),
+            type=self.original(obj_type),
+            id=object_ids.astype(str).map(self.original),
+            time=timestamp_labels(timestamps),
         )
-        self.sink.annotate_individuals_bulk(list(zip(change_ids, labels, strict=True)))
-
-    def _pair(
-        self,
-        prop: str,
-        label: str,
-        comment: str,
-        inverse_label: str,
-        inverse_comment: str,
-    ) -> None:
-        """Annotate a property and its inverse, when the build has inverses."""
-        self.sink.annotate_entity(prop, label=label, comment=comment)
-        if self.has_inverses:
-            self.sink.annotate_entity(
-                self.sink.inverse_name(prop),
-                label=inverse_label,
-                comment=inverse_comment,
-            )

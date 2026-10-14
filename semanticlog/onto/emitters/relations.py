@@ -1,8 +1,7 @@
 """The relations of the log, as properties between individuals.
 
-Each named relation becomes a property of its own below the schema property
-for its family, so the log keeps its own vocabulary while a query can still
-ask for every relation of a kind.
+Each named relation becomes a sub-property of the schema property for its
+family.
 """
 
 from __future__ import annotations
@@ -12,34 +11,36 @@ from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import RelationKind
 from semanticlog.onto.emitters.base import Emitter
 
+_SUPERPROPERTY = {
+    RelationKind.E2O: vocab.EVENT_OBJECT_RELATION,
+    RelationKind.O2O: vocab.OBJECT_OBJECT_RELATION,
+}
+
 
 class RelationEmitter(Emitter):
-    """Emits both relation families."""
+    """Emits one relation family per call."""
 
-    def emit_event_to_object(self, data: ReadableStore) -> None:
-        """Emit the relations from events to objects."""
-        self._emit(data, RelationKind.E2O, vocab.EVENT_OBJECT_RELATION)
-
-    def emit_object_to_object(self, data: ReadableStore) -> None:
-        """Emit the relations between objects."""
-        self._emit(data, RelationKind.O2O, vocab.OBJECT_OBJECT_RELATION)
-
-    def _emit(
-        self,
-        data: ReadableStore,
-        relation_filter: RelationKind,
-        superprop: str,
-    ) -> None:
+    def emit(self, data: ReadableStore, kind: RelationKind) -> None:
         """Emit one relation family, each relation with its domain and range.
 
         The domain of an event-to-object relation is always the event class.
         For an object-to-object relation it is the source types the store
         records, falling back to the object class when it records none.
+
+        Raises:
+            ValueError: If `kind` is `RelationKind.ALL`.
         """
-        for relation in data.get_relation_types(relation_filter):
+        superprop = _SUPERPROPERTY.get(kind)
+        if superprop is None:
+            raise ValueError(
+                f"RelationEmitter takes one relation family, got {kind!r}, which "
+                "names both relation families. Emit RelationKind.E2O and "
+                "RelationKind.O2O separately."
+            )
+        for relation in data.get_relation_types(kind):
             table = data.get_relation(relation)
             from_types = table.from_type or []
-            if relation_filter is RelationKind.O2O:
+            if kind is RelationKind.O2O:
                 domain = from_types or [vocab.OBJECT]
             else:
                 domain = [vocab.EVENT]

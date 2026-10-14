@@ -1,259 +1,139 @@
-"""The checks that run before a build emits anything."""
+from __future__ import annotations
 
 from datetime import datetime
 
 import pandas as pd
 import pytest
 
-from semanticlog.core.enums import (
-    DataRepresentation,
-    EventOrderRepresentation,
-)
-from semanticlog.core.vocabulary import (
-    DEFAULT_IRI,
-    NameCollisionError,
-    UnsafeLocalNameError,
-)
+from semanticlog.core.enums import EventOrderRepresentation
+from semanticlog.core.errors import ConfigError, InputError
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.oced import OCEDStore
+from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.audit import audit_build
-from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 
-NS = DEFAULT_IRI
+DF = OntoBuildSettings(order_representations=[EventOrderRepresentation.DF])
+DECLARE = OntoBuildSettings(order_representations=[EventOrderRepresentation.DECLARE])
 
 
-def _store(object_data: pd.DataFrame, activity: str = "act") -> OCEDStore:
+def _store(object_type: str = "order", relation_eid: str = "e1") -> OCEDStore:
+    """One event and one object, linked by one relation row."""
     data = OCEDStore()
-    data.add_event(
-        activity,
+    data.add(
+        EntityKind.EVENT,
+        "act",
+        pd.DataFrame({"eid": ["e1"], "t": [datetime(2024, 1, 1)]}),
         id_col="eid",
         time_col="t",
-        data=pd.DataFrame({"eid": ["e1"], "t": [datetime(2024, 1, 1)]}),
     )
-    data.add_object("order", id_col="oid", data=object_data)
-    data.add_event_to_object_relation(
+    data.add(
+        EntityKind.OBJECT, object_type, pd.DataFrame({"oid": ["o1"]}), id_col="oid"
+    )
+    data.add(EntityKind.OBJECT, "pallet", pd.DataFrame({"oid": ["p1"]}), id_col="oid")
+    data.add_relation(
+        RelationKind.E2O,
         "rel",
-        from_id_col="eid",
-        to_id_col="oid",
-        to_type=["order"],
-        data=pd.DataFrame({"eid": ["e1"], "oid": [object_data["oid"].iloc[0]]}),
+        pd.DataFrame({"eid": [relation_eid], "oid": ["o1"]}),
+        from_id="eid",
+        to_id="oid",
+        to_type=[object_type],
     )
     return data
 
 
-def _build(
-    store: OCEDStore,
-    settings: OntoBuildSettings | None = None,
-    inputs: BuildInputs | None = None,
-):
-    return OCEDOntoBuilder(NS, settings or OntoBuildSettings()).build_ontology(
-        store, inputs
-    )
-
-
-def test_ambiguous_underscore_split_is_rejected():
-    store = clean_oced_data(
-        _store(pd.DataFrame({"oid": ["o1"], "a_b": ["c"], "a": ["b_c"]}))
-    )
-
-    with pytest.raises(NameCollisionError, match="a_b_c") as excinfo:
-        _build(store)
-
-    message = str(excinfo.value)
-    assert "'a'" in message
-    assert "'a_b'" in message
-
-
-def test_an_attribute_only_the_history_carries_is_checked_for_ambiguity():
-    """A column empty for every object is dropped by the loader and survives
-    only in the change history, which is the shape built here. Its values still
-    become the same individuals, so the check has to see it there.
-    """
-    data = OCEDStore(ocel_mode=True)
-    data.add_event(
-        "act",
-        id_col="eid",
-        time_col="t",
-        data=pd.DataFrame({"eid": ["e1"], "t": [datetime(2024, 1, 1)]}),
-    )
-    data.add_object(
-        "order", id_col="oid", data=pd.DataFrame({"oid": ["o1"], "a": ["b_c"]})
-    )
-    data.add_event_to_object_relation(
-        "rel",
-        from_id_col="eid",
-        to_id_col="oid",
-        to_type=["order"],
-        data=pd.DataFrame({"eid": ["e1"], "oid": ["o1"]}),
-    )
-    data.add_object_changes(
-        "order",
-        pd.DataFrame(
-            {
-                "ocel:oid": ["o1"],
-                "ocel:type": ["order"],
-                "ocel:timestamp": [datetime(2024, 1, 2)],
-                "ocel:field": ["a_b"],
-                "a_b": ["c"],
-            }
+def _declare_audit(constraints: dict) -> None:
+    audit_build(
+        clean_oced_data(_store()),
+        DECLARE,
+        BuildInputs(
+            case_concepts=["order"], declare_constraints=pd.DataFrame(constraints)
         ),
     )
-    store = clean_oced_data(data)
-    assert "a_b" not in store.get_object_table("order").data.columns
-
-    with pytest.raises(NameCollisionError, match="a_b_c"):
-        _build(store)
 
 
-def test_an_ambiguous_split_is_rejected_before_any_axiom_is_written():
-    store = clean_oced_data(
-        _store(pd.DataFrame({"oid": ["o1"], "a_b": ["c"], "a": ["b_c"]}))
-    )
-    builder = OCEDOntoBuilder(NS, OntoBuildSettings())
-
-    with pytest.raises(NameCollisionError):
-        builder.build_ontology(store)
-
-    assert list(builder.sink.onto.classes_in_signature()) == []
+# --------------------------------------------------------------------------
+# Case concepts
+# --------------------------------------------------------------------------
 
 
-def test_prefix_related_attributes_with_disjoint_values_are_accepted():
-    store = clean_oced_data(
-        _store(pd.DataFrame({"oid": ["o1"], "a_b": ["x"], "a": ["y"]}))
-    )
-    _build(store)
+@pytest.mark.parametrize(
+    ("store", "case_concept", "match"),
+    [
+        (_store(), "no_such_type", "'no_such_type' is not an object type of this log"),
+        (
+            _store("purchase order"),
+            "purchase order",
+            "'purchase order' was renamed to 'purchase_order' by cleaning",
+        ),
+        (_store(), "pallet", "'pallet' is an object type of this log, but no event"),
+    ],
+    ids=["unknown", "renamed", "unreachable"],
+)
+def test_a_case_concept_the_log_cannot_be_projected_onto_is_rejected(
+    store, case_concept, match
+):
+    with pytest.raises(ConfigError, match=match):
+        audit_build(
+            clean_oced_data(store), DF, BuildInputs(case_concepts=[case_concept])
+        )
 
 
-def test_a_bin_class_cannot_collide_with_a_value_individual():
-    store = clean_oced_data(
-        _store(pd.DataFrame({"oid": ["o1", "o2"], "price": ["low", "high"]}))
-    )
-    settings = OntoBuildSettings(
-        data_representations=[DataRepresentation.VALUES, DataRepresentation.EQUAL_BINS],
-        bins=2,
-        bin_labels=["low", "high"],
-    )
-    store.add_object(
-        "priced",
-        id_col="oid",
-        data=pd.DataFrame({"oid": ["p1", "p2"], "price": [1.0, 2.0]}),
-    )
-
-    semlog = _build(store, settings)
-
-    names = {c.iri.remainder for c in semlog.onto.classes_in_signature()}
-    individuals = {i.iri.remainder for i in semlog.onto.individuals_in_signature()}
-    assert "price_bin_low" in names
-    assert "price_low" in individuals
-    assert not names & individuals
+# --------------------------------------------------------------------------
+# DECLARE constraints
+# --------------------------------------------------------------------------
 
 
-def test_case_concept_property_colliding_with_a_relation_is_rejected():
-    data = OCEDStore()
-    data.add_event(
-        "act",
-        id_col="eid",
-        time_col="t",
-        data=pd.DataFrame({"eid": ["e1"], "t": [datetime(2024, 1, 1)]}),
-    )
-    data.add_object("order", id_col="oid", data=pd.DataFrame({"oid": ["o1"]}))
-    data.add_event_to_object_relation(
-        "df_order",
-        from_id_col="eid",
-        to_id_col="oid",
-        to_type=["order"],
-        data=pd.DataFrame({"eid": ["e1"], "oid": ["o1"]}),
-    )
-    settings = OntoBuildSettings(
-        order_representations=[EventOrderRepresentation.DF],
-    )
-
-    with pytest.raises(NameCollisionError, match="df_order"):
-        _build(data, settings, BuildInputs(case_concepts=["order"]))
+def test_constraints_missing_an_index_column_name_it():
+    with pytest.raises(InputError, match="no 'case_concept' column"):
+        _declare_audit({"trace_id": ["o1"], "Response__a__b__": [True]})
 
 
-def test_an_activity_named_after_an_object_type_is_rejected():
-    data = OCEDStore()
-    data.add_event(
-        "order",
-        id_col="eid",
-        time_col="t",
-        data=pd.DataFrame({"eid": ["e1"], "t": [datetime(2024, 1, 1)]}),
-    )
-    data.add_object("order", id_col="oid", data=pd.DataFrame({"oid": ["o1"]}))
-    data.add_event_to_object_relation(
-        "rel",
-        from_id_col="eid",
-        to_id_col="oid",
-        to_type=["order"],
-        data=pd.DataFrame({"eid": ["e1"], "oid": ["o1"]}),
-    )
-
-    with pytest.raises(NameCollisionError, match="order"):
-        _build(data)
+def test_a_constraint_row_with_no_case_concept_is_rejected():
+    with pytest.raises(InputError, match="1 row\\(s\\) have no case concept"):
+        _declare_audit(
+            {
+                "case_concept": ["order", None],
+                "trace_id": ["o1", "ghost"],
+                "Response__a__b__": [True, True],
+            }
+        )
 
 
-def test_uncleaned_activity_name_is_rejected():
-    store = _store(pd.DataFrame({"oid": ["o1"]}), activity="place order")
-
-    with pytest.raises(UnsafeLocalNameError, match="clean_oced_data"):
-        _build(store)
-
-
-def test_uncleaned_attribute_value_is_rejected():
-    store = _store(pd.DataFrame({"oid": ["o1"], "status": ["in progress"]}))
-
-    with pytest.raises(UnsafeLocalNameError, match="status_in progress"):
-        _build(store)
+def test_a_constraint_case_concept_the_log_lacks_is_rejected():
+    with pytest.raises(InputError, match="case concept 'invoice' is not an object"):
+        _declare_audit(
+            {
+                "case_concept": ["invoice"],
+                "trace_id": ["i1"],
+                "Response__a__b__": [True],
+            }
+        )
 
 
-def test_uncleaned_entity_id_is_rejected():
-    store = _store(pd.DataFrame({"oid": ["order/1"]}))
-
-    with pytest.raises(UnsafeLocalNameError, match="order/1"):
-        _build(store)
-
-
-def test_distinct_names_pass():
-    store = clean_oced_data(
-        _store(pd.DataFrame({"oid": ["o1"], "colour": ["red"], "size": ["large"]}))
-    )
-    _build(store)
+def test_a_trace_id_that_is_no_object_of_its_case_concept_is_rejected():
+    with pytest.raises(InputError, match="1 of 2 'order' trace id.* starting with o9"):
+        _declare_audit(
+            {
+                "case_concept": ["order", "order"],
+                "trace_id": ["o1", "o9"],
+                "Response__a__b__": [True, False],
+            }
+        )
 
 
-def test_same_attribute_on_two_types_is_not_a_collision():
-    data = OCEDStore()
-    data.add_event(
-        "act",
-        id_col="eid",
-        time_col="t",
-        data=pd.DataFrame({"eid": ["e1"], "t": [datetime(2024, 1, 1)], "name": ["x"]}),
-    )
-    data.add_object(
-        "order", id_col="oid", data=pd.DataFrame({"oid": ["o1"], "name": ["y"]})
-    )
-    data.add_event_to_object_relation(
-        "rel",
-        from_id_col="eid",
-        to_id_col="oid",
-        to_type=["order"],
-        data=pd.DataFrame({"eid": ["e1"], "oid": ["o1"]}),
-    )
-
-    _build(clean_oced_data(data))
+# --------------------------------------------------------------------------
+# Every check at once
+# --------------------------------------------------------------------------
 
 
-def test_numeric_values_with_decimal_points_are_accepted():
-    store = clean_oced_data(
-        _store(pd.DataFrame({"oid": ["o1", "o2"], "price": [10.5, -3.2]}))
-    )
+def test_every_failed_check_is_reported_in_one_error():
+    with pytest.raises(InputError, match=r"1 event id\(s\) are in no event table") as e:
+        audit_build(
+            _store(relation_eid="ghost"),
+            DF,
+            BuildInputs(case_concepts=["no_such_type"]),
+        )
 
-    _build(store)
-
-
-def test_audit_build_accepts_a_clean_store():
-    store = clean_oced_data(_store(pd.DataFrame({"oid": ["o1"], "colour": ["red"]})))
-
-    audit_build(store, OntoBuildSettings(), BuildInputs())
+    assert "'no_such_type' is not an object type of this log" in str(e.value)

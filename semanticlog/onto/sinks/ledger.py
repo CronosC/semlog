@@ -1,10 +1,8 @@
-"""Who claimed which name, and which schema statements have been made.
+"""What each emitted name is declared as, and which schema statements have been written.
 
-Two things have to be tracked across a whole build regardless of where the
-axioms end up. One name may only ever mean one thing, and a schema statement
-is worth making once. Both are bookkeeping over names rather than over axioms,
-so they sit beside `AxiomSink` rather than inside it, and a backend never sees
-them.
+`NameLedger` raises on a name declared as two entities. Its `first_*` methods
+return False for a schema statement offered a second time, and the sink then
+skips the write.
 """
 
 from __future__ import annotations
@@ -15,40 +13,62 @@ from itertools import islice
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
+from semanticlog.core.enums import SinkEntity
 from semanticlog.core.vocabulary import NameCollisionError
 
-_BY_KIND = {
-    "class": "classes",
-    "object": "object_properties",
-    "data": "data_properties",
+_BY_KIND: dict[SinkEntity, str] = {
+    SinkEntity.CLASS: "classes",
+    SinkEntity.OBJECT_PROPERTY: "object_properties",
+    SinkEntity.DATA_PROPERTY: "data_properties",
+    SinkEntity.ANNOTATION_PROPERTY: "annotation_properties",
 }
+
+_PROPERTY_KINDS = frozenset(
+    {
+        SinkEntity.OBJECT_PROPERTY,
+        SinkEntity.DATA_PROPERTY,
+        SinkEntity.ANNOTATION_PROPERTY,
+    }
+)
 
 
 class NameLedger:
-    """Records what each emitted name was claimed for, and refuses a second claim.
+    """Records what each emitted name is declared as.
 
-    A name that is unsafe in an IRI, or that would be used for two different
-    things, is refused here with a message naming both sources.
+    A name that cannot appear in an IRI, or that is declared as two different
+    entities, raises with a message naming both sources.
     """
 
     def __init__(self) -> None:
-        self._declared: dict[str, tuple[str, str]] = {}
-        self._written_schema: set[tuple] = set()
+        self._declared: dict[str, tuple[SinkEntity, str]] = {}
+        self._written_schema: set[tuple[object, ...]] = set()
         self._named_inverses: dict[str, str] = dict(vocab.SCHEMA_NAMED_INVERSES)
 
-    def declare(self, name: str, kind: str, source: str) -> None:
-        """Claim a name for one thing.
+    def declare(self, name: str, kind: SinkEntity, source: str) -> None:
+        """Declare a name as one entity.
+
+        A name declared again as the same kind from the same source is
+        accepted. A different source is a second entity.
 
         Args:
-            name: Local name being claimed.
-            kind: One of `class`, `object` or `data`.
-            source: Where the claim comes from, quoted in any error.
+            name: Local name.
+            kind: Entity kind.
+            source: Origin of the name, quoted in an error.
 
         Raises:
-            UnsafeLocalNameError: If the name cannot appear in an IRI.
-            NameCollisionError: If something else already claimed it.
+            UnsafeLocalNameError: If the name cannot appear in an IRI, or a
+                property name does not start with a letter or an underscore.
+            NameCollisionError: If the name is declared as another kind or
+                from another source.
         """
         self.check_name(name, source)
+        if kind in _PROPERTY_KINDS and not (name[0].isalpha() or name[0] == "_"):
+            raise vocab.UnsafeLocalNameError(
+                f"{name!r} from {source} cannot be a property name. A property "
+                "name starts with a letter or an underscore. Run "
+                "clean_oced_data(store) before building, or rename it in the "
+                "input."
+            )
         previous = self._declared.get(name)
         if previous is None:
             self._declared[name] = (kind, source)
@@ -57,49 +77,45 @@ class NameLedger:
         if prev_kind == kind and prev_source == source:
             return
         raise NameCollisionError(
-            f"{name!r} would be emitted for more than one thing, which silently "
-            f"merges them in the ontology:\n"
-            f"  as {prev_kind} from {prev_source}\n"
-            f"  as {kind} from {source}\n\n"
-            "Rename the colliding source in the input data before building."
+            f"{name!r} names two entities:\n"
+            f"  as {prev_kind.value} from {prev_source}\n"
+            f"  as {kind.value} from {source}\n\n"
+            "Rename one of them in the input data before building."
         )
 
     def check_name(self, name: str, source: str) -> None:
-        """Refuse a name that cannot be an IRI local name.
+        """Raise if a name cannot be an IRI local name.
 
         Raises:
-            UnsafeLocalNameError: Naming where the name came from.
+            UnsafeLocalNameError: If it cannot. The message names the source.
         """
         if not vocab.is_safe_local_name(name):
             raise vocab.UnsafeLocalNameError(
-                f"{name!r} from {source} cannot be an IRI local name. Names come "
-                "from the input data, so run clean_oced_data(store) before "
-                "building, or check any input that bypasses it such as a "
-                "DECLARE constraints CSV."
+                f"{name!r} from {source} cannot be an IRI local name. Run "
+                "clean_oced_data(store) before building, or clean the input "
+                "that bypasses it, such as a DECLARE constraints CSV."
             )
 
     def accepts_individual(self, name: str) -> bool:
-        """Whether a name can be emitted as an individual as it stands.
+        """Whether a name is safe and not declared as a class or property.
 
-        This is the hot path of a build, since a relation names two of them
-        per row, so it stays as cheap as a regex match and a dict lookup and
-        leaves the message about a refusal to `check_individual`.
+        `check_individual` gives the error message.
         """
         return (
             bool(vocab.SAFE_LOCAL_NAME.fullmatch(name)) and name not in self._declared
         )
 
     def check_individual(self, name: str, source: str) -> None:
-        """Refuse one individual name that cannot be emitted as it stands.
+        """Raise if a name cannot be emitted as an individual.
 
         Args:
-            name: Candidate individual name, already text.
-            source: Where it comes from, quoted in any error.
+            name: Individual name, as text.
+            source: Origin of the name, quoted in the error.
 
         Raises:
             UnsafeLocalNameError: If the name cannot appear in an IRI.
-            NameCollisionError: If the name is also declared as a class or a
-                property, which would make one IRI a member of itself.
+            NameCollisionError: If the name is declared as a class or a
+                property.
         """
         self.check_name(name, source)
         declared = self._declared.get(name)
@@ -107,32 +123,29 @@ class NameLedger:
             return
         kind, declared_by = declared
         raise NameCollisionError(
-            f"{name!r} is emitted both as an individual and as a {kind}, "
-            "which makes one IRI a member of itself:\n"
-            f"  as {kind} from {declared_by}\n"
+            f"{name!r} is emitted both as an individual and as a {kind.value}:\n"
+            f"  as {kind.value} from {declared_by}\n"
             f"  as individual from {source}\n\n"
-            "Rename the colliding source in the input data before building."
+            "Rename one of them in the input data before building."
         )
 
     def check_individuals(self, names: Iterable[str], source: str) -> list[str]:
-        """Check a batch of individual names, and return the ones to emit.
+        """Check a batch of individual names and return the ones to emit.
 
-        Individuals are checked in bulk because there are many of them, and
-        only the first offender of each sort is reported. Missing values are
-        dropped rather than checked, so a caller writes what this returns and
-        not the names it passed in.
+        Missing values and duplicates are dropped. Only the first unsafe name
+        and the first collision are reported. Write the returned list.
 
         Args:
             names: Candidate individual names.
-            source: Where they come from, quoted in any error.
+            source: Origin of the names, quoted in an error.
 
         Returns:
-            The distinct names, as text, in the order they arrived.
+            The distinct names, as text, in input order.
 
         Raises:
             UnsafeLocalNameError: If a name cannot appear in an IRI.
-            NameCollisionError: If a name is also declared as a class or a
-                property, which would make one IRI a member of itself.
+            NameCollisionError: If a name is declared as a class or a
+                property.
         """
         series = (
             names
@@ -140,8 +153,7 @@ class NameLedger:
             else pd.Series(list(names), dtype="object")
         )
         series = series[series.notna()]
-        # A column of ids is already text, and converting it again would copy
-        # every string in the log.
+        # Converting a text column would copy every string in the log.
         if pd.api.types.infer_dtype(series, skipna=True) != "string":
             series = series.astype(str)
         series = series.drop_duplicates()
@@ -168,8 +180,8 @@ class NameLedger:
         return len(self._declared)
 
     def by_kind(self) -> dict[str, int]:
-        """How many classes, object properties and data properties there are."""
-        counts = {"classes": 0, "object_properties": 0, "data_properties": 0}
+        """How many names of each kind have been declared."""
+        counts = dict.fromkeys(_BY_KIND.values(), 0)
         for kind, _ in self._declared.values():
             counts[_BY_KIND[kind]] += 1
         return counts
@@ -181,56 +193,55 @@ class NameLedger:
             mark: A `count` read before the step being measured.
 
         Returns:
-            Names by kind, in the order they were declared.
+            Names keyed by the value of their `SinkEntity`, in declaration
+            order.
         """
         names: dict[str, list[str]] = {}
         for name, (kind, _) in islice(self._declared.items(), mark, None):
-            names.setdefault(kind, []).append(name)
+            names.setdefault(kind.value, []).append(name)
         return names
 
-    def first_declaration(self, name: str, kind: str) -> bool:
-        """Report whether this entity has yet to be declared, and record it."""
+    def first_declaration(self, name: str, kind: SinkEntity) -> bool:
+        """Return True the first time this declaration is offered, False after."""
         return self._first(("declare", name, kind))
 
     def first_sub_class(self, sub: str, parents: Sequence[str]) -> bool:
-        """Report whether this class has yet to be placed under these parents."""
+        """Return True the first time this subclass axiom is offered, False after."""
         return self._first(("sub_class", sub, tuple(parents)))
 
     def first_sub_property(self, sub: str, parent: str, data_prop: bool) -> bool:
-        """Report whether this property has yet to be placed under that one."""
+        """Return True the first time this subproperty axiom is offered, False after."""
         return self._first(("sub_property", sub, parent, data_prop))
 
     def first_domain(
         self, prop: str, expression: Sequence[str], data_prop: bool
     ) -> bool:
-        """Report whether this domain has yet to be stated for the property."""
+        """Return True the first time this domain is offered, False after."""
         return self._first(("domain", prop, tuple(expression), data_prop))
 
     def first_range(
         self, prop: str, expression: Sequence[str], data_prop: bool
     ) -> bool:
-        """Report whether this range has yet to be stated for the property."""
+        """Return True the first time this range is offered, False after."""
         return self._first(("range", prop, tuple(expression), data_prop))
 
     def first_inverse(self, prop: str, inverse: str) -> bool:
-        """Report whether these two have yet to be stated as inverses."""
+        """Return True the first time this inverse axiom is offered, False after."""
         return self._first(("inverse", prop, inverse))
 
     def first_transitive(self, prop: str) -> bool:
-        """Report whether this property has yet to be declared transitive."""
+        """Return True the first time this transitivity axiom is offered, False after."""
         return self._first(("transitive", prop))
 
     def first_annotation(self, kind: str, name: str, text: str) -> bool:
-        """Report whether this entity has yet to carry this label or comment."""
+        """Return True the first time this annotation is offered, False after."""
         return self._first(("annotate", kind, name, text))
 
-    def _first(self, statement: tuple) -> bool:
-        """Report whether a schema statement is new, and record it.
+    def _first(self, statement: tuple[object, ...]) -> bool:
+        """Record a schema statement and return True if it is new.
 
         Args:
-            statement: What identifies it. The first element says which sort
-                it is, so two sorts cannot collide on one key. Every caller is
-                a method above, so nothing outside builds one of these.
+            statement: Key of the statement. The first element is its sort.
         """
         if statement in self._written_schema:
             return False
@@ -238,22 +249,20 @@ class NameLedger:
         return True
 
     def inverse_name(self, prop: str) -> str:
-        """Return the inverse of a property, including inverses named in this build."""
+        """Return the inverse name of a property, from the vocabulary or from this build."""
         return vocab.inverse(prop, self._named_inverses)
 
     def claim_inverse(self, prop: str, inverse: str, source: str) -> None:
         """Record that two properties are each other's inverse.
 
         Raises:
-            NameCollisionError: If the name is already the inverse of another
-                property, since recording the second would drop the first.
+            NameCollisionError: If the name is the inverse of another property.
         """
         claimed_by = self._named_inverses.get(inverse)
         if claimed_by is not None and claimed_by != prop:
             raise NameCollisionError(
-                f"{inverse!r} is already the inverse of {claimed_by!r} and "
-                f"cannot also be the inverse of {prop!r}: a property has one "
-                "inverse, and recording the second would silently drop the first.\n"
+                f"{inverse!r} is the inverse of {claimed_by!r} and cannot also "
+                f"be the inverse of {prop!r}.\n"
                 f"  from {source}\n\n"
                 "Pass a distinct inverse_name, or leave it unset to get "
                 f"{self.inverse_name(prop)!r}."

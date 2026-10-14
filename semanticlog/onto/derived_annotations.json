@@ -1,0 +1,82 @@
+{
+  "entity.event": {
+    "label": "{original}",
+    "comment": "Events of type '{original}'."
+  },
+  "entity.object": {
+    "label": "{original}",
+    "comment": "Objects of type '{original}'."
+  },
+  "entity.individual": {
+    "label": "{type} ({id})"
+  },
+  "order.df": {
+    "label": "directly followed by",
+    "comment": "Relates an event to the event that directly follows it in a case trace. Superproperty of the directly-follows property of every case concept.",
+    "inverse_label": "directly preceded by",
+    "inverse_comment": "Inverse of directly followed by. Relates an event to the event that directly precedes it in a case trace."
+  },
+  "order.ef": {
+    "label": "eventually followed by",
+    "comment": "Relates an event to itself and to every later event in a case trace. Superproperty of the eventually-follows property of every case concept.",
+    "inverse_label": "eventually preceded by",
+    "inverse_comment": "Inverse of eventually followed by. Relates an event to itself and to every earlier event in a case trace."
+  },
+  "order.df_case": {
+    "label": "directly followed by ({case})",
+    "comment": "Relates an event to the event that directly follows it in the same '{case}' trace.",
+    "inverse_label": "directly preceded by ({case})",
+    "inverse_comment": "Inverse of directly followed by ({case}). Relates an event to the event that directly precedes it in the same '{case}' trace."
+  },
+  "order.ef_case": {
+    "label": "eventually followed by ({case})",
+    "comment": "Relates an event to itself and to every later event in the same '{case}' trace.",
+    "inverse_label": "eventually preceded by ({case})",
+    "inverse_comment": "Inverse of eventually followed by ({case}). Relates an event to itself and to every earlier event in the same '{case}' trace."
+  },
+  "order.start": {
+    "label": "Start event ({case})",
+    "comment": "Events with no predecessor in their '{case}' trace."
+  },
+  "order.end": {
+    "label": "End event ({case})",
+    "comment": "Events with no successor in their '{case}' trace."
+  },
+  "attribute.class": {
+    "label": "{original}",
+    "comment": "Values of the '{original}' attribute of an {owner}."
+  },
+  "attribute.property": {
+    "label": "has {original}",
+    "comment": "Relates an {owner} to its '{original}' value.",
+    "inverse_label": "is {original} of",
+    "inverse_comment": "Inverse of has {original}. Relates a '{original}' value to its {owner}."
+  },
+  "relation": {
+    "label": "{original}",
+    "comment": "Relation '{original}' from {source} to {target}.",
+    "inverse_label": "inverse of {original}",
+    "inverse_comment": "Inverse of '{original}'. Relates {target} to {source}."
+  },
+  "declare.hierarchy": {
+    "label": "DECLARE constraint",
+    "comment": "A rule about the order of activities in a trace. Each subclass is one mined constraint, and its members are the traces that satisfy it."
+  },
+  "declare.constraint": {
+    "label": "{constraint}",
+    "comment": "Traces that satisfy the DECLARE constraint '{constraint}'."
+  },
+  "change.class": {
+    "label": "{original} change",
+    "comment": "Records of the '{original}' attribute taking a new value."
+  },
+  "change.property": {
+    "label": "changes {original} to",
+    "comment": "Relates a change record to the new '{original}' value.",
+    "inverse_label": "is new {original} in change",
+    "inverse_comment": "Inverse of changes {original} to. Relates a '{original}' value to the change records that set it."
+  },
+  "change.individual": {
+    "label": "{attribute} change for {type} ({id}) at {time}"
+  }
+}

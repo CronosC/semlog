@@ -2,8 +2,8 @@
 
 An attribute becomes a class, each distinct value of it becomes an individual
 of that class, and the entity carrying the value is linked to that individual
-by a `has_` property. Values are shared, so two events with the same value
-point at one individual and a query can reach both from it.
+by a `has_` property. Two entities with the same value point at one
+individual.
 
 Numeric attributes can also be reduced to bins, which become subclasses of the
 attribute class.
@@ -19,7 +19,7 @@ import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import DataRepresentation
-from semanticlog.core.summary import count_phrase, name_lines
+from semanticlog.core.summary import counted, report_names
 from semanticlog.data.binning import Binning, fit_dist_bins, fit_equal_bins
 from semanticlog.data.readable import ReadableStore
 from semanticlog.onto.annotations import AnnotationWriter
@@ -30,21 +30,30 @@ from semanticlog.onto.sinks import AxiomSink
 
 logger = logging.getLogger(__name__)
 
-# Above this many owners, the count reads better than the list of names.
 _MAX_NAMED_OWNERS = 3
 
 
-def _numeric_columns(data: ReadableStore) -> dict[str, list[pd.Series]]:
-    """Collect every numeric column of each attribute, across the whole store.
+def is_number_column(series: pd.Series) -> bool:
+    """Whether a column holds numbers that `data_representations` governs.
 
-    An attribute reaches the build once per table that carries it, and the
-    attribute history reaches it again. All of those share one class and one
-    pool of value individuals, so binning has to see all of them at once.
+    A boolean column is not a number column. It keeps its values and its
+    literals under every data representation and is never binned.
+    """
+    return pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_bool_dtype(
+        series
+    )
+
+
+def _numeric_columns(data: ReadableStore) -> dict[str, list[pd.Series]]:
+    """Collect every numeric column of each attribute across every table.
+
+    One attribute is binned over all of them together, including the change
+    history.
     """
     columns: dict[str, list[pd.Series]] = defaultdict(list)
     for view in data.tables():
         for column in view.attributes:
-            if not pd.api.types.is_numeric_dtype(view.frame[column]):
+            if not is_number_column(view.frame[column]):
                 continue
             values = view.frame[column].dropna()
             if not values.empty:
@@ -57,10 +66,8 @@ def attribute_binnings(
 ) -> dict[str, Binning]:
     """Fit the bins of every numeric attribute the build will bin.
 
-    Each attribute is cut once, over every value it takes anywhere in the
-    store, so one number falls in the same bin whichever table it was read
-    from. An attribute with too few distinct values to bin is absent, and the
-    emitter keeps its raw values instead.
+    Each attribute is cut once over every value in the store. An attribute
+    with too few distinct values to bin is not in the result.
 
     Args:
         data: Store to fit over.
@@ -77,10 +84,11 @@ def attribute_binnings(
     binnings: dict[str, Binning] = {}
     for attribute, columns in _numeric_columns(data).items():
         values = pd.concat(columns, ignore_index=True)
-        if not pd.api.types.is_numeric_dtype(values):
+        if not is_number_column(values):
             logger.warning(
-                f"BINNING: attribute '{attribute}' holds more than one numeric "
-                "type across the tables carrying it, so it is not binned."
+                "Attribute '%s' has different numeric types in "
+                "different tables and is not binned.",
+                attribute,
             )
             continue
         binning = fit(values, bins=settings.bins, labels=settings.bin_labels)
@@ -97,11 +105,8 @@ def attribute_source(attribute: str) -> str:
 def report_conflated_attributes(owners: dict[str, list[str]]) -> dict[str, list[str]]:
     """Warn about attribute names shared by more than one entity type.
 
-    One name becomes one class with one pool of value individuals, so a
-    `weight` on events and a `weight` on objects end up meaning the same
-    thing. Since that is sometimes intended, this warns instead of failing.
-    The owners of an attribute are named while there are few of them, and
-    counted once there are many.
+    One name becomes one class and one set of value individuals, whichever
+    types carry it.
 
     Args:
         owners: Attribute name to the types that carry it.
@@ -115,35 +120,39 @@ def report_conflated_attributes(owners: dict[str, list[str]]) -> dict[str, list[
 
     entities = len({owner for types in conflated.values() for owner in types})
     logger.warning(
-        "Attribute conflation: "
-        f"{count_phrase([(entities, 'different entity', 'different entities')])} share "
-        f"{count_phrase([(len(conflated), 'attribute name', 'attribute names')])} "
-        "and their values are merged in one class each."
+        "%s share %s. The values of each name are merged in one class.",
+        counted(entities, "different entity", "different entities"),
+        counted(len(conflated), "attribute name", "attribute names"),
     )
     shared = [
         f"{attribute} ({_owner_summary(types)})"
         for attribute, types in sorted(conflated.items())
     ]
-    for line in name_lines(
-        "attributes", shared, complete=logger.isEnabledFor(logging.DEBUG)
-    ):
-        logger.warning(line)
+    report_names(logger, "attributes", shared, level=logging.WARNING)
     return conflated
 
 
 def _owner_summary(types: list[str]) -> str:
     """Name the types carrying an attribute, or count them when there are many."""
     if len(types) > _MAX_NAMED_OWNERS:
-        return count_phrase([(len(types), "type", "types")])
+        return counted(len(types), "type", "types")
     return ", ".join(types)
 
 
 class AttributeEmitter(Emitter):
     """Emits attribute classes, their values, and the links to their owners.
 
-    The values already emitted are the build's rather than this emitter's,
-    since the same attribute reaches it once per entity type carrying it and
-    the attribute history reaches all of them again.
+    One attribute is emitted once per entity type and again from the
+    attribute history. `emitted.values_of` records which values are written.
+
+    Args:
+        sink: Where axioms go.
+        settings: Settings of this build.
+        annotations: Writer for the labels and comments.
+        emitted: The individuals the build has asserted.
+        owners: Attribute name to the types carrying it. Domain of each
+            `has_` property.
+        binnings: The cut of each attribute the build bins.
     """
 
     def __init__(
@@ -155,20 +164,10 @@ class AttributeEmitter(Emitter):
         owners: Mapping[str, list[str]],
         binnings: Mapping[str, Binning],
     ) -> None:
-        """Prepare the emitter.
-
-        Args:
-            sink: Where axioms go.
-            settings: Settings of this build.
-            annotations: Writer for the labels and comments.
-            emitted: What the build has already asserted.
-            owners: Attribute name to the types carrying it, which is the
-                domain of each `has_` property.
-            binnings: The cut of each attribute the build bins.
-        """
         super().__init__(sink, settings, annotations, emitted)
         self._owners = owners
         self._binnings = binnings
+        self._warned_unbinnable: set[str] = set()
 
     def emit_columns(
         self,
@@ -178,11 +177,9 @@ class AttributeEmitter(Emitter):
     ) -> None:
         """Emit every attribute column of one table.
 
-        Timestamps and text always become value individuals. Numbers follow
-        the data representation of the build, and are skipped entirely when it
-        selects none. Columns that are empty for this table are skipped, which
-        is how an attribute that only some activities carry stays off the
-        others.
+        Timestamps, booleans and text become value individuals. Numbers
+        follow `data_representations` and are skipped when it is empty. A
+        column empty in this table is skipped.
 
         Args:
             df: Table holding the entities and their attributes.
@@ -198,7 +195,7 @@ class AttributeEmitter(Emitter):
             df_attr = df.loc[mask, [key_col, attr]]
             s = df_attr[attr]
 
-            if pd.api.types.is_numeric_dtype(s) and not dr:
+            if is_number_column(s) and not dr:
                 continue
 
             prop = vocab.has_attribute_property(attr)
@@ -224,10 +221,8 @@ class AttributeEmitter(Emitter):
     ) -> None:
         """Emit one attribute column under the data representation of the build.
 
-        The class and the property are expected to be declared already. This
-        is the one place that decides what a value looks like in the output,
-        so the attribute history reaches values the same way the main pass
-        does.
+        The class and the property must be declared. The attribute history
+        calls this too.
 
         Args:
             df_attr: Two columns, the owner and the value, with no gaps.
@@ -236,9 +231,9 @@ class AttributeEmitter(Emitter):
             prop: Property linking an owner to a value.
         """
         s = df_attr[attr]
-        if pd.api.types.is_datetime64_any_dtype(s):
+        if pd.api.types.is_datetime64_any_dtype(s) or pd.api.types.is_bool_dtype(s):
             self.emit_values(df_attr, key_col, attr, prop, True)
-        elif pd.api.types.is_numeric_dtype(s):
+        elif is_number_column(s):
             self._emit_numeric(
                 df_attr, key_col, attr, prop, self.settings.data_representations
             )
@@ -286,22 +281,24 @@ class AttributeEmitter(Emitter):
     ) -> None:
         """Emit the values of a column that has too few of them to bin.
 
-        A class per distinct number would be a bin in name only, so the column
-        gets no bin classes. Its values are still individuals, carrying the
-        literal only when the build asked for raw values.
+        No bin classes are emitted. The values are individuals, with the
+        literal only when `VALUES` is selected. The warning is written once
+        per attribute.
         """
-        logger.warning(
-            f"BINNING: attribute '{attr}' has too few distinct values to bin"
-            + ("." if raw_values else ", so its values carry no bin class.")
-        )
+        if attr not in self._warned_unbinnable:
+            self._warned_unbinnable.add(attr)
+            logger.warning(
+                "Attribute '%s' has too few distinct values to bin. Its "
+                "values carry no bin class.",
+                attr,
+            )
         if not raw_values:
             self.emit_values(df_attr, key_col, attr, prop, False)
 
     def _emit_bin_classes(self, in_bin: pd.DataFrame, attr: str) -> None:
         """Emit one subclass per bin, holding the value individuals in it.
 
-        A value individual belongs to one bin however many tables the number
-        was read from, so the ones already placed are skipped.
+        Values placed in a bin by an earlier table are skipped.
         """
         placed = self.emitted.bins_of(attr)
         for bin_label, bin_group in in_bin.groupby("_bin", observed=True):
@@ -325,17 +322,17 @@ class AttributeEmitter(Emitter):
         prop: str,
         raw_values: bool,
     ) -> None:
-        """Report values that fell outside every bin, and emit them anyway.
+        """Warn about values outside every bin and emit them as individuals.
 
-        A value with no bin would otherwise vanish from the ontology. It is
-        emitted as an individual like every other value of the attribute,
-        carrying the literal only when the build asked for raw values.
+        The literal is written only when `VALUES` is selected.
         """
         if out_of_bin.empty:
             return
         logger.warning(
-            f"BINNING: {len(out_of_bin)} value(s) for attribute '{attr}' fall "
-            "outside all bin boundaries and carry no bin class."
+            "%s value(s) of attribute '%s' fall outside "
+            "all bin boundaries and carry no bin class.",
+            len(out_of_bin),
+            attr,
         )
         if not raw_values:
             self.emit_values(out_of_bin, key_col, attr, prop, False)
@@ -355,10 +352,9 @@ class AttributeEmitter(Emitter):
             key_col: Column holding the owner id.
             attr: Attribute the values belong to.
             prop: Property linking an owner to a value.
-            also_assert_data_value: Also keep the literal on the value
-                individual. Wanted for numbers and timestamps, redundant for
-                text, and off for every value of a build that bins its numbers
-                instead of keeping them.
+            also_assert_data_value: Also write the literal on the value
+                individual. True for numbers, booleans and timestamps, False
+                for text and for binned numbers without `VALUES`.
         """
         tmp = df.copy()
 
@@ -368,31 +364,27 @@ class AttributeEmitter(Emitter):
 
         seen = self.emitted.values_of(attr)
         fresh = [name for name in mapping.values() if name not in seen]
+        fresh_names = set(fresh)
         seen.update(fresh)
 
         self.sink.assert_individuals(attr, fresh)
 
-        self.annotations.attribute_values(
-            {value: name for value, name in mapping.items() if name in fresh}
-        )
+        if self.annotations.enabled:
+            self.annotations.attribute_values(
+                {value: name for value, name in mapping.items() if name in fresh_names}
+            )
 
         self.assert_relations(prop, tmp, key_col, "attr_ind")
 
         if also_assert_data_value:
-            self._emit_literals(tmp, attr, fresh)
+            self._emit_literals(tmp, attr, fresh_names)
 
-    def _emit_literals(self, tmp: pd.DataFrame, attr: str, fresh: list[str]) -> None:
-        """Keep the literal on each value individual emitted for the first time.
+    def _emit_literals(self, tmp: pd.DataFrame, attr: str, fresh: set[str]) -> None:
+        """Write the literal on each value individual in `fresh`.
 
-        A value individual is named after its value, so it carries one
-        literal however many owners point at it and however many passes reach
-        it. Which ones are new is what the individuals already emitted answer,
-        so the attribute history does not write a literal the main pass wrote.
-
-        Whether a value carries its literal is decided by the pass that first
-        emits it. That only makes a difference for an attribute that is a
-        number in one table and text in another, which shares one pool of
-        value individuals and which the build warns about on its own.
+        The pass that first emits a value decides whether it gets a literal.
+        This matters only for an attribute that is numeric in one table and
+        text in another.
         """
         if not fresh:
             return

@@ -1,21 +1,16 @@
-"""The failures semlog reports to whoever ran it.
+"""Errors the caller can fix by changing a setting, a log or an installed dependency.
 
-Every one of these is something the caller can fix by changing a setting, a
-log, or what is installed. They subclass `ValueError`, because each of them is
-a value that will not do, and the CLI catches `SemlogError` rather than
-`ValueError`.
-
-That is the line: a plain `ValueError` from inside the package means the code
-asked for something impossible, such as a builder used twice or a sink written
-to after it closed. Those keep their traceback rather than being printed as a
-message about the input.
+All of them subclass `ValueError`. The CLI catches `SemlogError` and prints its
+message. A plain `ValueError` from inside the package marks a programming
+error, such as a builder used twice or a sink written to after `close()`, and
+keeps its traceback.
 """
 
 from __future__ import annotations
 
 
 class SemlogError(ValueError):
-    """A problem the caller can fix. The base of everything below."""
+    """Base of every error the caller can fix."""
 
 
 class ConfigError(SemlogError):
@@ -27,4 +22,4 @@ class InputError(SemlogError):
 
 
 class DependencyError(SemlogError):
-    """Something semlog runs on is not installed, such as a solver or a JVM."""
+    """A dependency such as a solver or a JVM is not installed."""

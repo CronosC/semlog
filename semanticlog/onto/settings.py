@@ -1,8 +1,8 @@
-"""What a build emits, as one checked value.
+"""The settings of a build.
 
-`OntoBuildSettings` holds the choices a build is configured with, and nothing
-that has to be read off a log or out of a file. It is frozen, it does no I/O,
-and it validates itself. What a build needs beyond these is `BuildInputs`.
+`OntoBuildSettings` holds the choices a build is configured with. It is frozen
+and holds nothing read from a log or a file. Construction parses the enum
+fields and checks the bins. `validate` checks the fields against each other.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from semanticlog.core.enums import (
     OWLProfile,
 )
 from semanticlog.core.errors import ConfigError
-from semanticlog.data.binning import DEFAULT_BIN_LABELS, DEFAULT_BINS
+from semanticlog.data.binning import DEFAULT_BIN_LABELS, DEFAULT_BINS, check_bins
 
 DEFAULT_MAX_EF_PAIRS = 50_000_000
 
@@ -29,9 +29,7 @@ DEFAULT_MAX_EF_PAIRS = 50_000_000
 class OntoBuildSettings:
     """The choices a build is configured with.
 
-    Sequence fields accept any iterable and are stored as tuples. Nothing here
-    is read off a log or out of a file, so one settings object describes a
-    build of any log. What a build needs beyond this is `BuildInputs`.
+    Sequence fields accept any iterable and are stored as tuples.
 
     Attributes:
         profile: OWL 2 profile the output stays inside.
@@ -40,15 +38,19 @@ class OntoBuildSettings:
         inverse_representations: How inverse properties are expressed. Empty
             for no inverses.
         data_representations: How numeric attribute values are expressed.
-        bins: Number of bins for the binning modes.
-        bin_labels: Label per bin. Must have exactly `bins` entries.
+        bins: Number of bins for the binning modes. At least two.
+        bin_labels: Label per bin. Must have exactly `bins` entries, all
+            different.
         derive_annotations: Emit labels and comments derived from the original
             names in the log.
-        max_ef_pairs: Ceiling on materialized eventually-follows pairs, which
-            grow quadratically with trace length. Zero for no limit.
+        max_ef_pairs: Ceiling on materialized eventually-follows pairs. Zero
+            for no limit.
 
     Raises:
-        ConfigError: If `bin_labels` does not have exactly `bins` entries.
+        ConfigError: If a sequence field is given a plain string, or an enum
+            field an unknown value. With a binning mode selected, also if
+            `bins` is below two or `bin_labels` does not hold exactly `bins`
+            entries that all differ.
     """
 
     profile: OWLProfile = OWLProfile.OWL2DL
@@ -80,21 +82,19 @@ class OntoBuildSettings:
     def __post_init__(self) -> None:
         for name in self._SEQUENCES:
             value = getattr(self, name)
+            if isinstance(value, str):
+                raise ConfigError(
+                    f"{name} must be a list, got the string {value!r}. "
+                    f"Pass [{value!r}]."
+                )
             if not isinstance(value, tuple):
                 object.__setattr__(self, name, tuple(value))
         self._resolve_enums()
-        problem = self._bin_label_problem()
-        if problem is not None:
-            raise ConfigError(problem)
+        if self.binning_mode is not None:
+            check_bins(self.bins, self.bin_labels)
 
     def _resolve_enums(self) -> None:
-        """Turn whatever was passed for an enum field into the member itself.
-
-        These enums subclass `str`, so a bare string compares equal to a member
-        and behaves correctly everywhere except where the member itself is
-        wanted. Coercing here means a misspelling is a message about the
-        setting rather than an AttributeError from somewhere later.
-        """
+        """Parse each enum field, given as a member or its value, into its member."""
         for name, enum_cls in self._ENUM_FIELDS.items():
             value = getattr(self, name)
             if isinstance(value, tuple):
@@ -103,22 +103,11 @@ class OntoBuildSettings:
                 resolved = enum_cls.parse(value, key=name)
             object.__setattr__(self, name, resolved)
 
-    def _bin_label_problem(self) -> str | None:
-        if len(self.bin_labels) != self.bins:
-            return (
-                f"bin_labels must have exactly bins={self.bins} "
-                f"elements, got {len(self.bin_labels)}."
-            )
-        return None
-
     def replace(self, **changes: Any) -> OntoBuildSettings:
-        """Return a copy with some fields changed.
+        """Return a copy with the given fields changed.
 
-        Args:
-            **changes: Field values to change.
-
-        Returns:
-            A new settings object.
+        Raises:
+            ConfigError: If a changed field is invalid, as on construction.
         """
         return dataclasses.replace(self, **changes)
 
@@ -156,8 +145,8 @@ class OntoBuildSettings:
     def emits_df(self) -> bool:
         """Whether directly-follows properties and their pairs are emitted.
 
-        EF derives its pairs by transitivity over directly-follows, so a build
-        that leaves them to a reasoner emits directly-follows as well.
+        True also for axiomatic EF, whose pairs a reasoner derives over
+        directly-follows.
         """
         return (
             EventOrderRepresentation.DF in self.order_representations
@@ -188,25 +177,19 @@ class OntoBuildSettings:
         return None
 
     def validate(self) -> None:
-        """Check that the settings describe a build that can run.
-
-        Every problem is collected before raising, so one call reports all of
-        them. What the settings cannot answer for is checked by
-        `BuildInputs.validate`.
+        """Check that the fields do not contradict each other.
 
         Raises:
-            ConfigError: If any setting is unusable, listing every problem.
+            ConfigError: If any setting is unusable. The message lists every
+                problem.
         """
         errors: list[str] = []
         is_el = self.profile == OWLProfile.OWL2EL
 
         if EventOrderRepresentation.EF in self.order_representations and is_el:
             errors.append(
-                "EventOrderRepresentation.EF leaves the pairs to a reasoner, and ELK, "
-                "which is the reasoner for OWL2EL, does not answer for property "
-                "assertions, so no pair would ever be derived. Use "
-                "EventOrderRepresentation.EF_EXPLICIT instead, or switch to "
-                "OWLProfile.OWL2DL and reason with HermiT or Pellet."
+                "ef is not available under OWL2EL. Use ef_explicit, or set "
+                "profile to OWL2DL."
             )
 
         if (
@@ -214,18 +197,14 @@ class OntoBuildSettings:
             and EventOrderRepresentation.DF not in self.order_representations
         ):
             errors.append(
-                "EventOrderRepresentation.EF derives its pairs by transitivity over "
-                "directly-follows, so with no EventOrderRepresentation.DF in "
-                "order_representations there is nothing for a reasoner to derive them "
-                "from. Add DF, or use EventOrderRepresentation.EF_EXPLICIT to assert "
-                "every pair without a reasoner."
+                "ef needs df in order_representations. Add df, or use ef_explicit."
             )
 
         if self.axiomatic_inverses and is_el:
             errors.append(
-                "InverseRepresentation.AXIOMATIC (InverseObjectProperty TBox axioms) is not "
-                "supported in OWL2EL. Remove AXIOMATIC from inverse_representations or switch "
-                "to OWLProfile.OWL2DL."
+                "axiomatic inverses (InverseObjectProperties axioms) are not "
+                "available under OWL2EL. Remove axiomatic from "
+                "inverse_representations, or set profile to OWL2DL."
             )
 
         if (
@@ -233,8 +212,8 @@ class OntoBuildSettings:
             and DataRepresentation.DIST_BINS in self.data_representations
         ):
             errors.append(
-                "DataRepresentation.EQUAL_BINS and DIST_BINS are mutually exclusive; "
-                "include at most one in data_representations."
+                "equal_bins and dist_bins cannot both be set. Keep at most one "
+                "in data_representations."
             )
 
         if errors:
@@ -243,17 +222,7 @@ class OntoBuildSettings:
             )
 
     def to_dict(self) -> dict:
-        """Return the settings as plain JSON-compatible values.
-
-        This is what a build records as its provenance, so every field that
-        changes the output appears here.
-
-        Every field is recorded, so a field added to the settings appears here
-        without being listed a second time.
-
-        Returns:
-            A dict of primitives, lists and dicts.
-        """
+        """Return every field as a JSON-compatible value, keyed by field name."""
         return {
             field.name: _plain(getattr(self, field.name))
             for field in dataclasses.fields(self)
@@ -261,7 +230,7 @@ class OntoBuildSettings:
 
 
 def _plain(value: Any) -> Any:
-    """Render a setting as the JSON-compatible value the record holds."""
+    """Return a setting as a JSON-compatible value."""
     if isinstance(value, BuildEnum):
         return value.value
     if isinstance(value, tuple):

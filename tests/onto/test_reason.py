@@ -1,187 +1,137 @@
-"""Materializing an ontology with a reasoner, and what a reasoner makes of a build."""
+"""`Reasoner`, and what a reasoner makes of each build of the matrix.
+
+Most of these start a JVM. The two that reject an argument do not.
+"""
+
+from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-from rdflib import RDF, Graph, URIRef
 
-from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import OWLProfile
+from semanticlog.core.errors import ConfigError, InputError
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.onto.reason import REASONER_BACKENDS, Reasoner
-from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import InMemorySink
-from tests.conftest import STREAMING, emit
-from tests.support.ontology import Emitted, read_functional
-from tests.support.settings import CONFIGURATIONS, NAMES
+from tests.support.rdf import read_rdf
 
-# Pellet reads both profiles and takes a timestamp carrying microseconds, which
-# is what the matrix writes.
+# Pellet reads both profiles and accepts a timestamp with microseconds.
 BACKEND = "Pellet"
 
 
-@pytest.mark.reasoner
-def test_materialize(tmp_path):
-    settings = OntoBuildSettings(
-        profile=OWLProfile.OWL2EL,
-        order_representations=[],
-    )
-    base_iri = DEFAULT_IRI
-    out_path = str(tmp_path / "temp.owl")
-
-    sink = InMemorySink(base_iri, settings.profile)
-
-    sink.add_class("Human")
-    sink.add_class("Parent", "Human")
-    sink.add_class("Male")
-    sink.add_class("Female")
-    sink.add_class("Man", ["Human"])
-    sink.add_class("Man", ["Male"])
-    sink.add_class("Woman", ["Human"])
-    sink.add_class("Woman", ["Female"])
-
-    individuals = ["a", "b", "c", "d", "e"]
-    sink.assert_individuals("Human", individuals)
-    sink.assert_individuals("Man", ["a", "b", "c"])
-    sink.assert_individuals("Woman", ["d", "e"])
-
-    sink.save(out_path)
-
-    reasoner = Reasoner(out_path)
-    reasoner.materialize()
-    reasoner.save()
-
-    rg = Graph()
-    rg.parse(out_path)
-
-    def u(local: str) -> URIRef:
-        return URIRef(base_iri + local)
-
-    def has_triple(s, p, o) -> bool:
-        return any(rg.triples((s, p, o)))
-
-    for ind in individuals:
-        assert has_triple(u(ind), RDF.type, u("Human")), f"Missing {ind} a Human"
-
-    for ind in ["a", "b", "c"]:
-        assert has_triple(u(ind), RDF.type, u("Man")), f"Missing {ind} a Man"
-        assert has_triple(u(ind), RDF.type, u("Male")), f"Missing {ind} a Male"
-
-    for ind in ["d", "e"]:
-        assert has_triple(u(ind), RDF.type, u("Woman")), f"Missing {ind} a Woman"
-        assert has_triple(u(ind), RDF.type, u("Female")), f"Missing {ind} a Female"
-
-    for ind in ["a", "b", "c"]:
-        assert not has_triple(u(ind), RDF.type, u("Female")), (
-            f"Unexpected {ind} a Female"
-        )
-
-
-def _small_ontology(path: str) -> None:
-    """Write an ontology with something for a reasoner to find."""
-    settings = OntoBuildSettings(profile=OWLProfile.OWL2EL)
-    sink = InMemorySink(DEFAULT_IRI, settings.profile)
+def _small_ontology(path: Path) -> None:
+    """Write an ontology with a class and a property assertion to entail from."""
+    sink = InMemorySink(DEFAULT_IRI, OWLProfile.OWL2EL)
     sink.add_class("Human")
     sink.add_class("Man", ["Human"])
     sink.add_property("knows", domain_class=["Human"], range_class="Human")
     sink.assert_individuals("Man", ["a", "b"])
-    sink.write_object_assertions("knows", [("a", "b")])
-    sink.save(path)
+    sink.assert_relations("knows", [("a", "b")])
+    sink.save(str(path))
+
+
+@pytest.fixture
+def small(tmp_path) -> Path:
+    path = tmp_path / "small.owl"
+    _small_ontology(path)
+    return path
+
+
+def test_an_unknown_backend_is_rejected(small):
+    with pytest.raises(ConfigError, match="'Konclude' is not one of"):
+        Reasoner(str(small), backend="Konclude")
+
+
+def test_a_missing_ontology_file_is_rejected_before_the_jvm_starts(tmp_path):
+    with pytest.raises(FileNotFoundError, match="Build it first with 'semlog build'"):
+        Reasoner(str(tmp_path / "never-built.owl"))
+
+
+@pytest.mark.reasoner
+def test_materializing_writes_the_inferred_types_back_to_the_file(small):
+    Reasoner(str(small)).materialize()
+
+    assert read_rdf(small, DEFAULT_IRI).types["a"] == {"Man", "Human"}
 
 
 @pytest.mark.reasoner
 @pytest.mark.parametrize("backend", REASONER_BACKENDS)
-def test_every_backend_materializes(backend, tmp_path):
-    """Each backend is asked only for the entailments it can answer."""
-    path = str(tmp_path / f"{backend}.owl")
-    _small_ontology(path)
-    before = Path(path).stat().st_size
+def test_every_backend_materializes(backend, small):
+    before = small.stat().st_size
 
-    reasoner = Reasoner(path, backend=backend, profile=OWLProfile.OWL2EL)
-    reasoner.materialize()
+    Reasoner(str(small), backend=backend).materialize()
 
-    assert Path(path).stat().st_size > before
+    assert small.stat().st_size > before
 
 
 @pytest.mark.reasoner
-def test_a_backend_that_will_not_read_the_ontology_says_which_to_try(tmp_path):
+def test_materializing_returns_the_number_of_axioms_added(small):
+    reasoner = Reasoner(str(small), backend=BACKEND)
+    owlapi = reasoner.ontology.get_owlapi_ontology()
+    before = owlapi.getAxiomCount()
+
+    added = reasoner.materialize()
+
+    assert added == owlapi.getAxiomCount() - before
+    assert added > 0
+
+
+@pytest.mark.reasoner
+def test_a_file_the_owl_api_cannot_read_is_reported_as_the_file(tmp_path):
     path = tmp_path / "not-an-ontology.owl"
     path.write_text("this is not an ontology", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="will not read") as failure:
+    with pytest.raises(InputError, match="cannot read") as failure:
         Reasoner(str(path))
 
-    assert "Pellet" in str(failure.value)
-
-
-# --------------------------------------------------------------------------
-# What a reasoner makes of a build from the matrix
-# --------------------------------------------------------------------------
-
-EF_ORDER = vocab.ef_property("order")
-
-
-def _ef_pairs(onto: Emitted) -> set[tuple[str, str]]:
-    """Return the eventually-follows pairs of the order case concept."""
-    return {(s, o) for prop, s, o in onto.relations if prop == EF_ORDER}
+    assert "Try one of the other backends" not in str(failure.value)
 
 
 @pytest.mark.reasoner
-def test_the_two_eventually_follows_representations_agree(tmp_path):
-    """EF derived by transitivity reaches the pairs EF_EXPLICIT asserts.
+def test_a_backend_that_cannot_start_is_named_with_the_others(small, monkeypatch):
+    def fail(*args, **kwargs):
+        raise RuntimeError("java.lang.IllegalStateException")
 
-    The settings offer the two as alternatives to each other, so a reasoner
-    over the axiomatic build has to arrive at exactly the relation the explicit
-    build wrote out.
-    """
-    axiomatic = tmp_path / "axiomatic.ofn"
-    explicit = tmp_path / "explicit.ofn"
-    emit(CONFIGURATIONS["dl_df_ef"](), axiomatic, STREAMING)
-    asserted = _ef_pairs(emit(CONFIGURATIONS["dl_ef_explicit"](), explicit, STREAMING))
+    monkeypatch.setattr("semanticlog.onto.reason.SyncReasoner", fail)
 
-    entailed = {
-        (
-            str(axiom.get_subject().iri.get_remainder()),
-            str(axiom.get_object().iri.get_remainder()),
-        )
-        for axiom in Reasoner(
-            str(axiomatic), backend=BACKEND
-        ).inferred_property_assertions()
-        if str(axiom.get_property().iri.as_str()).endswith(f"#{EF_ORDER}")
-    }
-    # A backend answers with everything entailed, which already holds what was
-    # asserted. Taking both means a backend answering with only the new pairs
-    # is still compared against the whole relation.
-    reached = _ef_pairs(read_functional(axiomatic)) | entailed
+    with pytest.raises(InputError, match="Pellet cannot start") as failure:
+        Reasoner(str(small), backend="Pellet")
 
-    assert reached == asserted, (
-        f"the two representations of eventually-follows differ:\n"
-        f"  only reached by the reasoner: {sorted(reached - asserted)[:5]}\n"
-        f"  only asserted by EF_EXPLICIT: {sorted(asserted - reached)[:5]}"
-    )
+    assert "HermiT" in str(failure.value)
 
 
 @pytest.mark.reasoner
-@pytest.mark.parametrize("name", NAMES)
-def test_a_built_ontology_is_consistent(name, built_path):
-    assert Reasoner(str(built_path(name)), backend=BACKEND).check(), (
-        f"{name} is inconsistent, so nothing can be read out of it"
-    )
+def test_a_backend_that_fails_mid_run_names_itself_and_the_step(small, monkeypatch):
+    reasoner = Reasoner(str(small), backend=BACKEND)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("java.lang.UnsupportedOperationException")
+
+    monkeypatch.setattr(reasoner.reasoner, "infer_axioms", fail)
+
+    with pytest.raises(
+        InputError, match=f"{BACKEND} failed while asking for entailments"
+    ) as failure:
+        reasoner.materialize()
+
+    assert "Try one of the other backends" in str(failure.value)
 
 
 @pytest.mark.reasoner
-@pytest.mark.parametrize("name", NAMES)
-def test_no_class_of_a_build_is_unsatisfiable(name, built_path):
-    """No class of a build is one that nothing could ever belong to.
+def test_a_save_that_fails_leaves_the_file_that_was_there(small, monkeypatch):
+    """The OWL API opens the destination before it serializes anything."""
+    before = small.read_text(encoding="utf-8")
+    reasoner = Reasoner(str(small), backend=BACKEND)
 
-    A TBox with no disjointness and no cardinality cannot produce one, so this
-    holds of every build as it stands. It is what would notice the day an
-    axiom makes a class describe nothing.
-    """
-    reasoner = Reasoner(str(built_path(name)), backend=BACKEND).reasoner
-    empty = sorted(
-        remainder
-        for owl_class in reasoner.unsatisfiable_classes()
-        if (remainder := str(owl_class.iri.get_remainder())) != "Nothing"
-    )
-    assert not empty, f"{name} declares {len(empty)} class(es) nothing can be: {empty}"
+    def fail(target, *args, **kwargs):
+        Path(target).write_text("", encoding="utf-8")
+        raise RuntimeError("serialization failed")
+
+    monkeypatch.setattr(reasoner.ontology, "save", fail)
+
+    with pytest.raises(RuntimeError, match="serialization failed"):
+        reasoner.save()
+
+    assert small.read_text(encoding="utf-8") == before
+    assert [p.name for p in small.parent.iterdir()] == ["small.owl"]

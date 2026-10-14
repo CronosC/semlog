@@ -36,6 +36,6 @@ jobs:
       - name: Lint and type check
         run: make lint typecheck
 
-      # --cov-fail-under is set in pyproject.toml.
+      # fail_under is set in pyproject.toml.
       - name: Test
         run: uv run pytest -q -n auto --cov=semanticlog

@@ -1,0 +1,53 @@
+"""Collecting what the pre-build checks found into one message."""
+
+import pytest
+
+from semanticlog.core.checks import CheckReport, Fixed, raise_reports
+from semanticlog.core.errors import ConfigError, InputError
+
+CONFIG = CheckReport(
+    header="The case concepts are wrong:",
+    problems=("'a' is not an object type", "'b' is not an object type"),
+    advice="Name types the log holds.",
+    about=Fixed.CONFIG,
+)
+
+INPUT = CheckReport(
+    header="The store holds rows that cannot be emitted:",
+    problems=("e2o 'rel': 1 event id is in no event table",),
+    advice="Fix the source data.",
+    about=Fixed.INPUT,
+)
+
+
+def test_checks_that_found_nothing_raise_nothing():
+    raise_reports([None, None])
+
+
+def test_one_report_is_its_header_then_indented_problems_then_advice():
+    with pytest.raises(ConfigError, match="^The case concepts are wrong:") as excinfo:
+        raise_reports([None, CONFIG, None])
+
+    assert str(excinfo.value) == (
+        "The case concepts are wrong:\n"
+        "  'a' is not an object type\n"
+        "  'b' is not an object type\n"
+        "\n"
+        "Name types the log holds."
+    )
+
+
+def test_a_report_with_no_problems_and_no_advice_is_its_header():
+    with pytest.raises(
+        InputError, match=r"^The constraints have no 'trace_id' column\.$"
+    ):
+        raise_reports(
+            [CheckReport(header="The constraints have no 'trace_id' column.")]
+        )
+
+
+def test_one_input_finding_among_several_reports_makes_an_input_error_in_run_order():
+    with pytest.raises(InputError, match="^The case concepts are wrong:") as excinfo:
+        raise_reports([CONFIG, INPUT])
+
+    assert str(excinfo.value) == f"{CONFIG.render()}\n\n{INPUT.render()}"

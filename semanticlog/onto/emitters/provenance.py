@@ -1,9 +1,7 @@
 """The record of how an ontology was produced, written into the ontology.
 
-An ontology file on its own says nothing about the settings behind it, and two
-settings of one log produce different ontologies. Annotating the record onto
-the ontology keeps it with the file, where a sidecar could be separated from
-it.
+`ProvenanceEmitter` writes the version, settings and run record as ontology
+annotations.
 """
 
 from __future__ import annotations
@@ -22,15 +20,13 @@ OWL_VERSION_INFO = "http://www.w3.org/2002/07/owl#versionInfo"
 def build_configuration(settings: OntoBuildSettings) -> dict:
     """Return the settings to record.
 
-    The settings hold only the choices a build is configured with, so all of
-    them go in. What is resolved per log rather than configured in advance is
-    recorded by the caller, as part of the run.
+    Per-log values are recorded by the caller in the run record.
     """
     return settings.to_dict()
 
 
 def annotation_text(value: Any) -> str:
-    """Render a record entry as annotation text, as JSON unless it is already text."""
+    """Return a record entry as text. Non-strings are rendered as JSON."""
     if isinstance(value, str):
         return value
     return json.dumps(value, sort_keys=True, default=str)
@@ -44,16 +40,18 @@ class ProvenanceEmitter(Emitter):
         source: str | None = None,
         run: Mapping[str, Any] | None = None,
     ) -> None:
-        """Open the ontology, annotated with the provenance record.
+        """Open the ontology with the provenance record as its annotations.
 
-        The whole record goes to the sink at once, which is what opens the
-        ontology, so this is the first emitter a build runs.
+        This is the first emitter a build runs.
 
         Args:
             source: Path of the log this ontology was built from.
-            run: Anything else worth recording about the run, such as the
-                input checksum and the command. Each key becomes one
-                annotation property, and entries with no value are skipped.
+            run: Other values to record about the run, such as the input
+                checksum and the command. Each key becomes one annotation
+                property, and entries with no value are skipped.
+
+        Raises:
+            ValueError: If a key of `run` cannot be an IRI local name.
         """
         from semanticlog import __version__
 
@@ -67,6 +65,12 @@ class ProvenanceEmitter(Emitter):
         if source is not None:
             record[f"{base}{vocab.SOURCE_LOG}"] = source
         for name, value in (run or {}).items():
-            if value is not None:
-                record[f"{base}{name}"] = annotation_text(value)
+            if value is None:
+                continue
+            if not vocab.is_safe_local_name(name):
+                raise ValueError(
+                    f"Run record key {name!r} cannot be an IRI local name. Use "
+                    "letters, digits, underscores, dots and hyphens only."
+                )
+            record[f"{base}{name}"] = annotation_text(value)
         self.sink.open_ontology(record)

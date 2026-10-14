@@ -9,7 +9,7 @@ repos:
       - id: check-json
       - id: check-merge-conflict
 
-  # Keep this rev in step with the ruff pinned by the dev extra.
+  # Keep this rev in step with the ruff version in uv.lock.
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.17
     hooks:

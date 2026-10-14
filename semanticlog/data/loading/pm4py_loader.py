@@ -1,15 +1,14 @@
-"""Reader for OCEL 2.0 logs, via pm4py.
+"""Reader for OCEL 2.0 logs, through PM4Py.
 
-The XML, JSON and SQLite forms of OCEL 2.0 all arrive through pm4py as one
-`OCEL` object, which this module reshapes into an OCED store. Two things are
-repaired on the way in: relations with no qualifier get the fallback name of
-their family so they can still become a property, and ids that are only unique
-within their type are prefixed with that type so they become unique across the
-log.
+`PM4PyLoader` reads the XML, JSON and SQLite forms into an OCED store.
 """
 
+import json
 import logging
-from collections.abc import Callable
+import sqlite3
+import xml.etree.ElementTree as ElementTree
+from collections import Counter
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,8 +19,10 @@ from pm4py.objects.ocel.obj import OCEL
 
 from semanticlog.core.enums import OCELExtension
 from semanticlog.core.errors import InputError
+from semanticlog.data.cleaning.names import free_name
 from semanticlog.data.loading.base import Inference, Loader
 from semanticlog.data.oced import OCEDStore
+from semanticlog.data.tables import EntityKind, RelationKind
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,9 @@ _READER_NAMES: dict[str, str] = {
     "sqlite": "read_ocel2_sqlite",
 }
 
-_MISSING_QUALIFIER_STRINGS: list[str] = ["None", "none", "NA", "N/A", ""]
+# Text some exporters write for a missing qualifier.
+_MISSING_QUALIFIER_WORDS: list[str] = ["None", "none", "NA", "N/A"]
+_MISSING_QUALIFIER_STRINGS: list[str] = [*_MISSING_QUALIFIER_WORDS, ""]
 _MISSING_QUALIFIERS: list = [None, np.nan, *_MISSING_QUALIFIER_STRINGS]
 _FALLBACK_QUALIFIERS: dict[str, str] = {"e2o": "modifies", "o2o": "relates"}
 
@@ -54,13 +57,14 @@ def _require_unique(ids: pd.Series, what: str) -> None:
             f"{what} are not unique across the log: "
             f"{', '.join(map(str, duplicated[:5]))}"
             + (f" and {len(duplicated) - 5} more" if len(duplicated) > 5 else "")
+            + ". Give every event and object an id of its own."
         )
 
 
 def _numerically_indexed(
     frame: pd.DataFrame, type_column: str, id_column: str
 ) -> set[str]:
-    """Return the types whose ids are all numbers, and so unique per type only."""
+    """Return the types whose ids are all numeric."""
     numeric = set()
     for name, group in frame.groupby(type_column):
         ids = group[id_column].dropna()
@@ -70,7 +74,7 @@ def _numerically_indexed(
 
 
 def _prefixed(ids: pd.Series, owners: pd.Series, prefix_types: set[str]) -> pd.Series:
-    """Prefix ids with their own type, for the types that need it."""
+    """Prefix the ids owned by a type in `prefix_types` with that type."""
     if not prefix_types:
         return ids
     needs = owners.astype(str).isin(prefix_types)
@@ -79,9 +83,8 @@ def _prefixed(ids: pd.Series, owners: pd.Series, prefix_types: set[str]) -> pd.S
     return ids.astype(str).where(~needs, owners.astype(str) + "_" + ids.astype(str))
 
 
-def _object_types(ids: pd.Series, objects: pd.DataFrame) -> list[str]:
-    """Return the types the given object ids belong to."""
-    owner = dict(zip(objects["ocel:oid"], objects["ocel:type"], strict=True))
+def _object_types(ids: pd.Series, owner: dict[str, str]) -> list[str]:
+    """Return the types the given object ids belong to, by the id-to-type map."""
     return sorted({str(owner[i]) for i in ids.unique() if i in owner})
 
 
@@ -89,9 +92,7 @@ def _normalize_qualifiers(df: pd.DataFrame, kind: str) -> pd.DataFrame:
     """Give relations with no qualifier their family's fallback name.
 
     Args:
-        df: Relation rows of one family.
-        kind: `e2o` or `o2o`, which picks the fallback name and names the
-            family in the warning.
+        kind: `e2o` or `o2o`.
 
     Returns:
         A copy with every missing qualifier filled in.
@@ -99,23 +100,31 @@ def _normalize_qualifiers(df: pd.DataFrame, kind: str) -> pd.DataFrame:
     df = df.copy()
     fallback = _FALLBACK_QUALIFIERS[kind]
     qualifier = df["ocel:qualifier"]
-    n_missing = int(
-        qualifier.isna().sum() + qualifier.isin(_MISSING_QUALIFIER_STRINGS).sum()
-    )
-    if n_missing:
+    blank = int((qualifier.isna() | qualifier.eq("")).sum())
+    worded = qualifier[qualifier.isin(_MISSING_QUALIFIER_WORDS)]
+    if blank + len(worded):
         logger.warning(
-            f"pm4pyloader: {n_missing} {kind} relation(s) had no qualifier and were "
-            f"assigned the fallback relation name '{fallback}'."
+            "%s %s relation(s) had no "
+            "qualifier and were assigned the fallback relation name "
+            "'%s'.",
+            blank + len(worded),
+            kind,
+            fallback,
+        )
+    words = sorted(worded.astype(str).unique())
+    sole_qualifier = len(words) == 1 and len(worded) == len(qualifier)
+    if len(worded) and not sole_qualifier:
+        logger.warning(
+            "%s of those carry the text "
+            "(%s), which is read as no qualifier and merged "
+            "into '%s'. Rename it in the log to keep it as a separate "
+            "relation.",
+            len(worded),
+            ", ".join(words),
+            fallback,
         )
     df["ocel:qualifier"] = qualifier.replace(_MISSING_QUALIFIERS, fallback)
     return df
-
-
-def _free_relation_name(name: str, taken: set[str]) -> str:
-    """Return the name, or it with underscores appended until it is unused."""
-    while name in taken:
-        name += "_"
-    return name
 
 
 def _relation_names(
@@ -123,14 +132,9 @@ def _relation_names(
 ) -> tuple[dict[str, str], dict[str, str]]:
     """Return the relation name each qualifier becomes, per family.
 
-    A qualifier used by one family only keeps its own name. One used by both
-    would become a single property carrying the domain of an event and of an
-    object, so each side takes the suffix of its family, and an underscore
-    after that if the suffixed name is a qualifier of the log as well.
-
-    Args:
-        e2o_qualifiers: Qualifiers of the event-to-object relations.
-        o2o_qualifiers: Qualifiers of the object-to-object relations.
+    A qualifier used by one family keeps its name. A qualifier used by both
+    families gets the suffix of each family, and a number appended if the
+    suffixed name is also a qualifier.
 
     Returns:
         The event-to-object and object-to-object maps, each from qualifier to
@@ -144,66 +148,48 @@ def _relation_names(
     taken = e2o | o2o
     for qualifier in sorted(e2o & o2o):
         for names, suffix in ((e2o_names, "_e2o"), (o2o_names, "_o2o")):
-            name = _free_relation_name(qualifier + suffix, taken)
+            name = free_name(qualifier + suffix, taken)
             taken.add(name)
             names[qualifier] = name
     return e2o_names, o2o_names
 
 
 class PM4PyLoader(Loader):
-    """Loads an OCEL 2.0 log in XML, JSON or SQLite form."""
+    """Loads an OCEL 2.0 log in XML, JSON or SQLite form, picked by suffix.
+
+    Args:
+        ocel_extensions: Optional parts of the standard to load. Without
+            `ATTRIBUTE_HISTORY` only the latest value of each object
+            attribute is read.
+
+    Attributes:
+        file_format: The format read, `xml`, `json` or `sqlite`.
+
+    Raises:
+        InputError: If no format can be inferred from the suffix.
+    """
 
     def __init__(
-        self,
-        path: str,
-        config: dict[str, str],
-        ocel_extensions: list[OCELExtension] | None = None,
-    ):
-        """Prepare to read an OCEL 2.0 file.
-
-        Args:
-            path: File to read.
-            config: Loader options. `file_format` forces a format instead of
-                inferring one from the suffix. The resolved format is written
-                back into the dict.
-            ocel_extensions: Optional parts of the standard to load. Without
-                `ATTRIBUTE_HISTORY` only the latest value of each object
-                attribute is read.
-
-        Raises:
-            ValueError: If the format is unsupported or cannot be inferred.
-        """
-        super().__init__(path, config)
-        self._ocel_extensions: list[OCELExtension] = ocel_extensions or []
-        self.file_format = self._resolve_file_format(path, config)
-        config["file_format"] = self.file_format
-
-    @staticmethod
-    def _resolve_file_format(path: str, config: dict[str, str]) -> str:
-        """Take the format from the config, or infer it from the suffix."""
-        given = config.get("file_format")
-        if given is not None:
-            if given not in _READER_NAMES:
-                raise InputError(
-                    f"Unsupported file_format '{given}'. "
-                    f"Supported formats: {', '.join(sorted(_READER_NAMES))}."
-                )
-            return given
+        self, path: str, ocel_extensions: Sequence[OCELExtension] = ()
+    ) -> None:
+        self.path = path
+        self._ocel_extensions: list[OCELExtension] = list(ocel_extensions)
         inferred = _FORMAT_BY_SUFFIX.get(Path(path).suffix.lower())
         if inferred is None:
             raise InputError(
                 f"Cannot infer OCEL format from '{path}'. Supported extensions: "
                 f"{', '.join(sorted(_FORMAT_BY_SUFFIX))}."
             )
-        return inferred
+        self.file_format = inferred
 
     def get_oced(self) -> OCEDStore:
         """Read the log and return it as a store.
 
         Events become one table per activity, objects one table per type, and
         each relation qualifier becomes one named relation. A qualifier used
-        by both families is suffixed with `_e2o` and `_o2o`, so it stays two
-        relations.
+        by both families is suffixed with `_e2o` and `_o2o`. A relation with
+        no qualifier takes `modifies` or `relates`. The ids of a type whose
+        ids are all numeric are prefixed with the type.
 
         Returns:
             A store, in OCEL mode when attribute history was requested. A log
@@ -211,23 +197,84 @@ class PM4PyLoader(Loader):
             recorded.
 
         Raises:
-            ValueError: If event or object ids are not unique, or an
-                object-to-object relation names an object the log does not
-                contain.
+            InputError: If the file uses one id twice, or an object-to-object
+                relation names an object the log does not contain.
         """
         load_attr_history = OCELExtension.ATTRIBUTE_HISTORY in self._ocel_extensions
 
-        logger.info(f"Loading ocel data from file {self.path}..")
+        logger.info("Loading OCEL data from file %s", self.path)
         read: Callable[[str], OCEL] = getattr(pm, _READER_NAMES[self.file_format])
 
-        frames = _read_frames(read(self.path), load_attr_history)
+        frames = _read_frames(self._read(read), load_attr_history)
         _prefix_numeric_ids(frames)
         return _fill_store(frames, load_attr_history)
+
+    def _read(self, read: Callable[[str], OCEL]) -> OCEL:
+        """Read the file with PM4Py.
+
+        Raises:
+            InputError: If the file uses one id for two objects or two
+                events.
+        """
+        for what, repeated in _repeated_ids(self.path, self.file_format).items():
+            if repeated:
+                shown = ", ".join(repeated[:5])
+                more = f" and {len(repeated) - 5} more" if len(repeated) > 5 else ""
+                raise InputError(
+                    f"{self.path} uses one {what} id for more than one {what}: "
+                    f"{shown}{more}. Give every event "
+                    "and object an id of its own, for example by prefixing "
+                    "ids with their type."
+                )
+        return read(self.path)
+
+
+def _repeated(ids: Iterable[str]) -> list[str]:
+    """Return the ids that occur more than once, sorted."""
+    return sorted(i for i, n in Counter(ids).items() if n > 1)
+
+
+def _repeated_ids(path: str, file_format: str) -> dict[str, list[str]]:
+    """Return the object ids and event ids a file uses more than once.
+
+    Args:
+        file_format: `json`, `xml` or `sqlite`.
+
+    Returns:
+        The repeated ids under `object` and under `event`.
+    """
+    if file_format == "json":
+        with open(path, encoding="utf-8") as handle:
+            doc = json.load(handle)
+        return {
+            "object": _repeated(str(o["id"]) for o in doc.get("objects", [])),
+            "event": _repeated(str(e["id"]) for e in doc.get("events", [])),
+        }
+    if file_format == "xml":
+        ids: dict[str, list[str]] = {"object": [], "event": []}
+        # The file is the user's own log.
+        for _, element in ElementTree.iterparse(path):  # noqa: S314
+            if element.tag in ids and "id" in element.attrib:
+                ids[element.tag].append(element.attrib["id"])
+                element.clear()
+        return {what: _repeated(found) for what, found in ids.items()}
+    queries = {
+        "object": "SELECT ocel_id FROM object GROUP BY ocel_id HAVING COUNT(*) > 1",
+        "event": "SELECT ocel_id FROM event GROUP BY ocel_id HAVING COUNT(*) > 1",
+    }
+    connection = sqlite3.connect(path)
+    try:
+        return {
+            what: [str(row[0]) for row in connection.execute(query)]
+            for what, query in queries.items()
+        }
+    finally:
+        connection.close()
 
 
 @dataclass
 class _Frames:
-    """The tables of one OCEL file, on their way into a store.
+    """The tables of one OCEL file.
 
     Attributes:
         objects: One row per object, with its type.
@@ -246,10 +293,10 @@ class _Frames:
 
 
 def _read_frames(log: OCEL, load_attr_history: bool) -> _Frames:
-    """Take copies of what the log holds, and check its ids are unique.
+    """Return copies of the tables of the log with qualifiers filled in.
 
     Raises:
-        ValueError: If event or object ids repeat within their family.
+        InputError: If an event or object id repeats.
     """
     changes = log.object_changes if load_attr_history else None
     frames = _Frames(
@@ -265,29 +312,21 @@ def _read_frames(log: OCEL, load_attr_history: bool) -> _Frames:
 
 
 def _prefix_numeric_ids(frames: _Frames) -> None:
-    """Prefix ids that are only unique within their own type.
-
-    A log numbering each type from one would otherwise give two objects the
-    same id, and one id is one individual. The owner of each object id is read
-    before anything is rewritten, since the relation tables still name the
-    originals.
-
-    Args:
-        frames: Tables to rewrite, modified in place.
-    """
+    """Prefix the ids of every type or activity whose ids are all numeric, in place."""
     numeric_types = _numerically_indexed(frames.objects, "ocel:type", "ocel:oid")
     numeric_activities = _numerically_indexed(
         frames.events, "ocel:activity", "ocel:eid"
     )
     if numeric_types:
         logger.info(
-            f"Prefixing numeric object ids of: {', '.join(sorted(numeric_types))}"
+            "Prefixing numeric object ids of: %s", ", ".join(sorted(numeric_types))
         )
     if numeric_activities:
         logger.info(
-            "Prefixing numeric event ids of: " + ", ".join(sorted(numeric_activities))
+            "Prefixing numeric event ids of: %s", ", ".join(sorted(numeric_activities))
         )
 
+    # Read before any id is rewritten. The o2o table holds the original ids.
     owner = frames.objects.set_index("ocel:oid")["ocel:type"]
 
     frames.objects["ocel:oid"] = _prefixed(
@@ -313,10 +352,10 @@ def _prefix_numeric_ids(frames: _Frames) -> None:
 
 
 def _fill_store(frames: _Frames, load_attr_history: bool) -> OCEDStore:
-    """Turn the read tables into a store, one table per type and per qualifier.
+    """Return a store with one table per type and one relation per qualifier.
 
     Raises:
-        ValueError: If an object-to-object relation names an object the log
+        InputError: If an object-to-object relation names an object the log
             does not contain.
     """
     oced = OCEDStore(ocel_mode=load_attr_history)
@@ -324,47 +363,56 @@ def _fill_store(frames: _Frames, load_attr_history: bool) -> OCEDStore:
 
     for object_type, frame in frames.objects.groupby("ocel:type"):
         frame = frame.dropna(axis=1, how="all").drop(columns=["ocel:type"])
-        oced.add_object(
-            str(object_type), "ocel:oid", inference.infer(frame, "ocel:oid")
+        oced.add(
+            EntityKind.OBJECT,
+            str(object_type),
+            inference.infer(frame, "ocel:oid"),
+            id_col="ocel:oid",
         )
 
     for activity, frame in frames.events.groupby("ocel:activity"):
         frame = frame.drop(columns=["ocel:activity"])
-        oced.add_event(
+        oced.add(
+            EntityKind.EVENT,
             str(activity),
-            "ocel:eid",
-            "ocel:timestamp",
             inference.infer(frame, "ocel:eid"),
+            id_col="ocel:eid",
+            time_col="ocel:timestamp",
         )
 
     e2o_names, o2o_names = _relation_names(
         frames.e2o["ocel:qualifier"], frames.o2o["ocel:qualifier"]
     )
+    owner = dict(
+        zip(frames.objects["ocel:oid"], frames.objects["ocel:type"], strict=True)
+    )
 
     for qualifier, frame in frames.o2o.groupby("ocel:qualifier"):
-        from_types = _object_types(frame["ocel:oid"], frames.objects)
-        to_types = _object_types(frame["ocel:oid_2"], frames.objects)
+        from_types = _object_types(frame["ocel:oid"], owner)
+        to_types = _object_types(frame["ocel:oid_2"], owner)
         if not from_types or not to_types:
             raise InputError(
                 f"Could not resolve object types for o2o relation {qualifier!r}: "
                 "one of its endpoints names no object in this log."
             )
-        oced.add_object_to_object_relation(
+        oced.add_relation(
+            RelationKind.O2O,
             o2o_names[str(qualifier)],
-            "ocel:oid",
-            from_types,
-            "ocel:oid_2",
-            to_types,
-            frame,
+            frame[["ocel:oid", "ocel:oid_2"]],
+            from_id="ocel:oid",
+            from_type=from_types,
+            to_id="ocel:oid_2",
+            to_type=to_types,
         )
 
     for qualifier, frame in frames.e2o.groupby("ocel:qualifier"):
-        oced.add_event_to_object_relation(
+        oced.add_relation(
+            RelationKind.E2O,
             e2o_names[str(qualifier)],
-            "ocel:eid",
-            "ocel:oid",
-            sorted(map(str, frame["ocel:type"].unique())),
             frame[["ocel:eid", "ocel:oid"]],
+            from_id="ocel:eid",
+            to_id="ocel:oid",
+            to_type=sorted(map(str, frame["ocel:type"].unique())),
         )
 
     if frames.changes is not None:

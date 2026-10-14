@@ -1,4 +1,4 @@
-"""What every emitter is given to work with."""
+"""The base class of every emitter."""
 
 from __future__ import annotations
 
@@ -14,16 +14,13 @@ from semanticlog.onto.sinks import AxiomSink
 class Emitter:
     """Base for a build step that writes axioms.
 
-    An emitter holds no data of its own beyond what it is given here, so it
-    can be tested against a recording sink with no ontology involved.
-
     Attributes:
         sink: Where axioms go.
         settings: Settings of this build.
         annotations: Writer for the labels and comments that go with the
             axioms. It does nothing unless the build asked for annotations.
-        emitted: What the build has already asserted as an individual, shared
-            with every other emitter that reaches the same ones.
+        emitted: The individuals the build has asserted, shared by every
+            emitter.
     """
 
     def __init__(
@@ -48,17 +45,16 @@ class Emitter:
     ) -> None:
         """Assert an object property for every row of a table.
 
-        A build that materializes its inverses asserts the reversed pairs as
-        well. Which of the two an inverse is expressed as is a choice about
-        the build, so it is made here rather than at the axiom boundary.
+        With implicit inverses, the reversed pairs are also asserted under the
+        inverse property.
 
         Args:
             prop: Property to assert.
             df: Table holding the pairs.
             from_key: Column holding the subject.
             to_key: Column holding the target.
-            inverse_name: Name to use for the reversed pairs, instead of the
-                derived one.
+            inverse_name: Property for the reversed pairs. Defaults to
+                `sink.inverse_name(prop)`.
         """
         if not self.settings.implicit_inverses:
             self.sink.assert_relations(prop, clean_pairs(df, from_key, to_key))

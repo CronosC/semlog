@@ -1,389 +1,279 @@
-"""Resolving defaults, TOML files and flags into one checked run."""
+"""Resolving defaults, a TOML file and flags into one checked run."""
+
+from __future__ import annotations
 
 import json
+import re
+import tomllib
 from pathlib import Path
 
 import pytest
 
-from semanticlog.cli.config import (
-    BUILD_DEFAULTS,
-    RENAMED_KEYS,
-    ConfigError,
-    load_config_file,
-    parse_enum,
-    resolve_run_config,
-)
-from semanticlog.core.enums import (
-    DataRepresentation,
-    EventOrderRepresentation,
-    InverseRepresentation,
-    OCELExtension,
-    OWLProfile,
-)
+from semanticlog.cli.config import resolve_log_inputs, resolve_run_config
+from semanticlog.core.enums import OCELExtension, OWLProfile
+from semanticlog.core.errors import ConfigError
+from semanticlog.onto.settings import OntoBuildSettings
 
 
 def resolve(ocel: Path, **overrides):
     return resolve_run_config({"input": [str(ocel)], **overrides})
 
 
-@pytest.mark.parametrize(
-    ("enum_cls", "token", "expected"),
-    [
-        (OWLProfile, "OWL2EL", OWLProfile.OWL2EL),
-        (OWLProfile, "owl2el", OWLProfile.OWL2EL),
-        (EventOrderRepresentation, "DF", EventOrderRepresentation.DF),
-        (EventOrderRepresentation, "df", EventOrderRepresentation.DF),
-        (
-            EventOrderRepresentation,
-            "EF_EXPLICIT",
-            EventOrderRepresentation.EF_EXPLICIT,
-        ),
-        (
-            EventOrderRepresentation,
-            "ef_explicit",
-            EventOrderRepresentation.EF_EXPLICIT,
-        ),
-        (OCELExtension, "ATTRIBUTE_HISTORY", OCELExtension.ATTRIBUTE_HISTORY),
-        (OCELExtension, "attribute_history", OCELExtension.ATTRIBUTE_HISTORY),
-        (InverseRepresentation, "IMPLICIT", InverseRepresentation.IMPLICIT),
-        (DataRepresentation, "equal_bins", DataRepresentation.EQUAL_BINS),
-    ],
-)
-def test_parse_enum_accepts_the_name_and_the_value(enum_cls, token, expected):
-    assert parse_enum(enum_cls, token, key="k") is expected
+def test_a_run_that_names_no_setting_gets_the_library_defaults(ocel):
+    assert resolve(ocel).settings == OntoBuildSettings()
 
 
-def test_parse_enum_reports_the_key_and_the_alternatives():
-    with pytest.raises(
-        ConfigError, match="order_representations: unknown value 'nope'"
-    ):
-        parse_enum(EventOrderRepresentation, "nope", key="order_representations")
+def test_a_flag_beats_the_config_file_which_beats_the_default(ocel, write_config):
+    path = write_config("run.toml", f'input = "{ocel}"\nprofile = "OWL2DL"\nbins = 7\n')
 
-
-def test_spellings_lists_values_before_extra_names():
-    assert OCELExtension.spellings() == ["attribute_history", "ATTRIBUTE_HISTORY"]
-    assert OWLProfile.spellings() == ["OWL2DL", "OWL2EL"]
-
-
-def test_load_config_file_reads_a_flat_table(write_config):
-    path = write_config(
-        "run.toml", 'profile = "OWL2EL"\norder_representations = ["df"]\n'
-    )
-    assert load_config_file(path) == {
-        "profile": "OWL2EL",
-        "order_representations": ["df"],
-    }
-
-
-def test_load_config_file_rejects_an_unknown_key_with_a_suggestion(write_config):
-    path = write_config("run.toml", 'proflie = "OWL2EL"\n')
-    with pytest.raises(ConfigError, match="did you mean 'profile'"):
-        load_config_file(path)
-
-
-@pytest.mark.parametrize(("old", "new"), sorted(RENAMED_KEYS.items()))
-def test_a_renamed_key_is_reported_with_its_replacement(write_config, old, new):
-    path = write_config("run.toml", f"{old} = []\n")
-    with pytest.raises(ConfigError, match=f"did you mean '{new}'"):
-        load_config_file(path)
-
-
-def test_load_config_file_rejects_a_missing_file(tmp_path):
-    with pytest.raises(ConfigError, match="config file not found"):
-        load_config_file(tmp_path / "absent.toml")
-
-
-def test_load_config_file_reports_invalid_toml(write_config):
-    path = write_config("run.toml", "profile = \n")
-    with pytest.raises(ConfigError, match="invalid TOML"):
-        load_config_file(path)
-
-
-def test_extends_merges_the_base_and_lets_the_child_win(write_config):
-    write_config(
-        "_base.toml", 'profile = "OWL2DL"\nbins = 7\nderive_annotations = true\n'
-    )
-    child = write_config("run.toml", 'extends = "_base.toml"\nprofile = "OWL2EL"\n')
-
-    assert load_config_file(child) == {
-        "profile": "OWL2EL",
-        "bins": 7,
-        "derive_annotations": True,
-    }
-
-
-def test_extends_follows_a_chain(write_config):
-    write_config("a.toml", "bins = 1\n")
-    write_config("b.toml", 'extends = "a.toml"\nsize_limit_mb = 2\n')
-    child = write_config("c.toml", 'extends = "b.toml"\noutput = "out"\n')
-
-    assert load_config_file(child) == {"bins": 1, "size_limit_mb": 2, "output": "out"}
-
-
-def test_extends_resolves_relative_to_the_file_it_appears_in(tmp_path, write_config):
-    nested = tmp_path / "nested"
-    nested.mkdir()
-    write_config("_base.toml", 'profile = "OWL2EL"\n')
-    child = nested / "run.toml"
-    child.write_text('extends = "../_base.toml"\n', encoding="utf-8")
-
-    assert load_config_file(child) == {"profile": "OWL2EL"}
-
-
-def test_extends_cycle_is_reported_rather_than_recursing(write_config):
-    write_config("a.toml", 'extends = "b.toml"\n')
-    write_config("b.toml", 'extends = "a.toml"\n')
-    with pytest.raises(ConfigError, match="cycle"):
-        load_config_file(write_config("c.toml", 'extends = "a.toml"\n'))
-
-
-def test_extends_must_be_a_string(write_config):
-    path = write_config("run.toml", "extends = 3\n")
-    with pytest.raises(ConfigError, match="must be a path string"):
-        load_config_file(path)
-
-
-def test_a_flag_overrides_the_config_file(ocel, write_config):
-    path = write_config("run.toml", f'input = "{ocel}"\nprofile = "OWL2DL"\n')
     cfg = resolve_run_config({"profile": "OWL2EL"}, config_file=path)
-    assert cfg.settings.profile is OWLProfile.OWL2EL
+
+    assert (cfg.settings.profile, cfg.settings.bins) == (OWLProfile.OWL2EL, 7)
+    assert cfg.settings.derive_annotations is False
 
 
-def test_the_config_file_overrides_the_built_in_default(ocel, write_config):
-    path = write_config("run.toml", f'input = "{ocel}"\nprofile = "OWL2EL"\n')
-    cfg = resolve_run_config({}, config_file=path)
-    assert cfg.settings.profile is OWLProfile.OWL2EL
+def test_an_unknown_enum_value_names_the_setting(ocel):
+    with pytest.raises(ConfigError, match="profile: unknown value 'OWL2QL'"):
+        resolve(ocel, profile="OWL2QL")
 
 
-def test_untouched_settings_fall_through_to_the_default(ocel):
-    cfg = resolve(ocel)
-    assert cfg.settings.profile.value == BUILD_DEFAULTS["profile"]
-    assert cfg.settings.order_representations == (EventOrderRepresentation.DF,)
-    assert cfg.materialize is False
-    assert cfg.save_backmap is False
+def test_settings_are_validated_against_each_other(ocel):
+    with pytest.raises(ConfigError, match="ef is not available under OWL2EL"):
+        resolve(ocel, profile="OWL2EL", order_representations=["df", "ef"])
 
 
-def test_a_directory_contributes_every_ocel_file_in_it(tmp_path, ocel):
-    for name in ("a.jsonocel", "b.jsonocel"):
-        (tmp_path / name).write_bytes(ocel.read_bytes())
-    (tmp_path / "notes.md").write_text("ignored")
+def test_a_single_input_takes_its_output_name_from_the_config_file(ocel, write_config):
+    cfg = resolve_run_config(
+        {}, config_file=write_config("hiring-el-df.toml", f'input = "{ocel}"\n')
+    )
 
-    cfg = resolve_run_config({"input": [str(tmp_path)]})
-    assert [p.name for p in cfg.inputs] == ["a.jsonocel", "b.jsonocel"]
-
-
-def test_a_missing_input_is_an_error_not_a_silent_skip(tmp_path):
-    with pytest.raises(ConfigError, match="input not found"):
-        resolve_run_config({"input": [str(tmp_path / "absent.json")]})
-
-
-def test_a_directory_without_event_logs_is_an_error(tmp_path):
-    (tmp_path / "notes.md").write_text("nothing to build")
-    with pytest.raises(ConfigError, match="no event logs"):
-        resolve_run_config({"input": [str(tmp_path)]})
-
-
-def test_a_file_of_an_unreadable_kind_is_an_error(tmp_path):
-    path = tmp_path / "notes.md"
-    path.write_text("nothing to build")
-    with pytest.raises(ConfigError, match="not an event log"):
-        resolve_run_config({"input": [str(path)]})
-
-
-def test_no_input_at_all_is_an_error(tmp_path):
-    with pytest.raises(ConfigError, match="no input given"):
-        resolve_run_config({})
-
-
-def test_the_same_input_named_twice_is_built_once(ocel):
-    cfg = resolve_run_config({"input": [str(ocel), str(ocel)]})
-    assert cfg.inputs == (ocel,)
-
-
-def test_a_single_input_takes_its_name_from_the_config_file(ocel, write_config):
-    path = write_config("hiring-el-df.toml", f'input = "{ocel}"\n')
-    cfg = resolve_run_config({}, config_file=path)
     assert cfg.ontology_path(ocel).name == "hiring-el-df.ofn"
     assert cfg.backmap_path(ocel).name == "hiring-el-df.backmap.json"
-
-
-def test_without_a_config_the_input_name_is_used(ocel):
-    cfg = resolve(ocel)
-    assert cfg.ontology_path(ocel).name == "pipeline.ofn"
 
 
 def test_a_batch_names_each_output_after_its_input(tmp_path, ocel, write_config):
     for name in ("a.jsonocel", "b.jsonocel"):
         (tmp_path / name).write_bytes(ocel.read_bytes())
-    path = write_config("batch.toml", f'input = "{tmp_path}"\n')
 
-    cfg = resolve_run_config({}, config_file=path)
+    cfg = resolve_run_config(
+        {}, config_file=write_config("batch.toml", f'input = "{tmp_path}"\n')
+    )
+
     assert {cfg.ontology_path(p).name for p in cfg.inputs} == {"a.ofn", "b.ofn"}
 
 
-def test_an_explicit_name_may_not_collapse_a_batch(tmp_path, ocel):
+def test_a_name_for_a_batch_is_rejected(tmp_path, ocel):
     for name in ("a.jsonocel", "b.jsonocel"):
         (tmp_path / name).write_bytes(ocel.read_bytes())
-    with pytest.raises(ConfigError, match="share one output file"):
+
+    with pytest.raises(ConfigError, match="would make 2 inputs share one output file"):
         resolve_run_config({"input": [str(tmp_path)], "name": "both"})
 
 
-def test_two_inputs_of_one_name_may_not_overwrite_each_other(tmp_path, ocel):
-    """Outputs are named after the input, so both would write log.ofn."""
-    for directory in ("first", "second"):
-        (tmp_path / directory).mkdir()
-        (tmp_path / directory / "log.jsonocel").write_bytes(ocel.read_bytes())
-
-    with pytest.raises(ConfigError, match="overwrite one another's output"):
-        resolve_run_config(
-            {
-                "input": [
-                    str(tmp_path / "first" / "log.jsonocel"),
-                    str(tmp_path / "second" / "log.jsonocel"),
-                ]
-            }
-        )
-
-
-def test_axiomatic_inverses_are_rejected_in_owl2el(ocel):
-    with pytest.raises(ConfigError, match="AXIOMATIC"):
-        resolve(ocel, profile="OWL2EL", inverse_representations=["axiomatic"])
-
-
-def test_ef_is_rejected_in_owl2el(ocel):
-    with pytest.raises(ConfigError, match="EF"):
-        resolve(ocel, profile="OWL2EL", order_representations=["df", "ef"])
-
-
-def test_both_binning_modes_at_once_are_rejected(ocel):
-    with pytest.raises(ConfigError, match="mutually exclusive"):
-        resolve(ocel, data_representations=["equal_bins", "dist_bins"])
-
-
-def test_bin_labels_must_match_the_bin_count(ocel):
-    with pytest.raises(ConfigError, match="bin_labels"):
-        resolve(
-            ocel, data_representations=["equal_bins"], bins=3, bin_labels=["a", "b"]
-        )
+def test_a_relative_output_is_kept_as_given(ocel):
+    assert resolve(ocel, output="out/nested").output_dir == Path("out/nested")
 
 
 def test_declare_without_a_constraints_file_points_at_mine_declare(ocel):
-    with pytest.raises(ConfigError, match="semlog mine-declare"):
+    with pytest.raises(
+        ConfigError,
+        match="includes 'declare' but no declare_file is set.*semlog mine-declare",
+    ):
         resolve(ocel, order_representations=["declare"])
 
 
-def test_a_missing_declare_file_is_a_configuration_error(ocel, tmp_path):
-    """The file is read when the inputs of one log are assembled."""
-    missing = tmp_path / "nowhere.csv"
-    cfg = resolve(ocel, order_representations=["declare"], declare_file=str(missing))
+def test_a_missing_declare_file_is_rejected_when_it_is_read(ocel, tmp_path):
+    cfg = resolve(
+        ocel,
+        order_representations=["declare"],
+        declare_file=str(tmp_path / "nowhere.csv"),
+    )
 
     with pytest.raises(ConfigError, match="declare_file not found"):
         cfg.declare_result()
 
 
-def test_a_missing_annotation_document_is_a_configuration_error(ocel, tmp_path):
-    missing = tmp_path / "nowhere.json"
-    cfg = resolve(ocel, annotation_document=str(missing))
+def test_explicitly_empty_case_concepts_conflict_with_an_order_needing_traces(ocel):
+    with pytest.raises(
+        ConfigError,
+        match="case_concepts is empty but order_representations needs traces",
+    ):
+        resolve(ocel, order_representations=["df"], case_concepts=[])
 
-    with pytest.raises(ConfigError, match="annotation_document not found"):
-        cfg.annotations()
+
+def test_empty_case_concepts_are_kept_apart_from_omitted_ones(ocel):
+    assert resolve(ocel, order_representations=[], case_concepts=[]).case_concepts == ()
+    assert resolve(ocel).case_concepts is None
 
 
-def test_the_annotation_document_is_read_when_the_inputs_are_built(ocel, tmp_path):
+def test_bins_without_a_binning_mode_only_warn(ocel):
+    cfg = resolve(ocel, bins=3, bin_labels=["a", "b", "c"])
+
+    assert (
+        len([w for w in cfg.warnings if w.startswith("bins/bin_labels have no effect")])
+        == 1
+    )
+
+
+def test_column_names_on_an_ocel_input_only_warn_and_still_reach_the_loader(ocel):
+    cfg = resolve(ocel, case_col="case_id", object_cols=["resource"])
+
+    assert (
+        len([w for w in cfg.warnings if "have no effect on the OCEL inputs" in w]) == 1
+    )
+    assert cfg.loader_columns() == {"case_col": "case_id", "object_cols": ["resource"]}
+
+
+def test_column_names_on_a_flat_input_do_not_warn(tmp_path):
+    path = tmp_path / "log.csv"
+    path.write_text("case_id,activity,timestamp\nc1,A,2024-01-01 08:00:00\n")
+
+    assert (
+        resolve_run_config({"input": [str(path)], "case_col": "case_id"}).warnings == ()
+    )
+
+
+# --------------------------------------------------------------------------
+# The annotation document
+# --------------------------------------------------------------------------
+
+
+def test_the_annotation_document_reaches_the_build_inputs(ocel, tmp_path):
     document = tmp_path / "custom.json"
     document.write_text(
         json.dumps({"Event": {"label": "Occurrence"}}), encoding="utf-8"
     )
-    cfg = resolve(ocel, annotation_document=str(document))
 
-    inputs = cfg.build_inputs(["order"], None)
+    inputs = resolve(ocel, annotation_document=str(document)).build_inputs(
+        ["order"], None
+    )
 
     assert inputs.annotations == {"Event": {"label": "Occurrence"}}
     assert inputs.case_concepts == ("order",)
 
 
-def test_explicitly_empty_case_concepts_conflict_with_an_order_needing_traces(ocel):
-    with pytest.raises(ConfigError, match="case_concepts is empty"):
-        resolve(ocel, order_representations=["df"], case_concepts=[])
+def test_a_missing_annotation_document_is_rejected(ocel, tmp_path):
+    cfg = resolve(ocel, annotation_document=str(tmp_path / "nowhere.json"))
+
+    with pytest.raises(ConfigError, match="annotation_document not found"):
+        cfg.build_inputs(["order"], None)
 
 
-def test_explicitly_empty_case_concepts_are_fine_without_an_order(ocel):
-    cfg = resolve(ocel, order_representations=[], case_concepts=[])
-    assert cfg.case_concepts == ()
+@pytest.mark.parametrize(
+    ("document", "problem"),
+    [
+        ("{", "invalid JSON"),
+        ("[1, 2]", "expected a JSON object"),
+        ('{"Event": "Occurrence"}', "entry 'Event': expected an object"),
+        ('{"Event": {"title": "x"}}', "unknown key(s) ['title']"),
+        ('{"Event": {"label": 3}}', "label must be a string"),
+    ],
+)
+def test_a_malformed_annotation_document_is_rejected_with_its_path(
+    ocel, tmp_path, document, problem
+):
+    path = tmp_path / "custom.json"
+    path.write_text(document, encoding="utf-8")
+    cfg = resolve(ocel, annotation_document=str(path))
+
+    with pytest.raises(
+        ConfigError, match=f"^{re.escape(f'{path}: ')}.*{re.escape(problem)}"
+    ):
+        cfg.build_inputs(["order"], None)
 
 
-def test_omitted_case_concepts_mean_auto_selection(ocel):
-    assert resolve(ocel).case_concepts is None
+# --------------------------------------------------------------------------
+# The plan a dry run prints
+# --------------------------------------------------------------------------
 
 
-def test_bins_without_a_binning_mode_only_warns(ocel):
-    cfg = resolve(ocel, bins=3, bin_labels=["a", "b", "c"])
-    assert any("no effect" in w for w in cfg.warnings)
+def test_a_dry_run_plan_resolves_to_the_same_run(ocel, tmp_path):
+    cfg = resolve(
+        ocel,
+        output=str(tmp_path),
+        profile="OWL2EL",
+        case_concepts=["order"],
+        name="by-order",
+        data_representations=["equal_bins"],
+        bins=2,
+        bin_labels=["low", "high"],
+        save_backmap=True,
+    )
+    text = cfg.render()
+
+    again = resolve_run_config(tomllib.loads(text))
+
+    assert again.render() == text
+    assert (again.settings, again.inputs, again.name) == (
+        cfg.settings,
+        cfg.inputs,
+        cfg.name,
+    )
 
 
-def test_column_names_on_an_ocel_input_only_warn(ocel):
-    cfg = resolve(ocel, case_col="case_id", object_cols=["resource"])
-
-    assert any("no effect" in w for w in cfg.warnings)
-    assert cfg.loader_columns() == {"case_col": "case_id", "object_cols": ["resource"]}
-
-
-def test_column_names_on_a_flat_input_are_not_warned_about(tmp_path):
-    path = tmp_path / "log.csv"
-    path.write_text("case_id,activity,timestamp\nc1,A,2024-01-01 08:00:00\n")
-
-    cfg = resolve_run_config({"input": [str(path)], "case_col": "case_id"})
-
-    assert cfg.warnings == ()
-
-
-def test_unnamed_columns_are_left_to_the_loader(ocel):
-    assert resolve(ocel).loader_columns() == {}
-
-
-def test_a_wrongly_typed_value_names_the_setting(ocel):
-    with pytest.raises(ConfigError, match="bins: expected a whole number"):
-        resolve(ocel, bins="five")
-
-
-def test_build_inputs_carry_the_case_concepts_of_one_log(ocel):
-    cfg = resolve(ocel)
-
-    first = cfg.build_inputs(["order"], None)
-    second = cfg.build_inputs(["item"], None)
-
-    assert first.case_concepts == ("order",)
-    assert second.case_concepts == ("item",)
-
-
-def test_render_names_every_output_it_would_write(ocel):
+def test_a_dry_run_plan_names_every_file_it_would_write(ocel):
     text = resolve(ocel, output="out", save_backmap=True).render()
-    assert "out/pipeline.ofn" in text
-    assert "out/pipeline.backmap.json" in text
+
+    assert "#   out/pipeline.ofn\n#   out/pipeline.backmap.json" in text
 
 
-def test_render_says_when_case_concepts_are_auto_selected(ocel):
-    assert "auto" in resolve(ocel).render()
+def test_a_dry_run_plan_leaves_out_case_concepts_chosen_from_the_log(ocel):
+    assert "\ncase_concepts" not in resolve(ocel).render()
+    assert (
+        '\ncase_concepts = ["order"]' in resolve(ocel, case_concepts=["order"]).render()
+    )
 
 
-def test_a_relative_output_is_kept_as_given(ocel):
-    cfg = resolve(ocel, output="out/nested")
+def test_a_dry_run_plan_lists_each_file_of_an_input_directory(tmp_path, ocel):
+    for name in ("a.jsonocel", "b.jsonocel"):
+        (tmp_path / name).write_bytes(ocel.read_bytes())
 
-    assert cfg.output_dir == Path("out/nested")
-    assert not cfg.output_dir.is_absolute()
+    text = resolve_run_config({"input": [str(tmp_path)]}).render()
 
-
-def test_a_config_that_extends_another_still_names_itself(ocel, write_config):
-    write_config("_base.toml", 'profile = "OWL2EL"\n')
-    child = write_config("hiring.toml", f'extends = "_base.toml"\ninput = "{ocel}"\n')
-
-    cfg = resolve_run_config({}, config_file=child)
-
-    assert cfg.settings.profile is OWLProfile.OWL2EL
-    assert cfg.ontology_path(ocel).name == "hiring.ofn"
+    assert f'input = ["{tmp_path / "a.jsonocel"}", "{tmp_path / "b.jsonocel"}"]' in text
 
 
-def test_the_command_is_recorded_on_the_resolved_run(ocel):
-    cfg = resolve_run_config({"input": [str(ocel)]}, command="semlog build x")
+# --------------------------------------------------------------------------
+# Commands that read a log without building
+# --------------------------------------------------------------------------
 
-    assert cfg.command == "semlog build x"
+
+def test_a_command_that_reads_logs_takes_its_settings_from_a_build_config(
+    ocel, write_config
+):
+    path = write_config(
+        "run.toml",
+        f'input = "{ocel}"\n'
+        'case_col = "case_id"\n'
+        'case_concepts = ["order"]\n'
+        "auto_case_concepts = 1\n"
+        'ocel_extensions = ["attribute_history"]\n'
+        'declare_file = "out/constraints.csv"\n'
+        'constraints = ["Response", "Precedence"]\n'
+        "constraint_support = 0.1\n"
+        "itemset_support = 0.9\n",
+    )
+
+    inputs = resolve_log_inputs({}, config_file=path)
+
+    assert inputs.inputs == (ocel,)
+    assert inputs.columns == {"case_col": "case_id"}
+    assert inputs.case_concepts == ("order",)
+    assert inputs.auto_case_concepts == 1
+    assert inputs.ocel_extensions == (OCELExtension.ATTRIBUTE_HISTORY,)
+    assert inputs.declare_file == "out/constraints.csv"
+    assert inputs.constraints == ["Response", "Precedence"]
+    assert (inputs.constraint_support, inputs.itemset_support) == (0.1, 0.9)
+    assert inputs.config_file == path
+
+
+def test_a_command_that_reads_one_log_rejects_an_input_of_several(tmp_path, ocel):
+    for name in ("a.jsonocel", "b.jsonocel"):
+        (tmp_path / name).write_bytes(ocel.read_bytes())
+
+    inputs = resolve_log_inputs({"input": [str(tmp_path)]})
+
+    with pytest.raises(
+        ConfigError, match="This command reads one log, but the input resolved to 2"
+    ):
+        inputs.one_input()

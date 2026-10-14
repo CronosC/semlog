@@ -1,11 +1,13 @@
-"""Running a reasoner over a built ontology.
+"""Running a reasoner over a built ontology file.
 
-Reasoning is a separate step from building. It reads an `.owl` file through
-the Java OWL API, which needs a JVM, and can either report whether the file is
-consistent or write back everything the reasoner entails.
+`Reasoner` reads the file through the Java OWL API, which needs a JVM. It
+reports whether the ontology is consistent, or adds what the reasoner entails
+and writes the file back.
 """
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
 
@@ -15,12 +17,17 @@ from owlapy.owl_ontology import SyncOntology
 from owlapy.owl_reasoner import SyncReasoner
 
 from semanticlog.core.enums import REASONER_BACKENDS as REASONER_BACKENDS
-from semanticlog.core.enums import OWLProfile
-from semanticlog.core.errors import ConfigError, DependencyError, InputError
+from semanticlog.core.errors import (
+    ConfigError,
+    DependencyError,
+    InputError,
+    SemlogError,
+)
+from semanticlog.onto.sinks.base import PARTIAL_SUFFIX
 
 logger = logging.getLogger(__name__)
 
-_GENERATORS_ALL = [
+_GENERATORS = [
     "InferredClassAssertionAxiomGenerator",
     "InferredSubClassAxiomGenerator",
     "InferredDisjointClassesAxiomGenerator",
@@ -30,9 +37,6 @@ _GENERATORS_ALL = [
     "InferredInverseObjectPropertiesAxiomGenerator",
     "InferredSubDataPropertyAxiomGenerator",
     "InferredSubObjectPropertyAxiomGenerator",
-]
-
-_GENERATORS_DL_ONLY = [
     "InferredDataPropertyCharacteristicAxiomGenerator",
     "InferredObjectPropertyCharacteristicAxiomGenerator",
 ]
@@ -42,9 +46,9 @@ _GENERATORS_DL_ONLY = [
 # before use.
 _PROPERTY_ASSERTIONS = "InferredPropertyAssertionGenerator"
 
-# What a backend answers with UnsupportedOperationException instead of a result,
-# found by asking each backend for each generator over the example ontology.
-# HermiT and Pellet answer all of them.
+# Generators a backend raises UnsupportedOperationException for, found by
+# running each generator on each backend over the example ontology. HermiT and
+# Pellet support all of them.
 _UNSUPPORTED: dict[str, frozenset[str]] = {
     "ELK": frozenset(
         {
@@ -59,8 +63,8 @@ _UNSUPPORTED: dict[str, frozenset[str]] = {
 
 # Options for the JVM the OWL API runs on. The slf4j level silences the parser,
 # which reports the RDF/XML attempt it makes on a functional syntax file as a
-# warning and a stack trace. The other two quiet Java 24 and newer, which an
-# older JVM does not recognize and `ignoreUnrecognized` lets it skip.
+# warning and a stack trace. The other two silence warnings on Java 24 and
+# newer. An older JVM skips them under `ignoreUnrecognized`.
 _JVM_OPTIONS: tuple[str, ...] = (
     "-Dorg.slf4j.simpleLogger.defaultLogLevel=error",
     "--enable-native-access=ALL-UNNAMED",
@@ -69,13 +73,13 @@ _JVM_OPTIONS: tuple[str, ...] = (
 
 
 def start_jvm() -> None:
-    """Start the JVM the OWL API runs on, unless one is already running.
+    """Start the JVM the OWL API runs on, unless one is running.
 
-    owlapy starts one without options the first time an ontology is loaded, so
-    this runs first and settles them.
+    owlapy starts a JVM without options on the first ontology load. Call this
+    before that.
 
     Raises:
-        ValueError: If there is no JVM to start.
+        DependencyError: If there is no JVM to start.
     """
     if jpype.isJVMStarted():
         return
@@ -83,8 +87,8 @@ def start_jvm() -> None:
         jpype.getDefaultJVMPath()
     except ValueError as exc:
         raise DependencyError(
-            "no JVM found. Reasoning runs the OWL API on Java, so it needs a "
-            "JRE or JDK 17 or newer on PATH or named by JAVA_HOME."
+            "No JVM found. Install a JRE or JDK 17 or newer and put it on PATH "
+            "or in JAVA_HOME."
         ) from exc
 
     jars = resources.files("owlapy") / "jar_dependencies"
@@ -95,114 +99,123 @@ def start_jvm() -> None:
 class Reasoner:
     """A reasoner bound to one ontology file.
 
+    Args:
+        path: Ontology file to read.
+        backend: One of HermiT, Pellet or ELK.
+
     Attributes:
         path: File the ontology was loaded from.
-        backend: Name of the reasoner doing the work.
+        backend: Reasoner name.
         ontology: The loaded ontology.
-        reasoner: The backend doing the work.
-        possible_generators: Which sorts of entailment to ask for.
-        entails_property_assertions: Whether this backend answers for the
-            relations between individuals.
+        reasoner: The owlapy reasoner.
+        possible_generators: Generators this backend supports.
+        entails_property_assertions: Whether the backend supports entailed
+            property assertions.
+
+    Raises:
+        ConfigError: If the backend is not one of the three supported.
+        DependencyError: If there is no JVM to run the OWL API on.
+        InputError: If the ontology cannot be loaded, or the backend cannot
+            start over it. HermiT rejects a timestamp with microseconds.
+        FileNotFoundError: If there is no ontology at `path`.
     """
 
     def __init__(
         self,
         path: str,
         backend: str = "HermiT",
-        profile: OWLProfile = OWLProfile.OWL2DL,
-    ):
-        """Load an ontology and prepare a reasoner over it.
-
-        Args:
-            path: Ontology file to read.
-            backend: One of HermiT, Pellet or ELK.
-            profile: Profile the ontology was built for. Under OWL 2 EL the
-                property characteristic entailments are not asked for, since
-                that profile has no axioms for them.
-
-        Raises:
-            ValueError: If the backend is not one of the three supported, if
-                there is no JVM to run the OWL API on, or if the backend
-                refuses the ontology, such as HermiT on a timestamp carrying
-                microseconds.
-            FileNotFoundError: If there is no ontology at `path`. The OWL API
-                reports a missing file as a Java exception, which reaches the
-                caller as a stack trace rather than as a message.
-        """
+    ) -> None:
         if backend not in REASONER_BACKENDS:
-            raise ConfigError(f"Unsupported reasoner backend: {backend}")
+            raise ConfigError(
+                f"Reasoner backend {backend!r} is not one of "
+                f"{', '.join(REASONER_BACKENDS)}."
+            )
         if not Path(path).is_file():
             raise FileNotFoundError(
-                f"ontology file not found: {path}. 'semlog reason' reads an "
-                "ontology that has already been built."
+                f"Ontology file not found: {path}. Build it first with 'semlog build'."
             )
         start_jvm()
 
         self.path = path
         self.backend = backend
+        others = ", ".join(b for b in REASONER_BACKENDS if b != backend)
         try:
             self.ontology = SyncOntology(self.path)
+        except Exception as exc:
+            raise InputError(
+                f"The OWL API cannot read {path}:\n  {exc}\n"
+                "Build the ontology again, or check that a build wrote the file."
+            ) from exc
+        try:
             self.reasoner = SyncReasoner(self.ontology, reasoner=backend)
         except Exception as exc:
-            others = ", ".join(b for b in REASONER_BACKENDS if b != backend)
             raise InputError(
-                f"{backend} will not read {path}:\n"
-                f"  {exc}\n"
+                f"{backend} cannot start over this ontology:\n  {exc}\n"
                 f"Try one of the other backends: {others}."
             ) from exc
 
         unsupported = _UNSUPPORTED.get(backend, frozenset())
-        possible = list(_GENERATORS_ALL)
-        if profile != OWLProfile.OWL2EL:
-            possible.extend(_GENERATORS_DL_ONLY)
-        self.possible_generators = [g for g in possible if g not in unsupported]
+        self.possible_generators = [g for g in _GENERATORS if g not in unsupported]
         self.entails_property_assertions = _PROPERTY_ASSERTIONS not in unsupported
 
     def materialize(
         self, overwrite_old: bool = True, property_assertions: bool = True
-    ) -> None:
+    ) -> int:
         """Add everything the reasoner entails to the ontology.
 
         Args:
             overwrite_old: Save the result back over the file it came from.
-            property_assertions: Also add the entailed relations between
-                individuals, so a transitive property such as
-                eventually-follows can be read without a reasoner. This is the
-                expensive part.
+            property_assertions: Also add entailed object property assertions,
+                such as the closure of a transitive property. This is the slow
+                step.
+
+        Returns:
+            How many axioms were added. Entailments the ontology holds are not
+            counted.
+
+        Raises:
+            InputError: If the backend fails while reasoning.
         """
-        inferred = list(
-            self.reasoner.infer_axioms(inference_types=self.possible_generators)
-        )
+        with self._reporting("asking for entailments"):
+            inferred = list(
+                self.reasoner.infer_axioms(inference_types=self.possible_generators)
+            )
         if property_assertions and self.entails_property_assertions:
             inferred.extend(self.inferred_property_assertions())
         elif property_assertions:
             logger.info(
-                "  %s does not answer for entailed property assertions, "
-                "so none were asked for",
+                "  %s does not support entailed property assertions, skipped",
                 self.backend,
             )
-        self.ontology.add_axiom(inferred)
+        before = self._axiom_count()
+        with self._reporting("adding the entailed axioms"):
+            self.ontology.add_axiom(inferred)
+        added = self._axiom_count() - before
         if overwrite_old:
             self.save()
+        return added
+
+    def _axiom_count(self) -> int:
+        """Axiom count of the OWL API ontology."""
+        return int(self.ontology.get_owlapi_ontology().getAxiomCount())
 
     def inferred_property_assertions(self) -> list[OWLObjectPropertyAssertionAxiom]:
-        """Ask the reasoner for every entailed relation between individuals.
+        """Return every entailed object property assertion.
 
-        The OWL API walks the individuals itself, so this is one call into Java
-        rather than one per individual and property.
+        Data property assertions from the generator are dropped.
 
-        Returns:
-            The entailed assertions. The generator also produces the data
-            property ones, which the ontology does not take from here.
+        Raises:
+            InputError: If the backend fails.
         """
         logger.info("  asking %s for entailed property assertions..", self.backend)
         self._register_property_assertions()
-        axioms = [
-            axiom
-            for axiom in self.reasoner.infer_axioms([_PROPERTY_ASSERTIONS])
-            if isinstance(axiom, OWLObjectPropertyAssertionAxiom)
-        ]
-        logger.info(f"  {len(axioms)} entailed object property assertion(s)")
+        with self._reporting("asking for entailed property assertions"):
+            axioms = [
+                axiom
+                for axiom in self.reasoner.infer_axioms([_PROPERTY_ASSERTIONS])
+                if isinstance(axiom, OWLObjectPropertyAssertionAxiom)
+            ]
+        logger.info("  %d entailed object property assertion(s) returned", len(axioms))
         return axioms
 
     def _register_property_assertions(self) -> None:
@@ -218,11 +231,44 @@ class Reasoner:
         )
 
     def check(self) -> bool:
-        """Report whether the ontology is consistent."""
-        return self.reasoner.has_consistent_ontology()
+        """Return whether the ontology is consistent.
+
+        Raises:
+            InputError: If the backend fails. An inconsistent ontology returns
+                False.
+        """
+        with self._reporting("checking consistency"):
+            return bool(self.reasoner.has_consistent_ontology())
+
+    @contextmanager
+    def _reporting(self, what: str) -> Iterator[None]:
+        """Wrap a backend exception in an InputError naming the backend and the step.
+
+        Raises:
+            InputError: If the backend raised.
+        """
+        try:
+            yield
+        except (SemlogError, FileNotFoundError):
+            raise
+        except Exception as exc:
+            others = ", ".join(b for b in REASONER_BACKENDS if b != self.backend)
+            raise InputError(
+                f"{self.backend} failed while {what} over {self.path}:\n"
+                f"  {exc}\n"
+                f"Try one of the other backends: {others}."
+            ) from exc
 
     def save(self, save_path: str | None = None) -> None:
-        """Write the ontology out, over the source file unless told otherwise."""
-        if save_path is None:
-            save_path = self.path
-        self.ontology.save(save_path)
+        """Write the ontology to `save_path`, or over the source file.
+
+        The write goes to a partial file beside the target, which then
+        replaces it.
+        """
+        target = save_path if save_path is not None else self.path
+        partial = Path(target + PARTIAL_SUFFIX)
+        try:
+            self.ontology.save(str(partial))
+            partial.replace(target)
+        finally:
+            partial.unlink(missing_ok=True)

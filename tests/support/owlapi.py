@@ -1,13 +1,8 @@
 """Reading an emitted ontology through the OWL API.
 
-`tests/support/ontology.py` reads a build as text and answers what its axioms
-say. This answers what the OWL API makes of the same file: which profile it is
-in, what it carries as an ontology annotation, and what its signature holds
-against what it declares. Those are questions about the structure a parser
-builds, which a reader working from the lines of the file cannot see.
-
-Every function here starts a JVM, so a test using one carries the `reasoner`
-marker.
+What the OWL API makes of a written file: its profile, its ontology
+annotations, and its undeclared signature. Every function starts a JVM, so a
+test using one carries the `reasoner` marker.
 """
 
 from __future__ import annotations
@@ -51,9 +46,8 @@ def profile_violations(path: str | Path, profile: OWLProfile) -> dict[str, list[
         profile: Profile to check it against.
 
     Returns:
-        Violation kind to the text of each violation of that kind, so a
-        failure names the sorts of problem rather than one example of each.
-        Empty when the file is in the profile.
+        Violation kind to the text of each violation of that kind. Empty when
+        the file is in the profile.
     """
     ontology = load(path)
     from org.semanticweb.owlapi.profiles import OWL2DLProfile, OWL2ELProfile
@@ -68,8 +62,8 @@ def profile_violations(path: str | Path, profile: OWLProfile) -> dict[str, list[
 def ontology_annotations(path: str | Path) -> dict[str, str]:
     """Return the annotations on the ontology itself.
 
-    An `AnnotationAssertion` whose subject happens to be the ontology IRI is
-    not one of these, which is the difference this answers.
+    An `AnnotationAssertion` whose subject is the ontology IRI is not one of
+    these.
 
     Args:
         path: Ontology file to read.
@@ -102,7 +96,7 @@ def undeclared_signature(
 
     Args:
         path: Ontology file to read.
-        iri: Base IRI whose names are the ones this asks about.
+        iri: Base IRI whose names are checked.
 
     Returns:
         Entity type to the local names of that type that were never declared.

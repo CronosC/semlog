@@ -1,7 +1,7 @@
-"""Optional analyses that add to a log without reshaping it.
+"""Optional analyses over a log.
 
-The mining part needs a solver that is not installed with the package.
-`DeclareResult`, which is the part a build uses, carries no such dependency.
+`DeclareEnricher` mines DECLARE constraints and needs the Lydia solver, which
+is not installed with the package. `DeclareResult` does not need it.
 """
 
 from semanticlog.enrich.declare import DeclareEnricher, DeclareResult

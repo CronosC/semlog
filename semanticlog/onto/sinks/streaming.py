@@ -1,98 +1,80 @@
-"""Sink that writes OWL functional syntax straight to a file.
+"""Sink that writes OWL functional syntax to a file.
 
-An axiom goes out as it arrives and is not kept, so what a build holds does not
-grow with the number of events. It does grow with what the log is made of: one
-entry per declared name, and one per distinct attribute value and moment. The
-log itself is held in full by the store either way, and for a large log that is
-the floor. `benchmarks/streaming_memory.py` measures all three.
+`StreamingSink` writes each axiom as it arrives and keeps none. Its memory
+grows with the number of declared names, distinct attribute values and
+timestamps. The store holds the whole log under either sink.
 
-Writing the syntax here also puts the literal types under this module's control
-instead of the backend's.
-
-The ontology is written under a partial name and moved into place on close,
-because the closing bracket is written then and what came before it is not an
-ontology.
+The file is written under `PARTIAL_SUFFIX` and moved to the destination on
+close.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any, TextIO
+from types import TracebackType
+from typing import TextIO
 
-from semanticlog.core.enums import OWLProfile
-from semanticlog.onto.sinks.base import (
-    _RDFS,
-    _XSD,
-    OWL_DATATYPES,
-    PARTIAL_SUFFIX,
-    AxiomSink,
-)
-from semanticlog.onto.sinks.literals import resolve_literal
+from semanticlog.core.enums import OWLProfile, SinkEntity
+from semanticlog.onto.sinks.base import PARTIAL_SUFFIX, AxiomSink
+from semanticlog.onto.sinks.literals import RDFS, XSD, Literal
 
 
 class StreamingSink(AxiomSink):
     """Writes each axiom as it arrives, in OWL functional syntax.
 
-    Can be used as a context manager, which closes the file on the way out.
+    Usable as a context manager. Exiting closes the sink, or aborts it when
+    the block raised.
+
+    Args:
+        path: Destination file. Replaced once the ontology is complete.
+        iri: Base IRI of the ontology.
+        profile: Profile of the build.
 
     Attributes:
-        path: File being written.
+        path: Destination file. Replaced once the ontology is complete.
     """
 
-    def __init__(self, path: str, iri: str, profile: OWLProfile):
-        """Open the file to write to.
-
-        Writing goes to a partial file beside the destination, which is moved
-        into place on close. The header is written when the sink is opened
-        rather than here, because the ontology annotations belong inside it
-        and they arrive after the sink exists.
-
-        Args:
-            path: Where the finished ontology belongs. An existing file there
-                is replaced only once this one is complete.
-            iri: Base IRI of the ontology.
-            profile: Profile of the build this sink serves.
-        """
+    def __init__(self, path: str, iri: str, profile: OWLProfile) -> None:
         super().__init__(iri, profile)
         self.path = path
         self._partial = Path(path + PARTIAL_SUFFIX)
         self._file: TextIO | None = open(self._partial, "w", encoding="utf-8")
-        self._axiom_count = 0
-
-    @property
-    def axiom_count(self) -> int:
-        """How many axioms have been written so far."""
-        return self._axiom_count
 
     def __enter__(self) -> StreamingSink:
         return self
 
-    def __exit__(self, *exc: object) -> None:
-        self.close()
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        if exc is None:
+            self.close()
+        else:
+            self.abort()
 
     @property
     def _out(self) -> TextIO:
-        """The open file, or a clear failure once it has been closed."""
+        """The open file. Raises ValueError after close."""
         if self._file is None:
-            raise ValueError(f"StreamingSink for {self.path} is already closed.")
+            raise ValueError(f"StreamingSink for {self.path} is closed.")
         return self._file
 
     def write_ontology_header(self, annotations: Mapping[str, str]) -> None:
-        """Write the prefixes, open the ontology, and annotate it.
+        """Write the prefixes, the `Ontology(` line and its annotations.
 
-        The annotations go inside `Ontology(...)`, which is what makes them
-        annotations on the ontology rather than on an IRI that happens to be
-        its name. That is why they all arrive at once and why nothing can be
-        added to them afterwards.
+        Functional syntax places ontology annotations inside `Ontology(...)`,
+        before the axioms.
         """
         base = self.iri.rstrip("#")
         self._out.write(
             f"Prefix(:=<{self.iri}>)\n"
             f"Prefix(owl:=<http://www.w3.org/2002/07/owl#>)\n"
             f"Prefix(rdf:=<http://www.w3.org/1999/02/22-rdf-syntax-ns#>)\n"
-            f"Prefix(rdfs:=<{_RDFS}>)\n"
-            f"Prefix(xsd:=<{_XSD}>)\n\n"
+            f"Prefix(rdfs:=<{RDFS}>)\n"
+            f"Prefix(xsd:=<{XSD}>)\n\n"
             f"Ontology(<{base}>\n"
         )
         for property_iri, value in annotations.items():
@@ -104,15 +86,12 @@ class StreamingSink(AxiomSink):
         self._begin_write()
         self._out.write(text)
         self._out.write("\n")
-        self._axiom_count += 1
 
     @staticmethod
     def _ref(name: str) -> str:
         """Return a name as a prefixed name.
 
-        Nothing is escaped, because a name reaches this having passed
-        `vocab.SAFE_LOCAL_NAME`, which allows only characters a prefixed name
-        already takes.
+        Names have matched `vocab.SAFE_LOCAL_NAME`, so nothing is escaped.
         """
         return f":{name}"
 
@@ -122,14 +101,14 @@ class StreamingSink(AxiomSink):
             return self._ref(disjuncts[0])
         return "ObjectUnionOf(" + " ".join(self._ref(p) for p in disjuncts) + ")"
 
-    _DECLARATION_KIND = {
-        "class": "Class",
-        "object": "ObjectProperty",
-        "data": "DataProperty",
-        "annotation": "AnnotationProperty",
+    _DECLARATION_KIND: dict[SinkEntity, str] = {
+        SinkEntity.CLASS: "Class",
+        SinkEntity.OBJECT_PROPERTY: "ObjectProperty",
+        SinkEntity.DATA_PROPERTY: "DataProperty",
+        SinkEntity.ANNOTATION_PROPERTY: "AnnotationProperty",
     }
 
-    def write_declaration(self, name: str, kind: str) -> None:
+    def write_declaration(self, name: str, kind: SinkEntity) -> None:
         self._axiom(f"Declaration({self._DECLARATION_KIND[kind]}({self._ref(name)}))")
 
     def write_sub_class_of(self, sub: str, superclass: list[str]) -> None:
@@ -147,13 +126,14 @@ class StreamingSink(AxiomSink):
             f"{keyword}({self._ref(prop)} {self._class_expression(expression)})"
         )
 
-    def write_range(self, prop: str, expression: list[str], data_prop: bool) -> None:
-        keyword = "DataPropertyRange" if data_prop else "ObjectPropertyRange"
-        if len(expression) == 1 and expression[0] in OWL_DATATYPES:
-            target = f"xsd:{expression[0]}"
-        else:
-            target = self._class_expression(expression)
-        self._axiom(f"{keyword}({self._ref(prop)} {target})")
+    def write_range(self, prop: str, expression: list[str]) -> None:
+        self._axiom(
+            f"ObjectPropertyRange({self._ref(prop)} "
+            f"{self._class_expression(expression)})"
+        )
+
+    def write_data_range(self, prop: str, datatype: str) -> None:
+        self._axiom(f"DataPropertyRange({self._ref(prop)} xsd:{datatype})")
 
     def write_inverse_properties(self, prop: str, inverse: str) -> None:
         self._axiom(f"InverseObjectProperties({self._ref(prop)} {self._ref(inverse)})")
@@ -179,30 +159,20 @@ class StreamingSink(AxiomSink):
             )
 
     def write_data_assertions(
-        self, prop: str, pairs: Iterable[tuple[str, Any]]
+        self, prop: str, pairs: Iterable[tuple[str, Literal]]
     ) -> None:
         ref = self._ref(prop)
-        for subject, value in pairs:
-            literal = self._literal(value)
-            if literal is None:
-                continue
+        for subject, literal in pairs:
+            text = f'"{self._escape(literal.text)}"^^xsd:{literal.datatype}'
             self._axiom(
-                f"DataPropertyAssertion({ref} {self._ref(str(subject))} {literal})"
+                f"DataPropertyAssertion({ref} {self._ref(str(subject))} {text})"
             )
-
-    def _literal(self, value: Any) -> str | None:
-        """Render a value as a typed literal, or None when it is missing."""
-        literal = resolve_literal(value, self.profile)
-        if literal is None:
-            return None
-        return f'"{self._escape(literal.text)}"^^xsd:{literal.datatype}'
 
     @staticmethod
     def _escape(text: str) -> str:
-        """Escape the characters that would end a quoted literal early.
+        """Escape backslash and double quote.
 
-        A quoted string takes only `\\"` and `\\\\`, so a newline stays as it is
-        and the axiom carrying it spans more than one line.
+        A newline is not escaped, so an axiom may span lines.
         """
         return text.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -225,12 +195,7 @@ class StreamingSink(AxiomSink):
         self._partial.replace(self.path)
 
     def abort(self) -> None:
-        """Close the file without finishing the ontology, and remove it.
-
-        What has been written so far is missing its closing bracket, so it is
-        not an ontology. It is still under the partial name, so removing it
-        leaves whatever was at the destination untouched.
-        """
+        """Close and remove the partial file. The destination is untouched."""
         if self._file is not None:
             self._file.close()
             self._file = None
@@ -238,11 +203,7 @@ class StreamingSink(AxiomSink):
         self._partial.unlink(missing_ok=True)
 
     def save(self, path: str) -> None:
-        """Finish the file this sink has been writing.
-
-        The ontology has been going to disk all along, so this only closes it,
-        which is what moves it into place, and it cannot write it somewhere
-        else.
+        """Close the sink. `path` must be the path the sink was opened on.
 
         Raises:
             ValueError: If the path is not the one this sink was opened on.
@@ -250,10 +211,10 @@ class StreamingSink(AxiomSink):
         if path != self.path:
             raise ValueError(
                 f"StreamingSink is writing to {self.path!r} and cannot save to "
-                f"{path!r}. Open it on the destination path instead."
+                f"{path!r}. Open the sink on the destination path."
             )
         self.close()
 
-    def result_target(self) -> tuple[Any, str | None]:
-        """Hand back the path, since the ontology went straight to it."""
+    def result_target(self) -> tuple[None, str]:
+        """Return no ontology and the path written."""
         return None, self.path

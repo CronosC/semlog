@@ -1,8 +1,7 @@
 """Events and objects, as one class per type and one individual per row.
 
-The two halves of a store differ only in what their class hangs below and in
-which columns carry structure rather than an attribute, so one emitter covers
-both and the builder says which half it is emitting.
+`EntityEmitter` handles both kinds. They differ in their parent class and in
+which columns are structural.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ _PARENTS = {
 
 
 class EntityEmitter(Emitter):
-    """Emits the type classes of one half of a store, and their members."""
+    """Emits the type classes of events or objects, and their members."""
 
     def __init__(
         self,
@@ -40,14 +39,9 @@ class EntityEmitter(Emitter):
     def emit(self, data: ReadableStore, kind: EntityKind) -> None:
         """Emit every type of one kind, its entities and their attributes.
 
-        All classes are declared before any individual is asserted, so that a
-        name used for both is caught while the sink can still say which two
-        sources claimed it. An event timestamp is left to the time emitter,
-        and every column that carries no structure is an attribute.
-
-        Args:
-            data: Store to emit from.
-            kind: Whether to emit the activities or the object types.
+        All classes are declared before any individual is asserted. Every
+        non-structural column is emitted as an attribute. Event timestamps are
+        left to `TimeEmitter`.
         """
         parent, attribute_parent = _PARENTS[kind]
         views = [v for v in data.tables(changes=False) if v.kind is kind]

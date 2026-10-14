@@ -1,35 +1,23 @@
 # tests/fixtures
 
-Committed input to the test suite. The three logs the tests build from are
-assembled in [../support/stores.py](../support/stores.py), and this directory
-holds the one that comes from a file.
+`pipeline.jsonocel` is the one event log the test suite reads from a file. It was written with `pm4py.write_ocel2_json` and has no generator. The other test logs are assembled in [../support/stores.py](../support/stores.py).
 
-## `pipeline.jsonocel`
+To see what it holds, run from the repository root:
 
-Written once with `pm4py.write_ocel2_json` and committed. There is no generator
-in the test suite.
+```bash
+uv run semlog inspect tests/fixtures/pipeline.jsonocel
+```
 
-Shape, which the assertions depend on:
+## Shape the tests depend on
 
 - **Timestamps.** Day *N* is `2024-01-01 + (N-1) days`, one event per day.
-- **Three activities.** `place_order`, `pay`, `ship_order`. `place_order` and `pay` share
-  the attributes `amount` and `resource`. `ship_order` has `carrier` and `weight` instead.
-  The per-activity nulls that fall out of that are dropped by `PM4PyLoader`'s per-type
-  `dropna(axis=1, how="all")`.
-- **Two object types.** `order` (attribute `status`) and `item` (attribute `weight`), with
-  the same per-type null dropping.
+- **Three activities.** `place_order`, `pay`, `ship_order`. `place_order` and `pay` share the attributes `amount` and `resource`. `ship_order` has `carrier` and `weight`. `PM4PyLoader` drops a column that is null for a whole type, so no activity carries the other pair's attributes.
+- **Two object types.** `order` with attribute `status`, and `item` with attribute `weight`. The same per-type null dropping applies.
 - **E2O.** `place_order` and `pay` relate to `order`, `ship_order` to `item`.
 - **O2O.** `contains`, from `order` to `item`.
+- **Shared attribute.** `weight` belongs to an event type and an object type, which gives its property a two-element domain.
+- **Object ids.** `ord_1`..`ord_3` and `item_1`..`item_4`. A build rejects DECLARE constraints whose traces are not in the log, so a constraints table you hand a build must use these ids.
 
-`weight` is owned by both an event type and an object type, which produces a two-element
-property domain.
+If you change the file, update [../output/test_fixture_log.py](../output/test_fixture_log.py), which asserts this shape.
 
-Object ids are `ord_1`..`ord_3` and `item_1`..`item_4`. A test that hands the
-build a DECLARE constraints table has to use those, since a build refuses
-constraints whose traces it cannot find in the log.
-
-[tests/data/test_fixture_log.py](../data/test_fixture_log.py) asserts this shape,
-so a change to the file fails there first.
-
-There are no committed DECLARE fixtures. The tests that need one write it into their own
-`tmp_path`.
+No DECLARE fixtures are committed. A test that needs one writes it into its own `tmp_path`.

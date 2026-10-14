@@ -1,4 +1,9 @@
-"""Subcommand dispatch and exit codes."""
+"""Subcommand dispatch and exit codes.
+
+Results go to stdout: the paths a build wrote, the `inspect` report, the
+`reason --check` result. Log records go to stderr. `-q` lowers the log level
+and leaves stdout alone.
+"""
 
 from __future__ import annotations
 
@@ -9,33 +14,30 @@ import sys
 from pathlib import Path
 
 from semanticlog.cli.config import (
-    parse_enum,
+    resolve_log_inputs,
     resolve_run_config,
 )
+from semanticlog.cli.inspect import inspect_input
 from semanticlog.cli.logs import setup_console_logging
 from semanticlog.cli.parser import (
-    _column_overrides,
     _log_level,
-    build_overrides,
     build_parser,
+    flag_overrides,
 )
 from semanticlog.cli.run import (
     build_all,
-    inspect_input,
     mine_declare,
     reason,
 )
-from semanticlog.core.enums import (
-    OCELExtension,
-    OWLProfile,
-)
+from semanticlog.cli.settings_table import setting
 from semanticlog.core.errors import SemlogError
 
-logger = logging.getLogger("semlog.cli")
+logger = logging.getLogger(__name__)
 
 EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_USAGE = 2
+EXIT_INTERRUPTED = 130
 
 
 def _command_line(argv: list[str]) -> str:
@@ -46,73 +48,99 @@ def _command_line(argv: list[str]) -> str:
 def _cmd_build(args: argparse.Namespace) -> int:
     """Resolve the configuration and build, or print it under --dry-run."""
     cfg = resolve_run_config(
-        build_overrides(args),
+        flag_overrides(args),
         config_file=args.config,
         command=args.command_line,
     )
 
     if args.dry_run:
+        for message in cfg.warnings:
+            logger.warning(message)
         print(cfg.render())
         return EXIT_OK
 
     report = build_all(cfg)
-    logger.info(f"Done: {report.summary()}")
+    for input_path in report.built:
+        print(cfg.ontology_path(input_path))
+    logger.info("Done: %s", report.summary())
     for path, message in report.failed:
-        logger.error(f"{path}: {message}")
+        logger.error("%s: %s", path, message)
     return EXIT_OK if report.ok else EXIT_FAILED
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
-    """Summarize each input log."""
-    extensions = [
-        parse_enum(OCELExtension, token, key="ocel_extensions")
-        for token in args.ocel_extensions
-    ]
-    columns = _column_overrides(args)
-    reports = [
-        inspect_input(Path(path), extensions, suggest=args.suggest, columns=columns)
-        for path in args.input
-    ]
-    print("\n\n".join(report.render() for report in reports))
-    return EXIT_OK
+    """Summarize each input log, printing each one as it is read.
+
+    A log that cannot be read is logged and the rest are summarized.
+    """
+    inputs = resolve_log_inputs(flag_overrides(args), config_file=args.config)
+    for message in inputs.warnings:
+        logger.warning(message)
+
+    printed, failed = 0, 0
+    for path in inputs.inputs:
+        try:
+            report = inspect_input(
+                path,
+                inputs.ocel_extensions,
+                columns=inputs.columns,
+            )
+        except (SemlogError, OSError) as exc:
+            failed += 1
+            logger.error("Failed while reading %s: %s", path.name, exc)
+            continue
+        except Exception as exc:
+            failed += 1
+            logger.exception("Failed while reading %s: %s", path.name, exc)
+            continue
+        if printed:
+            print()
+        print(report.render())
+        printed += 1
+    return EXIT_OK if not failed else EXIT_FAILED
 
 
 def _cmd_mine_declare(args: argparse.Namespace) -> int:
-    """Mine DECLARE constraints into a CSV."""
-    input_path = Path(args.input)
-    output = (
-        Path(args.output)
-        if args.output
-        else Path("datasets/declare") / f"{input_path.stem}.csv"
+    """Mine DECLARE constraints into a CSV.
+
+    Without --output the CSV goes to `declare_file`, or to `<input stem>.csv`
+    in the current directory.
+    """
+    inputs = resolve_log_inputs(flag_overrides(args), config_file=args.config)
+    for message in inputs.warnings:
+        logger.warning(message)
+
+    output = args.csv_output or inputs.declare_file
+    written = mine_declare(
+        input_path=inputs.one_input(),
+        output_path=Path(output) if output else None,
+        case_concepts=inputs.case_concepts,
+        constraints=inputs.constraints,
+        constraint_support=inputs.constraint_support,
+        itemset_support=inputs.itemset_support,
+        auto_case_concepts=inputs.auto_case_concepts,
+        extensions=inputs.ocel_extensions,
+        columns=inputs.columns,
     )
-    extensions = [
-        parse_enum(OCELExtension, token, key="ocel_extensions")
-        for token in args.ocel_extensions
-    ]
-    mine_declare(
-        input_path=input_path,
-        output_path=output,
-        case_concepts=args.case_concepts,
-        constraints=args.constraints,
-        constraint_support=args.constraint_support,
-        itemset_support=args.itemset_support,
-        auto_case_concepts=args.auto_case_concepts,
-        extensions=extensions,
-        columns=_column_overrides(args),
-    )
+    print(written)
     return EXIT_OK
 
 
 def _cmd_reason(args: argparse.Namespace) -> int:
     """Materialize or consistency-check an existing ontology."""
+    onto_path = Path(args.onto)
+    output_path = Path(args.output) if args.output else None
     consistent = reason(
-        onto_path=Path(args.onto),
-        profile=parse_enum(OWLProfile, args.profile, key="profile"),
-        backend=args.backend,
-        output_path=Path(args.output) if args.output else None,
+        onto_path=onto_path,
+        backend=setting("reasoner_backend").read(args.reasoner_backend, "--backend"),
+        output_path=output_path,
         check_only=args.check,
     )
-    return EXIT_OK if consistent else EXIT_FAILED
+    if args.check:
+        print(f"{onto_path}: {'consistent' if consistent else 'INCONSISTENT'}")
+        return EXIT_OK if consistent else EXIT_FAILED
+    print(output_path or onto_path)
+    return EXIT_OK
 
 
 _COMMANDS = {
@@ -124,19 +152,19 @@ _COMMANDS = {
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run one semlog command.
+    """Run one semlog command and return its exit code.
 
-    A `SemlogError` is a problem the caller can fix, and is reported as a
-    message: a bad setting, a log that cannot be read, a solver that is not
-    installed. Any other exception propagates with its traceback, since it
-    indicates a defect rather than something to fix in the input.
+    A `SemlogError` or `OSError` that reaches this function is printed as one
+    line. Any other exception propagates with its traceback.
 
     Args:
-        argv: Arguments without the program name. Defaults to the real ones.
+        argv: Arguments without the program name, or None for `sys.argv`.
 
     Returns:
-        0 on success, 1 if a build failed or an ontology was inconsistent,
-        2 if the command or its configuration was unusable.
+        0 on success. 1 if a build failed, `inspect` could not read a log, or
+        an ontology was inconsistent. 2 if no command was given or the command
+        raised a `SemlogError` or `OSError`, such as an unusable configuration
+        or a log `mine-declare` could not read. 130 if it was interrupted.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
@@ -148,10 +176,13 @@ def main(argv: list[str] | None = None) -> int:
 
     args.command_line = _command_line(argv)
 
-    setup_console_logging(_log_level(args))
     try:
+        setup_console_logging(_log_level(args))
         return _COMMANDS[args.command](args)
-    except (SemlogError, FileNotFoundError) as exc:
+    except KeyboardInterrupt:
+        print(f"semlog {args.command}: interrupted", file=sys.stderr)
+        return EXIT_INTERRUPTED
+    except (SemlogError, OSError) as exc:
         print(f"semlog {args.command}: error: {exc}", file=sys.stderr)
         return EXIT_USAGE
 

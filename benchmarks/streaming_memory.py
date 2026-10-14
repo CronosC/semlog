@@ -1,9 +1,8 @@
-"""How much memory a streamed build holds. Run by hand, not collected.
+"""Memory held by a streamed build. Linux only, it reads /proc/self/statm.
 
-Two logs of the same size, differing only in how many distinct values they
-carry. A streamed build writes its axioms straight out, so what it holds is
-the store plus one entry per distinct value, moment and name. The two cases
-are what shows that.
+Builds two logs of one size that differ in the number of distinct values. A
+streamed build holds the store plus one entry per distinct value, timestamp
+and name.
 """
 
 from __future__ import annotations
@@ -22,6 +21,7 @@ from semanticlog.core.enums import EventOrderRepresentation
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.oced import OCEDStore
+from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
@@ -32,11 +32,8 @@ NAMES = ["ann", "bo", "cy"]
 
 
 def rss() -> float:
-    """Resident memory right now, in MB.
-
-    What is held rather than the peak, since the peak of this process never
-    goes down again and the second case would inherit the first one's.
-    """
+    """Return the current resident memory in MB."""
+    # ru_maxrss would carry the first case's peak into the second.
     with open("/proc/self/statm", encoding="utf-8") as handle:
         pages = int(handle.read().split()[1])
     return pages * resource.getpagesize() / 1024 / 1024
@@ -47,10 +44,8 @@ def make_store(n: int, distinct: bool) -> OCEDStore:
 
     Args:
         n: How many events.
-        distinct: Give every event its own clerk and its own moment. That is
-            the case a build grows with. Without it the log holds three
-            clerks and one shared range of timestamps, which is what a log
-            with a handful of resources looks like.
+        distinct: Give every event its own clerk and timestamp. Otherwise
+            the log has three clerks and one shared range of timestamps.
     """
     per = n // ACTS
     store = OCEDStore()
@@ -61,10 +56,9 @@ def make_store(n: int, distinct: bool) -> OCEDStore:
             if distinct
             else [NAMES[i % 3] for i in range(per)]
         )
-        store.add_event(
+        store.add(
+            EntityKind.EVENT,
             f"act{a}",
-            "eid",
-            "ts",
             pd.DataFrame(
                 {
                     "eid": [f"e{a}_{i}" for i in range(per)],
@@ -72,36 +66,40 @@ def make_store(n: int, distinct: bool) -> OCEDStore:
                     "clerk": clerks,
                 }
             ),
+            id_col="eid",
+            time_col="ts",
         )
     nobj = max(1, n // 10)
-    store.add_object(
+    store.add(
+        EntityKind.OBJECT,
         "order",
-        "oid",
         pd.DataFrame(
             {
                 "oid": [f"o{i}" for i in range(nobj)],
                 "channel": [NAMES[i % 3] for i in range(nobj)],
             }
         ),
+        id_col="oid",
     )
     for a in range(ACTS):
-        store.add_event_to_object_relation(
+        store.add_relation(
+            RelationKind.E2O,
             f"rel{a}",
-            "eid",
-            "oid",
-            ["order"],
             pd.DataFrame(
                 {
                     "eid": [f"e{a}_{i}" for i in range(per)],
                     "oid": [f"o{i % nobj}" for i in range(per)],
                 }
             ),
+            from_id="eid",
+            to_id="oid",
+            to_type=["order"],
         )
     return clean_oced_data(store)
 
 
 def measure(n: int, distinct: bool, path: Path) -> None:
-    """Build one log, and report what the build cost beyond the store."""
+    """Build one log and print the memory held beyond the store."""
     gc.collect()
     store = make_store(n, distinct)
     gc.collect()
@@ -114,16 +112,13 @@ def measure(n: int, distinct: bool, path: Path) -> None:
     start = time.perf_counter()
     builder.build_ontology(store, inputs)
     elapsed = time.perf_counter() - start
-    peak = rss()
-
-    with path.open(encoding="utf-8") as handle:
-        axioms = sum(1 for _ in handle)
+    after_build = rss()
 
     kept = {"names": sink.declared_count, **builder.emitted.counts()}
-    print(f"  axioms           : {axioms:,}")
+    print(f"  axioms           : {sink.axiom_count:,}")
     print(f"  build time       : {elapsed:.1f}s")
     print(f"  store            : {after_store:.0f} MB")
-    print(f"  held over store  : +{peak - after_store:.0f} MB")
+    print(f"  held over store  : +{after_build - after_store:.0f} MB")
     print("  kept             : " + ", ".join(f"{k}={v:,}" for k, v in kept.items()))
 
 

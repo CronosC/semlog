@@ -1,135 +1,99 @@
 """Giving loaded columns the dtype their content implies."""
 
-import numpy as np
 import pandas as pd
 import pytest
-from pandas.testing import assert_series_equal
+from pandas.testing import assert_frame_equal
 
 from semanticlog.data.dtypes import infer_dtypes
 
 
-def test_infer_dtypes_passes_through_numeric_and_bool():
+def test_numeric_and_boolean_columns_pass_through_unchanged():
+    df = pd.DataFrame({"ints": [1, 2], "floats": [1.1, 2.2], "bools": [True, False]})
+
+    assert_frame_equal(infer_dtypes(df), df)
+
+
+def test_iso_timestamps_become_utc_timestamps_to_the_microsecond():
     df = pd.DataFrame(
-        {"ints": [1, 2, 3], "floats": [1.1, 2.2, 3.3], "bools": [True, False, True]}
+        {"ts": ["2024-01-01T10:00:00.123456Z", "2024-01-01T11:00:00.789012+01:00"]}
     )
-    before = df.copy(deep=True)
+
     out = infer_dtypes(df)
-    assert_series_equal(out["ints"], before["ints"], check_dtype=True)
-    assert_series_equal(out["floats"], before["floats"], check_dtype=True)
-    assert_series_equal(out["bools"], before["bools"], check_dtype=True)
 
-
-def test_infer_dtypes_normalizes_datetime_to_utc_without_truncating():
-    ts = pd.to_datetime(
-        [
-            "2022-01-01 12:00:00.987654+00:00",
-            "2022-01-01 13:00:01.123456+01:00",
-        ],
-        utc=True,
+    assert list(out["ts"]) == list(
+        pd.to_datetime(
+            ["2024-01-01T10:00:00.123456Z", "2024-01-01T10:00:00.789012Z"], utc=True
+        )
     )
-    out = infer_dtypes(pd.DataFrame({"dt": ts}), min_parse_ratio=1.0)
-    assert pd.api.types.is_datetime64_any_dtype(out["dt"])
-    expected = pd.to_datetime(
-        ["2022-01-01 12:00:00.987654+00:00", "2022-01-01 12:00:01.123456+00:00"],
-        utc=True,
-    )
-    assert_series_equal(out["dt"], pd.Series(expected, name="dt"), check_dtype=False)
 
 
-def test_infer_dtypes_parses_datetime_strings_when_ratio_met():
-    df = pd.DataFrame(
-        {"maybe_dt": ["2022-01-01 08:00:00", "2022-01-01 09:00:05", None, "garbage"]}
-    )
+def test_a_column_is_converted_when_enough_of_its_values_parse():
+    df = pd.DataFrame({"amount": ["10.1", "11.7", None, "x"]})
+
     out = infer_dtypes(df, min_parse_ratio=0.66)
-    assert pd.api.types.is_datetime64_any_dtype(out["maybe_dt"])
+
+    assert out["amount"].tolist()[:2] == pytest.approx([10.1, 11.7])
+    assert str(out["amount"].dtype) == "float64"
 
 
-def test_infer_dtypes_parses_numeric_strings_when_ratio_met():
-    df = pd.DataFrame({"maybe_num": ["10.1", "11.7", None, "x"]})
-    out = infer_dtypes(df, min_parse_ratio=0.66)
-    assert pd.api.types.is_numeric_dtype(out["maybe_num"])
-    assert out["maybe_num"].dropna().tolist() == pytest.approx([10.1, 11.7])
+def test_a_column_is_left_as_text_when_too_few_of_its_values_parse():
+    df = pd.DataFrame({"when": ["2022-01-01 00:00:00", "bad", "worse", None]})
 
-
-def test_infer_dtypes_does_not_convert_when_ratio_too_low():
-    df = pd.DataFrame({"weak_dt": ["2022-01-01 00:00:00", "bad", "worse", None]})
     out = infer_dtypes(df, min_parse_ratio=0.5)
-    assert not pd.api.types.is_datetime64_any_dtype(out["weak_dt"])
 
-
-def test_infer_dtypes_respects_ignore_cols():
-    df = pd.DataFrame(
-        {
-            "ignored": ["2022-01-01 12:00:00", "2022-01-01 12:00:01"],
-            "convert_me": ["2022-01-01 12:00:00.123", "2022-01-01 12:00:01.999"],
-        }
-    )
-    out = infer_dtypes(df, ignore_cols=["ignored"])
-    assert not pd.api.types.is_datetime64_any_dtype(out["ignored"])
-    assert pd.api.types.is_datetime64_any_dtype(out["convert_me"])
-
-
-def test_infer_dtypes_drops_all_na_rows_and_columns():
-    df = pd.DataFrame({"all_na_col": [np.nan, np.nan, np.nan], "mix": [1, np.nan, 3]})
-    df.loc[1, "mix"] = np.nan
-    out = infer_dtypes(df)
-    assert "all_na_col" not in out.columns
-    assert len(out) == 2
-    assert out["mix"].tolist() == [1, 3]
-
-
-def test_infer_dtypes_leaves_zero_one_strings_numeric():
-    df = pd.DataFrame({"flag": ["0", "1", "0", "1"]})
-    out = infer_dtypes(df)
-    assert str(out["flag"].dtype) == "Int64"
-
-
-def test_infer_dtypes_coerces_whole_number_strings_to_int64():
-    df = pd.DataFrame({"count": ["1", "2", "3", "10"]})
-    out = infer_dtypes(df)
-    assert str(out["count"].dtype) == "Int64"
-
-
-def test_sub_second_timestamps_keep_their_precision():
-    df = pd.DataFrame(
-        {
-            "eid": ["e1", "e2"],
-            "ts": ["2024-01-01T10:00:00.123456Z", "2024-01-01T10:00:00.789012Z"],
-        }
-    )
-
-    out = infer_dtypes(df, ignore_cols=["eid"])
-
-    assert out["ts"].nunique() == 2
-    assert out["ts"].dt.microsecond.tolist() == [123456, 789012]
-
-
-def test_a_numeric_column_of_zeros_and_ones_stays_numeric():
-    out = infer_dtypes(
-        pd.DataFrame({"oid": ["o1", "o2", "o3"], "count": ["0", "1", "1"]}),
-        ignore_cols=["oid"],
-    )
-
-    assert str(out["count"].dtype) == "Int64"
-    assert out["count"].tolist() == [0, 1, 1]
+    assert out["when"].tolist()[:3] == ["2022-01-01 00:00:00", "bad", "worse"]
 
 
 @pytest.mark.parametrize(
-    "values",
-    [["true", "false"], ["True", "False"], ["yes", "no"], ["TRUE", "false"]],
+    ("values", "expected"),
+    [
+        (["2019", "2020"], [2019, 2020]),
+        (["3", None], [3, pd.NA]),
+    ],
+    ids=["years", "with_a_gap"],
 )
-def test_boolean_like_strings_still_become_boolean(values):
-    out = infer_dtypes(
-        pd.DataFrame({"oid": ["o1", "o2"], "flag": values}), ignore_cols=["oid"]
-    )
+def test_a_column_of_integer_literals_becomes_integers(values, expected):
+    out = infer_dtypes(pd.DataFrame({"oid": ["o1", "o2"], "n": values}), ["oid"])
+
+    assert str(out["n"].dtype) == "Int64"
+    assert out["n"].tolist() == expected
+
+
+def test_whole_numbers_beyond_int64_stay_float():
+    out = infer_dtypes(pd.DataFrame({"big": ["1e20", "2e20", "3"]}))
+
+    assert str(out["big"].dtype) == "float64"
+
+
+def test_boolean_words_in_any_case_become_booleans_and_a_stray_word_missing():
+    df = pd.DataFrame({"flag": ["TRUE", "no", "Yes", "f"] * 5 + ["maybe"]})
+
+    out = infer_dtypes(df)
 
     assert str(out["flag"].dtype) == "boolean"
-    assert out["flag"].tolist() == [True, False]
+    assert out["flag"].tolist() == [True, False, True, False] * 5 + [pd.NA]
 
 
-def test_an_integer_column_with_a_null_stays_an_integer():
-    out = infer_dtypes(
-        pd.DataFrame({"oid": ["o1", "o2"], "qty": ["3", None]}), ignore_cols=["oid"]
+def test_a_column_of_mostly_other_words_stays_text():
+    out = infer_dtypes(pd.DataFrame({"flag": ["yes", "no", "maybe"]}))
+
+    assert out["flag"].tolist() == ["yes", "no", "maybe"]
+
+
+def test_empty_rows_and_columns_are_dropped_and_blank_text_is_missing():
+    df = pd.DataFrame(
+        {"empty": [None, None, None], "x": ["a", None, "  "], "y": [1, None, 3]}
     )
 
-    assert str(out["qty"].dtype) == "Int64"
+    out = infer_dtypes(df)
+
+    assert list(out.columns) == ["x", "y"]
+    assert out["x"].isna().tolist() == [False, True]
+
+
+def test_an_ignored_column_is_kept_as_it_is_even_when_empty():
+    df = pd.DataFrame({"id": [None, None], "ts": ["2022-01-01", "2022-01-02"]})
+
+    out = infer_dtypes(df, ignore_cols=["id", "ts"])
+
+    assert_frame_equal(out, df)

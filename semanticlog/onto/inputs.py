@@ -1,12 +1,8 @@
-"""What a build needs beyond its settings and the log itself.
+"""The inputs a build reads from the log or from a file.
 
-These are the three things a build cannot be configured with in advance,
-because each is read off the log or out of a file: which object types act as
-cases, which traces satisfy which mined DECLARE constraint, and what to label
-the emitted names. A caller resolves them and hands them to `build_ontology`.
-
-The DECLARE constraints arrive as the table itself rather than as a
-`DeclareResult`, so nothing here depends on how they were mined.
+`BuildInputs` holds the object types that act as cases, the DECLARE
+constraints each trace satisfies, and the labels for the emitted names. The
+caller resolves them and passes them to `build_ontology`.
 """
 
 from __future__ import annotations
@@ -16,11 +12,8 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from semanticlog.core.errors import ConfigError
+from semanticlog.data.tables import CONSTRAINT_INDEX_COLUMNS
 from semanticlog.onto.settings import OntoBuildSettings
-
-# The columns of a constraints table that say which trace a row is about. Every
-# other column is one constraint.
-CONSTRAINT_INDEX_COLUMNS: tuple[str, ...] = ("case_concept", "trace_id")
 
 
 @dataclass(frozen=True)
@@ -33,8 +26,8 @@ class BuildInputs:
         declare_constraints: One row per trace, with `case_concept` and
             `trace_id` saying which trace and every other column naming one
             constraint. None when the build emits no DECLARE membership.
-        annotations: Entity name to its label and comment. Applied last, once
-            every name it could refer to exists.
+        annotations: Entity name to its label and comment. Applied after
+            every name has been declared.
     """
 
     case_concepts: tuple[str, ...] = ()
@@ -42,36 +35,40 @@ class BuildInputs:
     annotations: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if isinstance(self.case_concepts, str):
+            raise ConfigError(
+                "case_concepts must be a list, got the string "
+                f"{self.case_concepts!r}. Pass [{self.case_concepts!r}]."
+            )
         if not isinstance(self.case_concepts, tuple):
             object.__setattr__(self, "case_concepts", tuple(self.case_concepts))
+        if self.declare_constraints is not None:
+            # A copy, so a caller holding the original cannot change frozen inputs.
+            object.__setattr__(
+                self, "declare_constraints", self.declare_constraints.copy()
+            )
 
     def validate(self, settings: OntoBuildSettings) -> None:
-        """Check that these inputs carry what the settings ask for.
-
-        Every problem is collected before raising, so one call reports all of
-        them.
-
-        Args:
-            settings: Settings of the build these inputs serve.
+        """Check that these inputs hold what the settings need.
 
         Raises:
-            ConfigError: If a representation the settings select has nothing
-                here to work from, listing every such problem.
+            ConfigError: If a selected representation has no input here. The
+                message lists every problem.
         """
         errors: list[str] = []
 
         if settings.emits_traces and not self.case_concepts:
             errors.append(
-                "order_representations includes DF/EF/EF_EXPLICIT but no case "
-                "concepts were given, and a trace is the projection of the log "
-                "onto one object type. Name at least one in BuildInputs."
+                "order_representations includes df, ef or ef_explicit but no "
+                "case concepts were given. Name at least one object type in "
+                "case_concepts."
             )
 
         if settings.emits_declare and self.declare_constraints is None:
             errors.append(
-                "order_representations includes DECLARE but no constraints were "
-                "given. Mine them with 'semlog mine-declare' and pass the table "
-                "as BuildInputs.declare_constraints."
+                "order_representations includes declare but no constraints were "
+                "given. Mine them with 'semlog mine-declare' and set "
+                "declare_file to the table it writes."
             )
 
         if errors:

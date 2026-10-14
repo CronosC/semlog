@@ -1,14 +1,7 @@
-"""The read side of a store, as everything above `data` sees it.
+"""The read-only view of a store used by the layers above `data`.
 
-`OCEDStore` both holds the tables and rewrites them, and rewriting them is
-`data`'s business: loading fills the store and cleaning renames what it holds.
-Everything above only reads. Saying so in the type is what keeps it that way,
-since a build annotated with `ReadableStore` cannot reach a method that
-changes the log it is building from.
-
-`OCEDStore` satisfies this by having the methods, so nothing has to declare
-it. Where the two drift apart, every call that hands a store to a build stops
-type checking.
+A build, an enrichment or a check takes a `ReadableStore`. `OCEDStore`
+satisfies the protocol structurally.
 """
 
 from __future__ import annotations
@@ -20,8 +13,7 @@ import pandas as pd
 
 from semanticlog.data.tables import (
     EntityKind,
-    EventTable,
-    ObjectTable,
+    EntityTable,
     RelationKind,
     RelationTable,
     TableView,
@@ -29,10 +21,10 @@ from semanticlog.data.tables import (
 
 
 class ReadableStore(Protocol):
-    """Everything a build, an enrichment or a check asks of a store."""
+    """The read methods a build, an enrichment or a check calls on a store."""
 
     @property
-    def backmap(self) -> dict[str, str]:
+    def backmap(self) -> Mapping[str, str]:
         """Cleaned name to original name, for everything cleaning renamed."""
 
     @property
@@ -45,38 +37,29 @@ class ReadableStore(Protocol):
     def tables(self, *, changes: bool = True) -> Iterator[TableView]:
         """Yield every table in the store, with its structural columns named."""
 
-    def get_event_types(self) -> list[str]:
-        """Return every activity name in the store."""
+    def types(self, kind: EntityKind) -> list[str]:
+        """Return every activity or object type name in the store."""
 
-    def get_event_table(self, event_type: str) -> EventTable:
-        """Return the event table of one activity."""
+    def table(self, kind: EntityKind, name: str) -> EntityTable:
+        """Return the table of one activity or object type."""
 
-    def get_object_types(self) -> list[str]:
-        """Return every object type name in the store."""
+    def tables_of(self, kind: EntityKind) -> Mapping[str, EntityTable]:
+        """Return the tables of one kind, keyed by type and read-only."""
 
-    def get_object_table(self, obj_type: str) -> ObjectTable:
-        """Return the object table of one type."""
-
-    def get_object_tables(self) -> Mapping[str, ObjectTable]:
-        """Return every object table, keyed by type and read-only."""
+    def ids(self, kind: EntityKind, name: str) -> Iterable[object]:
+        """Return the distinct ids of one activity or object type."""
 
     def get_most_common_objects(self, n: int = 1) -> list[str]:
         """Return the object types with the most instances."""
 
-    def get_e2o(self) -> Mapping[str, RelationTable]:
-        """Return the event-to-object relations, keyed by name and read-only."""
-
-    def get_o2o(self) -> Mapping[str, RelationTable]:
-        """Return the object-to-object relations, keyed by name and read-only."""
+    def relations_of(self, kind: RelationKind) -> Mapping[str, RelationTable]:
+        """Return one relation family, keyed by name and read-only."""
 
     def get_relation(self, relation: str) -> RelationTable:
         """Return one relation by name, from either family."""
 
     def get_relation_types(self, kind: RelationKind = RelationKind.ALL) -> list[str]:
         """Return relation names, optionally of one family only."""
-
-    def get_ids(self, kind: EntityKind, entity_type: str) -> Iterable:
-        """Return the distinct ids of one activity or object type."""
 
     def get_object_changes(self, obj_type: str) -> pd.DataFrame:
         """Return the recorded attribute changes of one object type."""

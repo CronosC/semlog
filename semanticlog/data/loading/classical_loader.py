@@ -1,26 +1,21 @@
 """Reader for flat, single-case event logs.
 
-A classical log has one case notion and no objects, so the case column becomes
-an object type of its own and every event relates to its case through
-`modifies`. Any further column named in `object_cols` becomes another object
-type the same way.
-
-The remaining columns are attributes. A column whose value never varies within
-one object belongs to that object rather than to its events, so it is lifted
-onto the object table and the events keep the rest. Which columns moved is
-logged, since the decision is read off the data.
+`ClassicalLoader` reads a `.csv` or `.xes` log. The case column and each
+column in `object_cols` become object types, and the other columns become
+attributes.
 """
 
 import logging
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 import pm4py as pm
 
 from semanticlog.core.errors import ConfigError, InputError
-from semanticlog.data.loading.base import Inference, Loader
+from semanticlog.data.cleaning.names import free_name
+from semanticlog.data.loading.base import Inference, Loader, LoaderColumns
 from semanticlog.data.oced import OCEDStore
+from semanticlog.data.tables import EntityKind, RelationKind
 
 logger = logging.getLogger(__name__)
 
@@ -28,72 +23,82 @@ CLASSICAL_SUFFIXES: frozenset[str] = frozenset({".csv", ".xes"})
 
 EVENT_ID = "event_id"
 
+_SAMPLE = 5
+
+
+def _free_column(log: pd.DataFrame, name: str) -> str:
+    """Return `name`, or `name` with a number appended, whichever is not a column of the log."""
+    free = free_name(name, set(log.columns))
+    if free != name:
+        logger.info(
+            "Column %r is in the log and is read as an "
+            "attribute. The generated event id goes in %r.",
+            name,
+            free,
+        )
+    return free
+
 
 class ClassicalLoader(Loader):
-    """Loads a flat `.xes` or `.csv` event log."""
+    """Loads a flat `.xes` or `.csv` event log.
 
-    def __init__(self, path: str, config: dict[str, Any]):
-        """Prepare to read a classical log.
+    Args:
+        columns: Which columns carry the structure of the log. The XES
+            column names when None.
 
-        Args:
-            path: Path to a `.xes` or `.csv` file.
-            config: Column names to read the log with. Recognized keys are
-                `case_col`, `act_col` and `time_col`, which name one column
-                each, and `object_cols`, which names a list. They default to
-                the XES conventions and an empty object list. The dict is
-                filled in with the defaults that were used.
+    Raises:
+        InputError: If the file is neither `.xes` nor `.csv`.
+    """
 
-        Raises:
-            ValueError: If the file is neither `.xes` nor `.csv`.
-        """
-        super().__init__(path, config)
+    def __init__(self, path: str, columns: LoaderColumns | None = None) -> None:
+        self.path = path
         if Path(self.path).suffix.lower() not in CLASSICAL_SUFFIXES:
             raise InputError("Can only load .xes or .csv classical event logs.")
-
-        config.setdefault("case_col", "case:concept:name")
-        config.setdefault("act_col", "concept:name")
-        config.setdefault("time_col", "time:timestamp")
-        config.setdefault("object_cols", [])
-
-        self.case_col: str = config["case_col"]
-        self.act_col: str = config["act_col"]
-        self.time_col: str = config["time_col"]
-        self.object_cols: list[str] = config["object_cols"]
+        self.columns = columns if columns is not None else LoaderColumns()
 
     def get_oced(self) -> OCEDStore:
         """Read the log and return it as a store.
 
-        Ids are prefixed so that no two of them can collide: events with `e`
-        and the row number, cases with `t`, and the values of any other object
-        column with the column name.
+        Ids are prefixed: events with `e` and the row number, cases with `t`,
+        and the values of another object column with the column name. Every
+        event relates to its case through `modifies`, and to another object
+        column through `modifies_<column>`. A column constant within each
+        object of a type becomes an attribute of that type. The other columns
+        stay on the events.
 
         Returns:
-            A store with one activity per distinct activity name, the case
-            column as an object type, a `modifies` relation between them, and
-            the remaining columns as attributes of whichever they belong to.
+            A store with one activity per distinct activity name.
 
         Raises:
-            ValueError: If a named column is not in the file.
+            ConfigError: If a configured column is not in the file.
+            InputError: If a row has no case id or no activity, or if the
+                time column holds a value that is not a timestamp.
         """
-        logger.info(f"Loading classical data from file {self.path}..")
+        logger.info("Loading classical data from file %s", self.path)
         log = (
             pm.read_xes(self.path)
-            if self.path.endswith(".xes")
+            if Path(self.path).suffix.lower() == ".xes"
             else pd.read_csv(self.path)
         )
         self._require_columns(log)
+        self._require_filled(log)
 
+        columns = self.columns
         log = log.copy()
-        log[EVENT_ID] = "e" + log.index.astype(str)
-        log[self.case_col] = "t" + log[self.case_col].astype(str)
-        for column in self.object_cols:
-            log[column] = f"{column}_" + log[column].astype(str)
+        log[columns.time_col] = self._timestamps(log[columns.time_col])
+        event_id = _free_column(log, EVENT_ID)
+        log[event_id] = "e" + log.index.astype(str)
+        log[columns.case_col] = "t" + log[columns.case_col].astype(str)
+        for column in columns.object_cols:
+            prefixed = f"{column}_" + log[column].astype(str)
+            log[column] = prefixed.where(log[column].notna())
 
-        object_types = [self.case_col, *self.object_cols]
+        object_types = [columns.case_col, *columns.object_cols]
         attributes = [
             column
             for column in log.columns
-            if column not in {EVENT_ID, self.act_col, self.time_col, *object_types}
+            if column
+            not in {event_id, columns.act_col, columns.time_col, *object_types}
         ]
         owned = self._object_attributes(log, object_types, attributes)
         event_attributes = [
@@ -103,82 +108,117 @@ class ClassicalLoader(Loader):
         oced = OCEDStore()
         inference = Inference()
         for object_type in object_types:
-            columns = [object_type, *sorted(owned[object_type])]
-            oced.add_object(
+            table = log[[object_type, *sorted(owned[object_type])]]
+            table = table.dropna(subset=[object_type]).drop_duplicates(
+                subset=[object_type]
+            )
+            oced.add(
+                EntityKind.OBJECT,
                 object_type,
-                object_type,
-                inference.infer(
-                    log[columns].drop_duplicates(subset=[object_type]), object_type
-                ),
+                inference.infer(table, object_type),
+                id_col=object_type,
             )
 
-        for activity, rows in log.groupby(self.act_col):
-            oced.add_event(
+        for activity, rows in log.groupby(columns.act_col):
+            oced.add(
+                EntityKind.EVENT,
                 str(activity),
-                EVENT_ID,
-                self.time_col,
                 inference.infer(
-                    rows[[EVENT_ID, self.time_col, *event_attributes]], EVENT_ID
+                    rows[[event_id, columns.time_col, *event_attributes]], event_id
                 ),
+                id_col=event_id,
+                time_col=columns.time_col,
             )
 
         for object_type in object_types:
             name = (
                 "modifies"
-                if object_type == self.case_col
+                if object_type == columns.case_col
                 else f"modifies_{object_type}"
             )
-            oced.add_event_to_object_relation(
+            oced.add_relation(
+                RelationKind.E2O,
                 name,
-                EVENT_ID,
-                object_type,
-                [object_type],
-                log[[EVENT_ID, object_type]].drop_duplicates(),
+                log[[event_id, object_type]].dropna().drop_duplicates(),
+                from_id=event_id,
+                to_id=object_type,
+                to_type=[object_type],
             )
 
         inference.report()
         return oced
 
     def _require_columns(self, log: pd.DataFrame) -> None:
-        """Raise unless every column this loader was configured with is there.
+        """Raise unless every configured column is in the log.
 
         Raises:
-            ValueError: Naming the setting, the column and what is available.
+            ConfigError: If a configured column is not in the log.
         """
+        columns = self.columns
         for setting, column in (
-            ("case_col", self.case_col),
-            ("act_col", self.act_col),
-            ("time_col", self.time_col),
+            ("case_col", columns.case_col),
+            ("act_col", columns.act_col),
+            ("time_col", columns.time_col),
         ):
             if column not in log.columns:
                 raise ConfigError(
                     f"{setting} {column!r} is not a column of {self.path}. "
-                    f"Available columns: {sorted(map(str, log.columns))}"
+                    f"Available columns: {sorted(map(str, log.columns))}."
                 )
-        missing = [c for c in self.object_cols if c not in log.columns]
+        missing = [c for c in columns.object_cols if c not in log.columns]
         if missing:
             raise ConfigError(
                 f"object_cols names {missing}, which are not columns of "
-                f"{self.path}. Available columns: {sorted(map(str, log.columns))}"
+                f"{self.path}. Available columns: {sorted(map(str, log.columns))}."
             )
+
+    def _require_filled(self, log: pd.DataFrame) -> None:
+        """Raise if a row has no case id or no activity.
+
+        Raises:
+            InputError: Naming the column and the first rows without a value.
+        """
+        for setting, column in (
+            ("case_col", self.columns.case_col),
+            ("act_col", self.columns.act_col),
+        ):
+            values = log[column]
+            blank = values.isna() | values.astype(str).str.strip().eq("")
+            if blank.any():
+                rows = list(log.index[blank][:_SAMPLE])
+                raise InputError(
+                    f"{int(blank.sum())} row(s) of {self.path} have no value in "
+                    f"{setting} {column!r} (rows {rows}). Every row needs a case "
+                    "id and an activity. Fill them in or drop the rows."
+                )
+
+    def _timestamps(self, values: pd.Series) -> pd.Series:
+        """Return the time column as timestamps.
+
+        Raises:
+            InputError: If a value that is not empty does not parse as an
+                ISO 8601 timestamp.
+        """
+        if pd.api.types.is_datetime64_any_dtype(values):
+            return values
+        parsed = pd.to_datetime(values, errors="coerce", utc=True, format="ISO8601")
+        failed = values.notna() & parsed.isna()
+        if failed.any():
+            sample = list(values[failed].astype(str)[:_SAMPLE])
+            raise InputError(
+                f"time_col {self.columns.time_col!r} holds {int(failed.sum())} "
+                f"value(s) that are not ISO 8601 timestamps, such as {sample}. "
+                "Write the timestamps as ISO 8601, or name another column."
+            )
+        return parsed
 
     def _object_attributes(
         self, log: pd.DataFrame, object_types: list[str], attributes: list[str]
     ) -> dict[str, set[str]]:
-        """Decide which attribute columns describe an object rather than an event.
+        """Return the columns constant within each object, keyed by object type.
 
-        A column that holds one value for every row of an object describes
-        that object. One that varies within an object cannot, so it stays on
-        the events. A column constant within two object types goes to the
-        first one named, since it can only be an attribute of one.
-
-        Args:
-            log: The whole log, with its ids already prefixed.
-            object_types: Columns that became object types.
-            attributes: Columns that are neither ids nor the activity or time.
-
-        Returns:
-            Object type to the attribute columns lifted onto it.
+        A column constant within two object types goes to the first type
+        named.
         """
         owned: dict[str, set[str]] = {name: set() for name in object_types}
         taken: set[str] = set()
@@ -192,7 +232,8 @@ class ClassicalLoader(Loader):
         for object_type, columns in owned.items():
             if columns:
                 logger.info(
-                    f"classicalloader: {', '.join(sorted(columns))} do not vary "
-                    f"within a '{object_type}' and are read as its attributes."
+                    "%s do not vary within a '%s' and are read as its attributes.",
+                    ", ".join(sorted(columns)),
+                    object_type,
                 )
         return owned

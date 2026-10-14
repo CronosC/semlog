@@ -1,10 +1,12 @@
-"""Writing a config file and a flat log, which only the CLI tests need."""
+"""Fixtures that write a TOML config and a flat CSV log."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
+
+from semanticlog.cli.config import RunConfig, resolve_run_config
 
 _FLAT_CSV = """case_id,activity,timestamp,resource
 o1,place_order,2024-01-01 08:00:00,alice
@@ -32,3 +34,12 @@ def write_config(tmp_path: Path):
         return path
 
     return _write
+
+
+@pytest.fixture
+def cfg(ocel: Path, tmp_path: Path) -> RunConfig:
+    """A run of the fixture log into `tmp_path / "onto"`."""
+    return resolve_run_config(
+        {"input": [str(ocel)], "output": str(tmp_path / "onto")},
+        command="semlog build fixture",
+    )

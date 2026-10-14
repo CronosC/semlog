@@ -1,10 +1,9 @@
-"""What a build has already asserted as an individual.
+"""The individuals a build has asserted.
 
-An attribute reaches the build once per table carrying it, and the attribute
-history reaches it again, so the same value, bin or moment arrives several
-times and belongs in the ontology once. More than one emitter needs that
-answer, and it is the memory a build spends per distinct value rather than per
-event, so it is held here instead of in a set per emitter.
+An attribute appears once per table that carries it and again in the
+attribute history, so the same value, bin or timestamp arrives several times.
+`EmittedIndividuals` records each one so it is asserted once. Its size grows
+with the number of distinct values.
 """
 
 from __future__ import annotations
@@ -13,42 +12,34 @@ from collections import defaultdict
 
 
 class EmittedIndividuals:
-    """The individuals a build has asserted so far, by what they stand for.
+    """The individuals a build has asserted, grouped by kind.
 
-    Each method hands back the set for one kind, to be read for what is new
-    and then updated with whatever was emitted.
+    Each method returns the set for one kind. A caller reads it to find new
+    names and adds the ones it emits.
     """
 
     def __init__(self) -> None:
         self._values: dict[str, set[str]] = defaultdict(set)
         self._bins: dict[str, set[str]] = defaultdict(set)
-        self._moments: set[str] = set()
+        self._timestamps: set[str] = set()
 
     def values_of(self, attribute: str) -> set[str]:
-        """The value individuals asserted for one attribute.
-
-        A value carries its literal when it is first asserted, so this is
-        also what says whether the literal has been written.
-        """
+        """Return the value individuals asserted for one attribute."""
         return self._values[attribute]
 
     def bins_of(self, attribute: str) -> set[str]:
-        """The value individuals of one attribute already placed in a bin."""
+        """Return the value individuals of one attribute placed in a bin."""
         return self._bins[attribute]
 
     @property
-    def moments(self) -> set[str]:
-        """The time individuals asserted, which every activity shares."""
-        return self._moments
+    def timestamps(self) -> set[str]:
+        """The time individuals asserted, for every activity and the attribute history."""
+        return self._timestamps
 
     def counts(self) -> dict[str, int]:
-        """How many of each kind are recorded.
-
-        What a build spends beyond its axioms, which is what makes the claim
-        about streamed memory measurable.
-        """
+        """Return how many individuals of each kind are recorded."""
         return {
             "values": sum(len(names) for names in self._values.values()),
             "bins": sum(len(names) for names in self._bins.values()),
-            "moments": len(self._moments),
+            "timestamps": len(self._timestamps),
         }

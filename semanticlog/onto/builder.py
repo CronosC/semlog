@@ -1,19 +1,19 @@
-"""The build itself: emitters, in the order they have to run.
+"""The build: emitters run in order over one store.
 
-`OCEDOntoBuilder` owns a sink and a set of emitters and drives them over one
-store. It decides the order and nothing else, so what each step produces stays
-in the emitter that produces it.
+`OCEDOntoBuilder` checks the settings, the inputs and the store, then runs the
+emitters over the store in `BUILD_STEPS` order through one sink.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from semanticlog.core.summary import count_phrase, name_lines
+from semanticlog.core.enums import SinkEntity
+from semanticlog.core.summary import counted, report_by_kind, report_names
 from semanticlog.data.oced import attribute_owners
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind, RelationKind
@@ -41,19 +41,26 @@ from semanticlog.onto.sinks import AxiomSink, InMemorySink
 
 logger = logging.getLogger(__name__)
 
-_KIND_WORDS = {
-    "class": ("class", "classes"),
-    "object": ("object property", "object properties"),
-    "data": ("data property", "data properties"),
+_KIND_WORDS: dict[str, tuple[str, str]] = {
+    SinkEntity.CLASS.value: ("class", "classes"),
+    SinkEntity.OBJECT_PROPERTY.value: ("object property", "object properties"),
+    SinkEntity.DATA_PROPERTY.value: ("data property", "data properties"),
+    SinkEntity.ANNOTATION_PROPERTY.value: (
+        "annotation property",
+        "annotation properties",
+    ),
 }
 
 
 @dataclass(frozen=True)
 class Emitters:
-    """Every step of one build, sharing one sink and one record of what it wrote."""
+    """The emitters of one build. They share one sink and one `EmittedIndividuals`.
+
+    `AttributeEmitter` is not listed. The entity and history emitters call it
+    for their attribute columns.
+    """
 
     tbox: TBoxEmitter
-    attributes: AttributeEmitter
     entities: EntityEmitter
     times: TimeEmitter
     order: OrderEmitter
@@ -62,21 +69,133 @@ class Emitters:
     provenance: ProvenanceEmitter
 
 
-class OCEDOntoBuilder:
-    """Runs the emitters over a store, in the order a build needs.
+@dataclass(frozen=True)
+class BuildContext:
+    """The arguments of every build step.
 
-    The schema comes first so that everything else has something to hang
-    below, each emitter declares its own classes before asserting its own
-    individuals, and the annotation document is applied last, once every name
-    it could refer to exists. A class declared by a
-    later emitter than the individual it collides with is caught by cleaning
-    rather than by the sink, which is why the reserved set is derived from
-    the vocabulary.
+    Attributes:
+        data: Store being built from.
+        inputs: Case concepts, DECLARE constraints and annotations for it.
+        settings: What to build.
+        source: Path of the log, recorded as provenance.
+        record: Anything else to record about this run.
+        attribute_history: Whether this build emits the attribute change
+            history. True when the setting is on and the store holds one.
+    """
+
+    data: ReadableStore
+    inputs: BuildInputs
+    settings: OntoBuildSettings
+    source: str | None
+    record: Mapping[str, Any] | None
+    attribute_history: bool
+
+
+@dataclass(frozen=True)
+class BuildStep:
+    """One step of a build, and what it logs before it runs.
+
+    Attributes:
+        message: Log line written before the step runs. May name `{count}`
+            and `{detail}`.
+        absent: Log line written instead when `count` is zero. Empty for a
+            step that always has data.
+        count: Number of items the step works on. Zero selects `absent`.
+        detail: Further text for the message, for a step whose message names
+            `{detail}`.
+        when: Whether the step runs. None means it always runs.
+        run: The emitter calls this step makes.
+    """
+
+    message: str
+    run: Callable[[Emitters, BuildContext], None]
+    absent: str = ""
+    count: Callable[[BuildContext], int] | None = None
+    detail: Callable[[BuildContext], str] | None = None
+    when: Callable[[BuildContext], bool] | None = None
+
+
+def _upper_schema(emitters: Emitters, context: BuildContext) -> None:
+    """Emit the provenance record, then the upper schema."""
+    emitters.provenance.emit(context.source, context.record)
+    emitters.tbox.emit(attribute_history=context.attribute_history)
+
+
+BUILD_STEPS: tuple[BuildStep, ...] = (
+    BuildStep(
+        message="Instantiating the upper schema..",
+        run=_upper_schema,
+    ),
+    BuildStep(
+        message="Instantiating event data ({count} activities)..",
+        absent="No event data in the log..",
+        count=lambda c: len(c.data.types(EntityKind.EVENT)),
+        run=lambda e, c: e.entities.emit(c.data, EntityKind.EVENT),
+    ),
+    BuildStep(
+        message="Instantiating event order ({detail})..",
+        absent="No event order to instantiate..",
+        count=lambda c: len(c.settings.order_representations),
+        detail=lambda c: ", ".join(r.value for r in c.settings.order_representations),
+        run=lambda e, c: e.order.emit(c.data, c.inputs),
+    ),
+    BuildStep(
+        message="Instantiating time data..",
+        absent="No time data in the log..",
+        count=lambda c: len(c.data.types(EntityKind.EVENT)),
+        run=lambda e, c: e.times.emit(c.data),
+    ),
+    BuildStep(
+        message="Instantiating object data ({count} object types)..",
+        absent="No object data in the log..",
+        count=lambda c: len(c.data.types(EntityKind.OBJECT)),
+        run=lambda e, c: e.entities.emit(c.data, EntityKind.OBJECT),
+    ),
+    BuildStep(
+        message="Instantiating event to object relation data "
+        "({count} relation types)..",
+        absent="No event to object relations in the data..",
+        count=lambda c: len(c.data.get_relation_types(RelationKind.E2O)),
+        run=lambda e, c: e.relations.emit(c.data, RelationKind.E2O),
+    ),
+    BuildStep(
+        message="Instantiating object to object relation data "
+        "({count} relation types)..",
+        absent="No object to object relations in the data..",
+        count=lambda c: len(c.data.get_relation_types(RelationKind.O2O)),
+        run=lambda e, c: e.relations.emit(c.data, RelationKind.O2O),
+    ),
+    BuildStep(
+        message="Instantiating object attribute change history..",
+        absent="No object attribute changes in the data..",
+        count=lambda c: len(c.data.get_object_change_types()),
+        when=lambda c: c.attribute_history,
+        run=lambda e, c: e.history.emit(c.data),
+    ),
+)
+
+
+class OCEDOntoBuilder:
+    """Runs the emitters over a store in build order.
+
+    The upper schema is emitted first. Each emitter declares its classes
+    before it asserts individuals. The annotation document is applied last,
+    after every name has been declared.
+
+    Args:
+        iri: Base IRI for the ontology.
+        settings: Settings for this build.
+        sink: Where to write. Defaults to an in-memory sink.
+
+    Raises:
+        ConfigError: If `iri` is empty or holds whitespace or `>`, and no
+            sink is given.
 
     Attributes:
         sink: Where the axioms go.
         iri: Base IRI of the ontology, as the sink normalized it.
-        emitted: What the build has asserted, shared by every emitter.
+        emitted: The individuals the build has asserted, shared by every
+            emitter.
     """
 
     def __init__(
@@ -85,16 +204,6 @@ class OCEDOntoBuilder:
         settings: OntoBuildSettings,
         sink: AxiomSink | None = None,
     ) -> None:
-        """Prepare a builder.
-
-        The emitters are made once the store is in hand, since what they need
-        beyond the settings comes from the log.
-
-        Args:
-            iri: Base IRI for the ontology.
-            settings: Settings for this build.
-            sink: Where to write. Defaults to an in-memory sink.
-        """
         self.sink: AxiomSink = (
             sink if sink is not None else InMemorySink(iri, settings.profile)
         )
@@ -109,12 +218,7 @@ class OCEDOntoBuilder:
         return self._settings
 
     def _make_emitters(self, data: ReadableStore) -> Emitters:
-        """Create the emitters for one store, complete from the start.
-
-        What an emitter needs is read from the log here rather than bound
-        into it afterwards, so nothing has to defend against being reached
-        before it was ready.
-        """
+        """Create the emitters for one store."""
         owners = attribute_owners(data)
         report_conflated_attributes(owners)
         annotations = AnnotationWriter(self.sink, self.settings, data.backmap)
@@ -125,7 +229,6 @@ class OCEDOntoBuilder:
         times = TimeEmitter(*parts)
         return Emitters(
             tbox=TBoxEmitter(*parts),
-            attributes=attributes,
             entities=EntityEmitter(*parts, attributes),
             times=times,
             order=OrderEmitter(*parts),
@@ -139,75 +242,49 @@ class OCEDOntoBuilder:
         """Log a build step, then the names and axioms it produced.
 
         Args:
-            message: What the step is about to do.
-            absent: What to say instead when the step has nothing to work
-                with. Left empty by a step that always has something.
-            count: How much the step has to work with. Zero picks `absent`.
+            message: Log line written before the step runs.
+            absent: Log line written instead when `count` is zero.
+            count: Number of items the step works on.
         """
         logger.info(absent if absent and not count else message)
         mark = self.sink.declared_count
         axioms = self.sink.axiom_count
         yield
-        self._report(
-            self.sink.declared_since(mark),
-            self.sink.axiom_count - axioms if axioms >= 0 else 0,
-        )
+        self._report(self.sink.declared_since(mark), self.sink.axiom_count - axioms)
 
     def _report(self, declared: dict[str, list[str]], axioms: int) -> None:
         """Log what one step produced, as counts and then names.
-
-        The names are cut to a few lines each, unless the log is at debug
-        level, where every one of them is printed.
 
         Args:
             declared: Names the step declared, grouped by kind.
             axioms: How many axioms it wrote.
         """
-        counts = [
-            (len(declared.get(kind, ())), singular, plural)
-            for kind, (singular, plural) in _KIND_WORDS.items()
-        ]
-        counts.append((axioms, "axiom", "axioms"))
-        phrase = count_phrase(counts)
-        if not phrase:
-            return
-
-        logger.info(f"  {phrase}")
-        complete = logger.isEnabledFor(logging.DEBUG)
-        for kind, (_, plural) in _KIND_WORDS.items():
-            for line in name_lines(plural, declared.get(kind, []), complete=complete):
-                logger.info(line)
+        report_by_kind(
+            logger, _KIND_WORDS, declared, extra=[(axioms, "axiom", "axioms")]
+        )
 
     def _report_dropped_unions(self) -> None:
-        """Log the class expressions the profile refused, once for the build."""
-        unions, classes = self.sink.dropped_unions
-        if not unions:
+        """Log how many union class expressions the profile dropped."""
+        dropped = self.sink.dropped_unions
+        if not dropped:
             return
         logger.info(
-            f"  omitted {count_phrase([(unions, 'union', 'unions')])} of "
-            f"{count_phrase([(classes, 'class', 'classes')])} under OWL 2 EL, "
-            "which has no disjunction"
+            "  omitted %s with a union of classes, which OWL 2 EL does not allow",
+            counted(dropped, "axiom", "axioms"),
         )
 
     def _report_what_was_kept(self) -> None:
-        """Log what the build held on to, which is what its memory went on.
+        """Log the counts of declared names and of emitted values, bins and timestamps.
 
-        Neither sink writes an axiom twice, and what that costs is one entry
-        per declared name and one per distinct value, moment and bin. A
-        streamed build is flat in events and grows in these, so this is where
-        to look when one uses more memory than the log seems to warrant.
+        These are what a streamed build keeps in memory.
         """
         if not logger.isEnabledFor(logging.DEBUG):
             return
         kept = {"names": self.sink.declared_count, **self.emitted.counts()}
-        logger.debug("kept: " + ", ".join(f"{k}={v:,}" for k, v in kept.items()))
+        logger.debug("kept: %s", ", ".join(f"{k}={v:,}" for k, v in kept.items()))
 
     def _result(self) -> BuildResult:
-        """Package the finished build, closing the sink on the way.
-
-        A sink finishes on close whatever work it could only do once no
-        further axioms were coming.
-        """
+        """Close the sink and return the result."""
         self.sink.close()
         onto, path = self.sink.result_target()
         return BuildResult(
@@ -219,21 +296,16 @@ class OCEDOntoBuilder:
         )
 
     def _claim_single_use(self) -> None:
-        """Refuse a second build, which would merge two logs into one ontology."""
+        """Raise if this builder has built once."""
         if self._claimed:
             raise ValueError(
-                "This builder has already produced an ontology. Axioms accumulate "
-                "in one ontology object, so building again would merge the two "
-                "logs. Construct a new builder for each build."
+                "This builder has produced an ontology. Construct a new "
+                "builder for each build."
             )
         self._claimed = True
 
     def _apply_annotations(self, annotations: dict[str, dict[str, str]]) -> None:
-        """Apply the supplied annotations, reporting entries that match nothing.
-
-        A document written for another log, or for names as they appear before
-        cleaning, would otherwise annotate nothing without saying so.
-        """
+        """Apply the annotations and warn about entries that name no declared entity."""
         skipped = []
         for name, ann in annotations.items():
             if not self.sink.is_declared(name):
@@ -244,9 +316,12 @@ class OCEDOntoBuilder:
             )
         if skipped:
             logger.warning(
-                f"annotations: {len(skipped)} entry(s) name nothing this "
-                f"build declared, and were skipped: {', '.join(sorted(skipped))}"
+                "Applied %s of %s. %s name nothing this build declared.",
+                len(annotations) - len(skipped),
+                counted(len(annotations), "annotation entry", "annotation entries"),
+                len(skipped),
             )
+            report_names(logger, "skipped", sorted(skipped), level=logging.WARNING)
 
     def build_ontology(
         self,
@@ -258,18 +333,18 @@ class OCEDOntoBuilder:
         """Build the ontology for one store.
 
         The settings, the inputs and the data are checked before anything is
-        emitted, so a build that cannot work fails before it has written half
-        an ontology. A build that fails anyway abandons its sink, which is
-        what removes a file it had started.
+        emitted. A build that fails aborts its sink, which removes any file it
+        started.
 
         Args:
-            data: Store to build from. It has to have been cleaned already.
+            data: Store to build from. Must be cleaned.
             inputs: Case concepts, DECLARE constraints and annotations for this
-                log. Defaults to none of the three, which is enough for a build
-                that emits no event order.
+                log. Defaults to empty inputs, which suffice for a build with
+                no event order.
             source: Path of the log, recorded as provenance.
-            run: Anything else to record about this run, such as the input
-                checksum and the command.
+            run: Other values to record about this run, such as the input
+                checksum and the command. Each key becomes an annotation
+                property and must be a safe local name.
 
         Returns:
             The finished build.
@@ -277,7 +352,8 @@ class OCEDOntoBuilder:
         Raises:
             ConfigError: If the settings or the inputs are unusable.
             InputError: If the store fails a pre-build check.
-            ValueError: If this builder has already been used.
+            ValueError: If this builder has been used, or a key of
+                `run` cannot be an IRI local name.
         """
         try:
             return self._build(
@@ -294,7 +370,7 @@ class OCEDOntoBuilder:
         source: str | None,
         run: Mapping[str, Any] | None,
     ) -> BuildResult:
-        """Run the build itself, leaving a failure to `build_ontology`."""
+        """Run the build without aborting the sink on failure."""
         self.settings.validate()
         inputs.validate(self.settings)
         audit_build(data, self.settings, inputs)
@@ -303,65 +379,32 @@ class OCEDOntoBuilder:
         attribute_history = self.settings.emits_attribute_history
         if attribute_history and not data.ocel_mode:
             logger.warning(
-                "ATTRIBUTE_HISTORY extension enabled but OCEDStore was not "
-                "created with ocel_mode=True. Skipping attribute history."
+                "ocel_extensions includes attribute_history, but the store was "
+                "not created with ocel_mode=True. The attribute history is "
+                "skipped."
             )
             attribute_history = False
 
+        context = BuildContext(
+            data=data,
+            inputs=inputs,
+            settings=self.settings,
+            source=source,
+            record=run,
+            attribute_history=attribute_history,
+        )
         emitters = self._make_emitters(data)
-        with self._phase("Instantiating the upper schema.."):
-            emitters.provenance.emit(source, run)
-            emitters.tbox.emit(attribute_history=attribute_history)
-
-        activities = len(data.get_event_types())
-        object_types = len(data.get_object_types())
-        e2o = len(data.get_relation_types(RelationKind.E2O))
-        o2o = len(data.get_relation_types(RelationKind.O2O))
-        order = self.settings.order_representations
-
-        with self._phase(
-            f"Instantiating event data ({activities} activities)..",
-            "No event data in the log..",
-            activities,
-        ):
-            emitters.entities.emit(data, EntityKind.EVENT)
-        with self._phase(
-            f"Instantiating event order ({', '.join(r.value for r in order)})..",
-            "No event order to instantiate..",
-            len(order),
-        ):
-            emitters.order.emit(data, inputs)
-        with self._phase(
-            "Instantiating time data..", "No time data in the log..", activities
-        ):
-            emitters.times.emit(data)
-        with self._phase(
-            f"Instantiating object data ({object_types} object types)..",
-            "No object data in the log..",
-            object_types,
-        ):
-            emitters.entities.emit(data, EntityKind.OBJECT)
-        with self._phase(
-            f"Instantiating event to object relation data ({e2o} relation types)..",
-            "No event to object relations in the data..",
-            e2o,
-        ):
-            emitters.relations.emit_event_to_object(data)
-        with self._phase(
-            f"Instantiating object to object relation data ({o2o} relation types)..",
-            "No object to object relations in the data..",
-            o2o,
-        ):
-            emitters.relations.emit_object_to_object(data)
-
-        if attribute_history:
-            changes = len(data.get_object_change_types())
+        for step in BUILD_STEPS:
+            if step.when is not None and not step.when(context):
+                continue
+            count = 1 if step.count is None else step.count(context)
+            detail = "" if step.detail is None else step.detail(context)
             with self._phase(
-                "Instantiating object attribute change history..",
-                "No object attribute changes in the data..",
-                changes,
+                step.message.format(count=count, detail=detail),
+                step.absent,
+                count,
             ):
-                emitters.history.emit(data)
+                step.run(emitters, context)
 
         self._apply_annotations(inputs.annotations)
         self._report_dropped_unions()

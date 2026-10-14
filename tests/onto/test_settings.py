@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+from dataclasses import FrozenInstanceError
+
+import pytest
+
+from semanticlog.core.enums import (
+    DataRepresentation,
+    EventOrderRepresentation,
+    InverseRepresentation,
+    OWLProfile,
+)
+from semanticlog.core.errors import ConfigError
+from semanticlog.onto.settings import OntoBuildSettings
+
+DF = EventOrderRepresentation.DF
+EF = EventOrderRepresentation.EF
+
+
+def test_settings_cannot_be_changed_in_place():
+    settings = OntoBuildSettings(bin_labels=["low", "high"], bins=2)
+
+    with pytest.raises(FrozenInstanceError, match="cannot assign to field"):
+        settings.derive_annotations = True
+    with pytest.raises(AttributeError, match="has no attribute 'append'"):
+        settings.bin_labels.append("higher")
+
+
+def test_a_list_passed_in_is_not_shared_with_the_settings():
+    labels = ["low", "high"]
+    settings = OntoBuildSettings(bin_labels=labels, bins=2)
+
+    labels.append("higher")
+
+    assert settings.bin_labels == ("low", "high")
+
+
+def test_replace_returns_a_copy_and_leaves_the_original_alone():
+    settings = OntoBuildSettings(bin_labels=["low", "high"], bins=2)
+
+    changed = settings.replace(profile=OWLProfile.OWL2EL, bin_labels=["a", "b"])
+
+    assert (settings.profile, settings.bin_labels) == (
+        OWLProfile.OWL2DL,
+        ("low", "high"),
+    )
+    assert (changed.profile, changed.bin_labels) == (OWLProfile.OWL2EL, ("a", "b"))
+
+
+def test_an_enum_setting_may_be_written_as_its_value_or_its_member_name():
+    settings = OntoBuildSettings(
+        profile="OWL2EL", data_representations=["equal_bins", "VALUES"]
+    )
+
+    assert settings.profile is OWLProfile.OWL2EL
+    assert settings.data_representations == (
+        DataRepresentation.EQUAL_BINS,
+        DataRepresentation.VALUES,
+    )
+    assert settings.to_dict()["data_representations"] == ["equal_bins", "values"]
+
+
+def test_an_unknown_enum_value_is_rejected_on_construction():
+    with pytest.raises(ConfigError, match="profile: unknown value 'OWL2XL'"):
+        OntoBuildSettings(profile="OWL2XL")
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        (
+            {"profile": OWLProfile.OWL2EL, "order_representations": [DF, EF]},
+            "ef is not available under OWL2EL",
+        ),
+        ({"order_representations": [EF]}, "ef needs df"),
+        (
+            {
+                "profile": OWLProfile.OWL2EL,
+                "inverse_representations": [InverseRepresentation.AXIOMATIC],
+            },
+            "axiomatic inverses .* are not available under OWL2EL",
+        ),
+        (
+            {
+                "data_representations": [
+                    DataRepresentation.EQUAL_BINS,
+                    DataRepresentation.DIST_BINS,
+                ],
+                "bins": 2,
+                "bin_labels": ["low", "high"],
+            },
+            "equal_bins and dist_bins cannot both be set",
+        ),
+    ],
+    ids=["ef under el", "ef without df", "axiomatic inverses under el", "two binnings"],
+)
+def test_settings_that_contradict_each_other_fail_validation(overrides, match):
+    with pytest.raises(ConfigError, match=match):
+        OntoBuildSettings(**overrides).validate()

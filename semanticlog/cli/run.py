@@ -1,19 +1,14 @@
-"""What each subcommand does.
+"""The bodies of the `build`, `mine-declare` and `reason` commands.
 
-These functions take already-resolved values, so a command can be run and
-tested without a command line. Loading, choosing case concepts and building
-are the library's, so `build` is the record it keeps and the reporting around
-them.
+These functions take resolved values. Start at `build_all`.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import json
 import logging
 import time
-from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -23,31 +18,27 @@ from typing import Any
 from semanticlog.cli.config import RunConfig
 from semanticlog.cli.logs import FileLog
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import (
-    OCELExtension,
-    OWLProfile,
-)
-from semanticlog.data.flatten import choose_case_concepts, rank_case_concepts
+from semanticlog.core.enums import OCELExtension
+from semanticlog.core.errors import SemlogError
+from semanticlog.data.flatten import choose_case_concepts
 from semanticlog.data.loading import load_and_clean
 from semanticlog.data.readable import ReadableStore
-from semanticlog.data.tables import EntityKind, RelationKind
+from semanticlog.data.stats import file_digest, store_stats
 from semanticlog.enrich.declare import DeclareResult
+from semanticlog.onto.emitters.provenance import build_configuration
 from semanticlog.onto.pipeline import build_log
 from semanticlog.onto.reason import Reasoner
+from semanticlog.onto.record import recorded_annotation, recorded_configuration
 from semanticlog.onto.result import BuildResult
+from semanticlog.onto.settings import OntoBuildSettings
 
-logger = logging.getLogger("semlog.run")
+logger = logging.getLogger(__name__)
 
 _MB = 1024 * 1024
-_HASH_CHUNK = 1 << 20
 
 
-def write_backmap(data: ReadableStore, path: Path) -> None:
-    """Write the map of cleaned names back to what the log called them.
-
-    The map is a build artifact rather than part of the data, so writing it
-    belongs beside the ontology it explains.
-    """
+def _save_backmap(data: ReadableStore, path: Path) -> None:
+    """Write the map of cleaned names to source names as JSON."""
     path.write_text(
         json.dumps(data.backmap, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -56,32 +47,48 @@ def write_backmap(data: ReadableStore, path: Path) -> None:
 def warn_on_foreign_declare(declare: DeclareResult | None, digest: str) -> None:
     """Warn when the DECLARE constraints were mined from a different file.
 
-    The build continues, because the trace ids still resolve and a filtered
-    copy of a log is a reasonable thing to mine from. Whether they belong to
-    this log at all is the audit's question, and it asks the store.
+    The audit checks whether the trace ids resolve.
     """
     if declare is None or declare.source_sha256 is None:
         return
     if declare.source_sha256 != digest:
         logger.warning(
-            f"DECLARE constraints were mined from {declare.source_log!r} "
-            f"(sha256 {declare.source_sha256[:12]}), which is not the file being "
-            f"built (sha256 {digest[:12]}). The trace ids still resolve, so the "
-            "build continues."
+            "DECLARE constraints were mined from %r "
+            "(sha256 %s), which is not the file being "
+            "built (sha256 %s).",
+            declare.source_log,
+            declare.source_sha256[:12],
+            digest[:12],
         )
 
 
-def file_digest(path: Path) -> str:
-    """Return the SHA-256 of a file, read in chunks.
+def _warn_on_changed_settings(
+    onto_path: Path, settings: OntoBuildSettings, case_concepts: Sequence[str]
+) -> None:
+    """Warn when the file about to be written holds a build of other settings.
 
-    This identifies the exact input behind a result. A build compares it
-    against the digest recorded with a set of DECLARE constraints.
+    The case concepts are compared along with the settings.
     """
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while chunk := handle.read(_HASH_CHUNK):
-            digest.update(chunk)
-    return digest.hexdigest()
+    recorded = recorded_configuration(onto_path)
+    if recorded is None:
+        return
+    recorded = {
+        **recorded,
+        "case_concepts": recorded_annotation(onto_path, vocab.CASE_CONCEPTS),
+    }
+    current = {**build_configuration(settings), "case_concepts": list(case_concepts)}
+    changed = sorted(
+        key
+        for key in set(recorded) | set(current)
+        if recorded.get(key) != current.get(key)
+    )
+    if changed:
+        logger.warning(
+            "%s holds a build with different settings (%s) "
+            "and is about to be overwritten. Pass --name to keep both.",
+            onto_path,
+            ", ".join(changed),
+        )
 
 
 @contextmanager
@@ -125,46 +132,11 @@ class BuildReport:
         return ", ".join(parts)
 
 
-def _relation_rows(data: ReadableStore, kind: RelationKind) -> int:
-    """Count the rows across one relation family."""
-    return sum(
-        len(data.get_relation(name).data) for name in data.get_relation_types(kind)
-    )
-
-
-def _store_stats(data: ReadableStore) -> dict[str, int]:
-    """Measure the loaded log, for the provenance record."""
-    rows = _rows_by_kind(data)
-    events, objects = rows[EntityKind.EVENT], rows[EntityKind.OBJECT]
-    return {
-        "activities": len(events),
-        "events": sum(n for _, n in events),
-        "object_types": len(objects),
-        "objects": sum(n for _, n in objects),
-        "event_to_object_relations": _relation_rows(data, RelationKind.E2O),
-        "object_to_object_relations": _relation_rows(data, RelationKind.O2O),
-    }
-
-
-def _rows_by_kind(
-    data: ReadableStore,
-) -> dict[EntityKind | None, list[tuple[str, int]]]:
-    """Return each entity type with its row count, grouped by which half it is in."""
-    grouped: dict[EntityKind | None, list[tuple[str, int]]] = defaultdict(list)
-    for view in data.tables(changes=False):
-        grouped[view.kind].append((view.name, len(view.frame)))
-    return grouped
-
-
-def _ontology_stats(semlog: BuildResult) -> dict[str, int]:
-    """Measure the built ontology, however it was built.
-
-    The build counts what it declared and wrote. Only an in-memory build can
-    count individuals, so that one is added here.
-    """
-    stats = dict(semlog.stats)
-    if semlog.onto is not None:
-        stats["individuals"] = sum(1 for _ in semlog.onto.individuals_in_signature())
+def _ontology_stats(result: BuildResult) -> dict[str, int]:
+    """Return the counts of the built ontology, with individuals if held in memory."""
+    stats = dict(result.stats)
+    if result.onto is not None:
+        stats["individuals"] = sum(1 for _ in result.onto.individuals_in_signature())
     return stats
 
 
@@ -176,25 +148,15 @@ def run_record(
     case_concept_source: str,
     data: ReadableStore,
 ) -> dict[str, Any]:
-    """Assemble what to record about this run.
+    """Return what this run resolved per log, keyed by annotation name.
 
-    The result is annotated onto the ontology, so it has to say everything
-    needed to identify the input and reproduce the run. The settings record
-    themselves under `buildConfiguration`, and what is resolved per log rather
-    than configured in advance is recorded here.
+    The settings themselves go under `buildConfiguration`. The record is
+    written before the reasoner runs, so `materializeRequested` holds what the
+    run asked for.
 
     Args:
-        cfg: The resolved run.
-        input_path: Log being built.
-        digest: Checksum of that log.
-        case_concepts: Object types this input resolved to.
+        digest: SHA-256 of the input.
         case_concept_source: Whether the case concepts were given or chosen.
-        data: The loaded log, measured for the record.
-
-    Returns:
-        The record, keyed by annotation name. `materializeRequested` says what
-        the run asked for, since the record is written into the ontology
-        before the reasoner has had a chance to run.
     """
     outputs = {}
     if cfg.save_backmap:
@@ -211,7 +173,7 @@ def run_record(
         vocab.BUILD_CONFIG_FILE: None
         if cfg.config_file is None
         else str(cfg.config_file),
-        vocab.BUILD_INPUT_STATISTICS: _store_stats(data),
+        vocab.BUILD_INPUT_STATISTICS: store_stats(data),
         vocab.BUILD_OUTPUTS: outputs or None,
         vocab.MATERIALIZE_REQUESTED: cfg.materialize,
     }
@@ -220,21 +182,14 @@ def run_record(
 def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
     """Build one input, from loading the log to writing the ontology.
 
-    The steps themselves are the library's. What is here is the record this
-    run keeps, the artifacts only a run produces, and the reporting.
-
-    Args:
-        cfg: The resolved run.
-        input_path: Log to build.
-
     Returns:
         The provenance record of this build.
     """
     onto_path = cfg.ontology_path(input_path)
     timings: dict[str, float] = {}
 
-    logger.info(f"Input:  {input_path}")
-    logger.info(f"Output: {onto_path}")
+    logger.info("Input:  %s", input_path)
+    logger.info("Output: %s", onto_path)
 
     digest = file_digest(input_path)
 
@@ -250,17 +205,18 @@ def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
     case_concepts, source = choose_case_concepts(
         data, cfg.case_concepts, cfg.auto_case_concepts
     )
-    logger.info(f"Case concepts ({source}): {case_concepts or 'none'}")
+    logger.info("Case concepts (%s): %s", source, case_concepts or "none")
     declare = cfg.declare_result()
     warn_on_foreign_declare(declare, digest)
     inputs = cfg.build_inputs(case_concepts, declare)
 
     settings = cfg.settings
+    _warn_on_changed_settings(onto_path, settings, case_concepts)
     record = run_record(cfg, input_path, digest, case_concepts, source, data)
 
     logger.info("Building ontology..")
     with _timed(timings, "build"):
-        semlog = build_log(
+        result = build_log(
             data,
             settings,
             inputs,
@@ -270,41 +226,31 @@ def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
             record=record,
             streaming=cfg.streaming,
         )
-    logger.info(f"Ontology saved: {onto_path}")
+    logger.info("Ontology saved: %s", onto_path)
 
     if cfg.save_backmap:
         backmap_path = cfg.backmap_path(input_path)
-        write_backmap(data, backmap_path)
-        logger.info(f"Name backmap saved: {backmap_path}")
+        _save_backmap(data, backmap_path)
+        logger.info("Name backmap saved: %s", backmap_path)
 
     if cfg.materialize:
-        logger.info(f"Materializing with {cfg.reasoner_backend}..")
+        logger.info("Materializing with %s..", cfg.reasoner_backend)
         with _timed(timings, "reason"):
-            Reasoner(
-                str(onto_path),
-                backend=cfg.reasoner_backend,
-                profile=settings.profile,
-            ).materialize()
-        logger.info("Materialization complete.")
+            added = Reasoner(str(onto_path), backend=cfg.reasoner_backend).materialize()
+        logger.info("Materialization complete: %s axiom(s) added.", f"{added:,}")
 
-    stats = _ontology_stats(semlog)
-    logger.info("Ontology: " + ", ".join(f"{k}={v:,}" for k, v in stats.items()))
-    logger.info("Timings:  " + ", ".join(f"{k}={v:.2f}s" for k, v in timings.items()))
+    stats = _ontology_stats(result)
+    logger.info("Ontology: %s", ", ".join(f"{k}={v:,}" for k, v in stats.items()))
+    logger.info("Timings:  %s", ", ".join(f"{k}={v:.2f}s" for k, v in timings.items()))
     return record
 
 
 def build_all(cfg: RunConfig) -> BuildReport:
-    """Build every input of a run.
+    """Build every input of a run and return what happened to each.
 
-    One input failing does not stop the others, since a run over a directory
-    is usually worth finishing. Every failure is recorded and reported at the
-    end.
-
-    Args:
-        cfg: The resolved run.
-
-    Returns:
-        What happened to each input.
+    A failed input is recorded and the next one is built. A `SemlogError` or
+    `OSError` is logged as one line. Any other exception is logged with its
+    traceback.
     """
     for message in cfg.warnings:
         logger.warning(message)
@@ -315,188 +261,79 @@ def build_all(cfg: RunConfig) -> BuildReport:
 
     with FileLog(cfg.log_dir) as file_log:
         for input_path in cfg.inputs:
-            size = input_path.stat().st_size
-            if limit and size > limit:
-                skipped = f"exceeds the {cfg.size_limit_mb} MB limit ({size // _MB} MB)"
-                logger.info(f"Skipping {input_path.name}: {skipped}")
-                report.skipped.append((input_path, skipped))
-                continue
-
-            log_path = file_log.switch_to(cfg.output_stem(input_path))
-            logger.info(f"=== Processing {input_path.name} ===")
-            if log_path:
-                logger.info(f"Log:    {log_path}")
-
             try:
+                size = input_path.stat().st_size
+                if limit and size > limit:
+                    skipped = (
+                        f"exceeds the {cfg.size_limit_mb} MB limit ({size // _MB} MB)"
+                    )
+                    logger.info("Skipping %s: %s", input_path.name, skipped)
+                    report.skipped.append((input_path, skipped))
+                    continue
+
+                log_path = file_log.switch_to(cfg.output_stem(input_path))
+                logger.info("=== Processing %s ===", input_path.name)
+                if log_path:
+                    logger.info("Log:    %s", log_path)
+
                 report.records.append(build_one(cfg, input_path))
                 report.built.append(input_path)
-                logger.info(f"=== Finished {input_path.name} ===")
+                logger.info("=== Finished %s ===", input_path.name)
+            except (SemlogError, OSError) as exc:
+                report.failed.append((input_path, str(exc)))
+                logger.error("Failed while processing %s: %s", input_path.name, exc)
             except Exception as exc:
                 report.failed.append((input_path, str(exc)))
-                logger.exception(f"Failed while processing {input_path.name}: {exc}")
+                logger.exception("Failed while processing %s: %s", input_path.name, exc)
 
     return report
 
 
-@dataclass
-class InspectReport:
-    """What one log contains, as `semlog inspect` reports it.
-
-    Attributes:
-        input_path: The log this describes.
-        activities: Activity name and event count, most events first.
-        object_types: Object type and object count, most objects first.
-        relations: Relation name and row count, most rows first.
-        time_range: Earliest and latest timestamp, or None if there are none.
-        suggested_case_concepts: What a build would choose as case concepts.
-        renamed: Names cleaning changed, as cleaned name to source name.
-    """
-
-    input_path: Path
-    activities: list[tuple[str, int]]
-    object_types: list[tuple[str, int]]
-    relations: list[tuple[str, int]]
-    time_range: tuple[str, str] | None
-    suggested_case_concepts: list[str]
-    renamed: dict[str, str]
-
-    def render(self) -> str:
-        """Return the report as the text the command prints."""
-        lines = [f"{self.input_path}", ""]
-        lines.append(f"activities ({len(self.activities)})")
-        lines += [f"  {n:>9,}  {name}" for name, n in self.activities]
-        lines.append("")
-        lines.append(f"object types ({len(self.object_types)})")
-        lines += [f"  {n:>9,}  {name}" for name, n in self.object_types]
-        lines.append("")
-        lines.append(f"relations ({len(self.relations)})")
-        lines += [f"  {n:>9,}  {name}" for name, n in self.relations]
-        lines.append("")
-        if self.time_range is not None:
-            lines.append(
-                f"time range           {self.time_range[0]} .. {self.time_range[1]}"
-            )
-        lines.append(
-            "suggested            --case-concepts "
-            + " ".join(self.suggested_case_concepts)
-        )
-        if self.renamed:
-            lines.append("")
-            lines.append("names changed by cleaning (use the left-hand form)")
-            lines += [
-                f"  {clean:<28} was {original}"
-                for clean, original in sorted(self.renamed.items())
-            ]
-        return "\n".join(lines)
-
-
-def inspect_input(
-    path: Path,
-    extensions: Sequence[OCELExtension] = (),
-    suggest: int = 3,
-    columns: Mapping[str, Any] | None = None,
-) -> InspectReport:
-    """Summarize one log without building anything.
-
-    The log is cleaned first, so the names shown are the ones a build would
-    use and the ones `--case-concepts` expects.
-
-    Args:
-        path: Log to summarize.
-        extensions: OCEL extensions to load as well.
-        suggest: How many case concepts to suggest.
-        columns: Column names for a flat `.csv` or `.xes` log.
-
-    Returns:
-        The summary.
-    """
-    data = load_and_clean(path, extensions, columns=columns)
-
-    def by_count(counted: list[tuple[str, int]]) -> list[tuple[str, int]]:
-        return sorted(counted, key=lambda item: item[1], reverse=True)
-
-    rows = _rows_by_kind(data)
-    activities = by_count(rows[EntityKind.EVENT])
-    object_types = by_count(rows[EntityKind.OBJECT])
-    relations = by_count(
-        [
-            (name, len(data.get_relation(name).data))
-            for name in data.get_relation_types()
-        ]
-    )
-
-    stamps = [
-        view.frame[column]
-        for view in data.tables(changes=False)
-        if view.kind is EntityKind.EVENT
-        for column in view.structural
-    ]
-    non_empty = [s for s in stamps if len(s)]
-    time_range = (
-        (str(min(s.min() for s in non_empty)), str(max(s.max() for s in non_empty)))
-        if non_empty
-        else None
-    )
-
-    schema_names = [a for a, _ in activities] + [t for t, _ in object_types]
-    renamed = {
-        name: original
-        for name in schema_names
-        if (original := data.get_original(name)) is not None and original != name
-    }
-
-    return InspectReport(
-        input_path=path,
-        activities=activities,
-        object_types=object_types,
-        relations=relations,
-        time_range=time_range,
-        suggested_case_concepts=rank_case_concepts(data, suggest),
-        renamed=renamed,
-    )
-
-
 def mine_declare(
     input_path: Path,
-    output_path: Path,
-    case_concepts: Sequence[str] | None,
-    constraints: Sequence[str] | None,
-    constraint_support: float,
-    itemset_support: float,
+    output_path: Path | None = None,
+    case_concepts: Sequence[str] | None = None,
+    constraints: Sequence[str] | None = None,
+    constraint_support: float = 0.5,
+    itemset_support: float = 0.5,
     auto_case_concepts: int = 3,
     extensions: Sequence[OCELExtension] = (),
     columns: Mapping[str, Any] | None = None,
 ) -> Path:
     """Mine DECLARE constraints from a log and write them to a CSV.
 
-    The origin of the constraints is recorded with them, so a later build can
-    tell whether they belong to the log it is building.
+    The source log and its checksum are recorded with the constraints. The
+    templates are checked before the log is read.
 
     Args:
-        input_path: Log to mine.
-        output_path: CSV to write.
+        output_path: CSV to write, or None for `<input stem>.csv` in the
+            current directory.
         case_concepts: Object types to project onto, or None to choose them.
         constraints: Constraint templates to keep, or None to keep everything
             discovery proposes.
         constraint_support: Share of traces a constraint has to hold in.
         itemset_support: Share of traces an activity set has to occur in.
         auto_case_concepts: How many case concepts to choose when choosing.
-        extensions: OCEL extensions to load as well.
         columns: Column names for a flat `.csv` or `.xes` log.
 
     Returns:
         The file written.
 
     Raises:
-        ImportError: If declare4py or its solver is not installed.
+        DependencyError: If Declare4Py or its solver is not installed.
+        ConfigError: If a constraint template is not one Declare4Py knows.
     """
-    from semanticlog.enrich.declare import DeclareEnricher
+    from semanticlog.enrich.declare import DeclareEnricher, check_templates
 
-    logger.info(f"Loading event data from {input_path}..")
+    check_templates(list(constraints or []))
+    if output_path is None:
+        output_path = Path(f"{input_path.stem}.csv")
+
+    logger.info("Loading event data from %s..", input_path)
     data = load_and_clean(input_path, extensions, columns=columns)
 
     chosen, _ = choose_case_concepts(data, case_concepts, auto_case_concepts)
-    logger.info(f"Case concepts: {chosen}")
+    logger.info("Case concepts: %s", chosen)
 
     logger.info("Mining DECLARE constraints via discovery..")
     result = DeclareEnricher(data).get_constraints_via_discovery(
@@ -510,42 +347,38 @@ def mine_declare(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result.write(str(output_path))
-    logger.info(f"{len(result.constraints)} constraints saved: {output_path}")
+    logger.info("%s constraints saved: %s", len(result.constraints), output_path)
     return output_path
 
 
 def reason(
     onto_path: Path,
-    profile: OWLProfile,
     backend: str = "HermiT",
     output_path: Path | None = None,
     check_only: bool = False,
 ) -> bool:
-    """Run a reasoner over an ontology that already exists.
+    """Run a reasoner over a built ontology.
 
     Args:
-        onto_path: Ontology to read.
-        profile: Profile it was built for, which decides what is asked of the
-            reasoner.
-        backend: Reasoner to use.
         output_path: Where to write the materialized result. Without one, the
             input file is overwritten.
-        check_only: Only report consistency, changing nothing.
+        check_only: Report consistency and write nothing.
 
     Returns:
-        Whether the ontology is consistent under `check_only`, and True
-        otherwise.
+        Whether the ontology is consistent under `check_only`, otherwise True.
     """
-    reasoner = Reasoner(str(onto_path), backend=backend, profile=profile)
+    reasoner = Reasoner(str(onto_path), backend=backend)
     if check_only:
-        consistent = reasoner.check()
-        logger.info(f"{onto_path}: {'consistent' if consistent else 'INCONSISTENT'}")
-        return consistent
+        return reasoner.check()
 
-    logger.info(f"Materializing {onto_path} with {backend}..")
-    reasoner.materialize(overwrite_old=output_path is None)
+    logger.info("Materializing %s with %s..", onto_path, backend)
+    added = reasoner.materialize(overwrite_old=output_path is None)
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         reasoner.save(str(output_path))
-    logger.info(f"Materialization complete: {output_path or onto_path}")
+    logger.info(
+        "Materialization complete: %s axiom(s) added to %s",
+        f"{added:,}",
+        output_path or onto_path,
+    )
     return True

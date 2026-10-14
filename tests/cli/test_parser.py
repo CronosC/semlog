@@ -1,21 +1,21 @@
-"""Argument parsing, help text, and the flags reaching the settings.
+"""Argument parsing, help text, and the flags that reach the settings.
 
-Every build flag defaults to None so that a flag which was not given can be
-told apart from one given its default value, which is what lets the config
-file sit between the two. The completeness tests are the ones that notice a
-setting gaining a name in one place and not the other.
+Every build flag defaults to None, so a flag that was not given is told apart from one given its default.
 """
 
 from __future__ import annotations
 
-import dataclasses
+import argparse
+import logging
+import re
 
 import pytest
 
+from semanticlog import __version__
 from semanticlog.cli import build_parser
-from semanticlog.cli.config import BUILD_DEFAULTS
-from semanticlog.cli.parser import build_overrides
-from semanticlog.onto.settings import OntoBuildSettings
+from semanticlog.cli.parser import _log_level, flag_overrides
+from semanticlog.cli.settings_table import BUILD_DEFAULTS, BUILD_SETTINGS
+from semanticlog.core.errors import ConfigError
 
 SUBCOMMANDS = ("build", "inspect", "mine-declare", "reason")
 
@@ -24,56 +24,42 @@ def parse(*argv: str):
     return build_parser().parse_args(list(argv))
 
 
-def test_every_subcommand_is_reachable():
-    help_text = build_parser().format_help()
+def _help(command: str) -> str:
+    sub = next(
+        a for a in build_parser()._actions if isinstance(a, argparse._SubParsersAction)
+    )
+    return sub.choices[command].format_help()
 
+
+def test_every_subcommand_renders_its_help(capsys):
     for command in SUBCOMMANDS:
-        assert command in help_text
+        with pytest.raises(SystemExit) as exit_code:
+            parse(command, "--help")
+        assert exit_code.value.code == 0
+        assert capsys.readouterr().out.startswith(f"usage: semlog {command}")
 
 
-@pytest.mark.parametrize("command", SUBCOMMANDS)
-def test_each_subcommand_renders_its_help(command, capsys):
-    """Help interpolates the defaults, so a bad one fails here rather than at use."""
-    with pytest.raises(SystemExit) as exit_code:
-        parse(command, "--help")
-
-    assert exit_code.value.code == 0
-    assert capsys.readouterr().out
-
-
-def test_the_version_is_reported(capsys):
-    with pytest.raises(SystemExit):
-        parse("--version")
-
-    assert "semlog" in capsys.readouterr().out
-
-
-def test_the_reported_version_is_the_one_provenance_records(capsys):
-    """One version source, so an .owl file cannot disagree with --version."""
-    from semanticlog import __version__
-
+def test_the_version_is_the_one_provenance_records(capsys):
     with pytest.raises(SystemExit):
         parse("--version")
 
     assert capsys.readouterr().out.strip() == f"semlog {__version__}"
 
 
-# --------------------------------------------------------------------------
-# Nothing is set unless it was asked for
-# --------------------------------------------------------------------------
-
-
 def test_a_build_flag_that_was_not_given_stays_none():
-    args = parse("build", "log.json")
+    given = {
+        key
+        for key, value in vars(parse("build", "log.json")).items()
+        if value is not None
+    }
 
-    given = {key for key, value in vars(args).items() if value is not None}
-    assert given == {"input", "command", "verbose", "quiet", "dry_run"}
+    assert given == {"input", "command", "dry_run"}
 
 
 def test_only_the_flags_that_were_given_become_overrides():
     args = parse("build", "log.json", "--profile", "OWL2EL", "--bins", "4")
 
-    assert build_overrides(args) == {
+    assert flag_overrides(args) == {
         "input": ["log.json"],
         "profile": "OWL2EL",
         "bins": 4,
@@ -81,9 +67,7 @@ def test_only_the_flags_that_were_given_become_overrides():
 
 
 def test_an_empty_positional_input_falls_through_to_the_config():
-    args = parse("build", "--config", "run.toml")
-
-    assert "input" not in build_overrides(args)
+    assert "input" not in flag_overrides(parse("build", "--config", "run.toml"))
 
 
 def test_a_list_flag_may_be_given_with_no_values():
@@ -91,73 +75,79 @@ def test_a_list_flag_may_be_given_with_no_values():
         parse("build", "log.json", "--order-representations").order_representations
         == []
     )
-    assert parse("build", "log.json", "--case-concepts").case_concepts == []
 
 
-# --------------------------------------------------------------------------
-# What the parser accepts and refuses
-# --------------------------------------------------------------------------
+def test_a_boolean_flag_has_a_negated_form():
+    assert parse("build", "log.json", "--materialize").materialize is True
+    assert parse("build", "log.json", "--no-materialize").materialize is False
 
 
-@pytest.mark.parametrize("spelling", ["OWL2DL", "owl2dl", "Owl2Dl"])
-def test_a_profile_is_accepted_in_either_spelling_and_any_case(spelling):
-    assert parse("build", "log.json", "--profile", spelling).profile == spelling
+def test_reason_takes_its_backend_default_from_the_table():
+    args = parse("reason", "o.owl")
+
+    assert args.reasoner_backend == BUILD_DEFAULTS["reasoner_backend"]
+    assert not hasattr(args, "profile")
 
 
-@pytest.mark.parametrize("backend", ["HermiT", "hermit", "PELLET", "elk"])
-def test_a_reasoner_backend_is_accepted_in_any_case(backend):
-    assert parse("reason", "o.owl", "--backend", backend).backend in (
-        "HermiT",
-        "Pellet",
-        "ELK",
-    )
+def test_mine_declare_output_is_not_a_build_setting():
+    args = parse("mine-declare", "log.json", "--output", "x.csv")
 
-
-def test_an_unknown_reasoner_backend_is_refused(capsys):
-    with pytest.raises(SystemExit):
-        parse("reason", "o.owl", "--backend", "Konclude")
-
-    assert "unknown value 'Konclude'" in capsys.readouterr().err
+    assert args.csv_output == "x.csv"
+    assert "output" not in flag_overrides(args)
 
 
 @pytest.mark.parametrize(
-    ("flag", "setting", "expected"),
+    ("value", "problem"), [("50", "above 0 and up to 1"), ("half", "expected a number")]
+)
+def test_a_support_flag_that_is_not_a_share_is_rejected(value, problem, capsys):
+    with pytest.raises(SystemExit):
+        parse("mine-declare", "log.json", "--constraint-support", value)
+
+    assert problem in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("argv", "level"),
     [
-        ("--derive-annotations", "derive_annotations", True),
-        ("--no-derive-annotations", "derive_annotations", False),
-        ("--materialize", "materialize", True),
-        ("--no-materialize", "materialize", False),
+        (("-v", "build", "log.json"), logging.DEBUG),
+        (("build", "log.json", "-v"), logging.DEBUG),
+        (("build", "log.json"), logging.INFO),
     ],
 )
-def test_a_boolean_flag_can_be_turned_off_as_well_as_on(flag, setting, expected):
-    assert getattr(parse("build", "log.json", flag), setting) is expected
+def test_verbosity_is_read_on_either_side_of_the_command(argv, level):
+    assert _log_level(parse(*argv)) == level
 
 
-# --------------------------------------------------------------------------
-# Every setting is reachable from both directions
-# --------------------------------------------------------------------------
+def test_quiet_and_verbose_together_are_rejected(capsys):
+    with pytest.raises(SystemExit):
+        parse("build", "log.json", "-q", "-v")
+
+    assert "not allowed with" in capsys.readouterr().err
 
 
-def test_every_configurable_setting_has_a_command_line_flag():
-    flags = set(vars(parse("build", "log.json")))
+def test_quiet_and_verbose_on_either_side_of_the_command_are_rejected():
+    with pytest.raises(ConfigError, match="cannot be combined"):
+        _log_level(parse("-v", "build", "log.json", "-q"))
 
-    missing = set(BUILD_DEFAULTS) - flags
-    assert not missing, (
-        f"{sorted(missing)} can be set in a config but not on the command line"
+
+def test_every_setting_flag_states_its_default():
+    assert [
+        s.flag
+        for s in BUILD_SETTINGS
+        if s.argparse is not None and "(default:" not in s.help
+    ] == []
+
+
+def test_help_lists_each_enum_member_once():
+    text = re.sub(r"\s+", " ", _help("build"))
+
+    assert "df | ef | ef_explicit | declare" in text
+    assert "DF | EF" not in text
+
+
+def test_every_configurable_setting_has_a_flag_on_the_command_that_reads_it():
+    flags = set(vars(parse("build", "log.json"))) | set(
+        vars(parse("mine-declare", "log.json"))
     )
 
-
-def test_every_build_setting_can_be_named_by_a_run():
-    """Every one of them, with no exceptions.
-
-    The settings hold only the choices a build is configured with, and each of
-    those is a config key. What is read off a log or out of a file is a
-    `BuildInputs`, which a run assembles rather than names.
-    """
-    fields = {f.name for f in dataclasses.fields(OntoBuildSettings)}
-
-    unreachable = fields - set(BUILD_DEFAULTS)
-    assert not unreachable, (
-        f"{sorted(unreachable)} change what a build emits but no config key or "
-        "flag sets them"
-    )
+    assert set(BUILD_DEFAULTS) - flags == set()

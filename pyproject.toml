@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "semlog"
 version = "0.6.0"
-description = "Convert OCEL process mining event logs to OWL 2 ontologies. The [declare] extra requires the Lydia solver, which is not on PyPI. See README."
+description = "Convert OCEL 2.0, CSV and XES event logs to OWL 2 ontologies."
 authors = [{ name = "Christian Dormagen", email = "christian.dormagen@oth-regensburg.de" }]
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -22,15 +22,16 @@ dependencies = [
 semlog = "semanticlog.cli:main"
 
 [project.optional-dependencies]
-# [declare] also requires the Lydia LTLf/LDLf solver, which is not on PyPI and
-# has to be built from source. See the DECLARE section of the README.
+# [declare] also needs the Lydia solver, built from source. See the README.
 declare = [
     "declare4py",
+    # Replaces lark-parser, which ltlf2dfa pins. Its grammars parse under lark 1.
+    "lark>=1.1.5",
 ]
 dev = [
     "pytest",
     "pytest-cov",
-    # The suite is embarrassingly parallel.
+    # pytest -n auto
     "pytest-xdist",
     "ruff",
     "mypy",
@@ -39,15 +40,18 @@ dev = [
     "rdflib",
 ]
 
+[tool.uv]
+# lark-parser and lark install into the same directory. Only lark is resolved.
+override-dependencies = ["lark-parser ; sys_platform == 'never'"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["semanticlog*"]
 
 [tool.setuptools.package-data]
 semanticlog = ["py.typed"]
-# The schema-level labels and comments a build emits. See
-# semanticlog/onto/annotations.py.
-"semanticlog.onto" = ["tbox_annotations.json"]
+# The labels and comments a build emits. Read by semanticlog/onto/annotations.py.
+"semanticlog.onto" = ["tbox_annotations.json", "derived_annotations.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -67,11 +71,11 @@ filterwarnings = [
 
 [tool.coverage.run]
 source = ["semanticlog"]
+branch = true
 
 [tool.coverage.report]
 show_missing = true
-# The floor CI holds the suite to. Raise it when coverage rises, never lower it
-# to make a run pass.
+# Coverage minimum CI enforces. Raise it, do not lower it.
 fail_under = 90
 
 [tool.ruff]
@@ -79,14 +83,13 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "N", "S", "B", "PT"]
+select = ["E", "F", "W", "I", "UP", "N", "S", "B", "PT", "G"]
 ignore = [
     "E501",
     "N802",
     "N803",
     "N806",
     "UP042",
-    "S101",   # assert is how tests are written
     "S311",   # no cryptographic randomness here
     "PT011",  # broad pytest.raises
 ]

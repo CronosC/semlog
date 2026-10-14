@@ -1,46 +1,55 @@
-"""The builder's lifecycle, and the sink API a build drives it through.
-
-A builder produces one ontology and then refuses to be used again, and the
-settings it was given cannot change under it. The rest is the convenience
-layer on `AxiomSink`: what it accepts, what it refuses and what bookkeeping it
-keeps while a build runs.
-"""
+"""`OCEDOntoBuilder`: one build per builder, its steps in order, and the annotation document."""
 
 from __future__ import annotations
 
+import dataclasses
 import logging
-from dataclasses import FrozenInstanceError
-from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from semanticlog.core.enums import (
-    DataRepresentation,
-    EventOrderRepresentation,
-    OWLProfile,
-)
-from semanticlog.core.vocabulary import DEFAULT_IRI, NameCollisionError
+from semanticlog.core.enums import OCELExtension, OWLProfile
+from semanticlog.core.vocabulary import DEFAULT_IRI, UnsafeLocalNameError
+from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.oced import OCEDStore
-from semanticlog.onto.builder import OCEDOntoBuilder
+from semanticlog.data.tables import EntityKind, RelationKind
+from semanticlog.onto.builder import (
+    BUILD_STEPS,
+    BuildContext,
+    Emitters,
+    OCEDOntoBuilder,
+)
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sinks import InMemorySink
 
-NS = DEFAULT_IRI
-
-TEST_IRI = "https://test#"
+NO_ORDER = OntoBuildSettings(order_representations=[])
 
 
-@pytest.fixture
-def plain() -> OntoBuildSettings:
-    """Settings that emit the entities and nothing derived from them."""
-    return OntoBuildSettings(order_representations=[])
-
-
-@pytest.fixture
-def sink(plain) -> InMemorySink:
-    return InMemorySink(TEST_IRI, plain.profile)
+def _event_store(activity: str = "step", oid: str = "o1", **attributes) -> OCEDStore:
+    """One event on one order, not cleaned."""
+    data = OCEDStore()
+    data.add(
+        EntityKind.EVENT,
+        activity,
+        pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2024-01-01"])}),
+        id_col="eid",
+        time_col="ts",
+    )
+    data.add(
+        EntityKind.OBJECT,
+        "order",
+        pd.DataFrame({"oid": [oid], **attributes}),
+        id_col="oid",
+    )
+    data.add_relation(
+        RelationKind.E2O,
+        "concerns",
+        pd.DataFrame({"eid": ["e1"], "oid": [oid]}),
+        from_id="eid",
+        to_id="oid",
+        to_type=["order"],
+    )
+    return data
 
 
 # --------------------------------------------------------------------------
@@ -48,19 +57,11 @@ def sink(plain) -> InMemorySink:
 # --------------------------------------------------------------------------
 
 
-def test_a_second_build_is_refused(tiny_store, pipeline_store):
-    builder = OCEDOntoBuilder(NS, OntoBuildSettings())
+def test_a_second_build_raises_and_adds_nothing(tiny_store, pipeline_store):
+    builder = OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings())
     builder.build_ontology(tiny_store)
 
-    with pytest.raises(ValueError, match="already produced an ontology"):
-        builder.build_ontology(pipeline_store)
-
-
-def test_a_refused_second_build_does_not_merge_the_two_logs(tiny_store, pipeline_store):
-    builder = OCEDOntoBuilder(NS, OntoBuildSettings())
-    builder.build_ontology(tiny_store)
-
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="has produced an ontology"):
         builder.build_ontology(pipeline_store)
 
     names = {c.iri.remainder for c in builder.sink.onto.classes_in_signature()}
@@ -68,275 +69,245 @@ def test_a_refused_second_build_does_not_merge_the_two_logs(tiny_store, pipeline
     assert "place_order" not in names
 
 
-def test_a_build_rejected_on_its_input_leaves_a_fresh_builder_usable(tiny_store, store):
-    settings = OntoBuildSettings(
-        order_representations=[EventOrderRepresentation.DECLARE],
-    )
+def test_a_build_that_fails_while_emitting_spends_the_builder(tiny_store):
+    builder = OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings())
 
-    with pytest.raises(ValueError, match="no constraints were given"):
-        OCEDOntoBuilder(NS, settings).build_ontology(
-            tiny_store, BuildInputs(case_concepts=["order"])
-        )
+    with pytest.raises(ValueError, match="cannot be an IRI local name"):
+        builder.build_ontology(_event_store(activity="bad name"))
 
-    usable = OCEDOntoBuilder(NS, OntoBuildSettings())
-    assert list(usable.build_ontology(store("tiny")).onto.classes_in_signature())
-
-
-def test_a_step_with_nothing_to_do_says_so_instead_of_counting_to_zero(
-    tiny_store, caplog
-):
-    builder = OCEDOntoBuilder(NS, OntoBuildSettings(order_representations=[]))
-
-    with caplog.at_level(logging.INFO, logger="semanticlog.onto.builder"):
+    with pytest.raises(ValueError, match="has produced an ontology"):
         builder.build_ontology(tiny_store)
 
-    assert "No object to object relations in the data.." in caplog.text
-    assert "No event order to instantiate.." in caplog.text
-    assert "(0 relation types)" not in caplog.text
+
+@pytest.mark.parametrize(
+    ("store", "match"),
+    [
+        (_event_store(activity="place order"), "'place order' from .* clean_oced_data"),
+        (_event_store(status=["in progress"]), "status_in progress"),
+        (_event_store(oid="order/1"), "order/1"),
+    ],
+    ids=["activity", "attribute value", "entity id"],
+)
+def test_a_store_that_was_not_cleaned_is_rejected(store, match):
+    with pytest.raises(UnsafeLocalNameError, match=match):
+        OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings()).build_ontology(store)
 
 
-def test_a_step_with_work_to_do_announces_how_much(store, caplog):
-    builder = OCEDOntoBuilder(NS, OntoBuildSettings(order_representations=[]))
+# --------------------------------------------------------------------------
+# The steps of a build
+# --------------------------------------------------------------------------
+
+
+def test_every_emitter_is_run_by_a_step(tiny_store):
+    touched: set[str] = set()
+
+    class Probe:
+        """Fake emitter that records being called."""
+
+        def __init__(self, name: str) -> None:
+            self._name = name
+
+        def __getattr__(self, item: str):
+            touched.add(self._name)
+            return lambda *args, **kwargs: None
+
+    fields = [f.name for f in dataclasses.fields(Emitters)]
+    context = BuildContext(
+        data=tiny_store,
+        inputs=BuildInputs(),
+        settings=OntoBuildSettings(),
+        source=None,
+        record=None,
+        attribute_history=True,
+    )
+
+    for step in BUILD_STEPS:
+        step.run(Emitters(**{name: Probe(name) for name in fields}), context)
+
+    assert touched == set(fields)
+
+
+def test_the_steps_of_a_build_are_announced_in_order(pipeline_store, caplog):
+    with caplog.at_level(logging.INFO, logger="semanticlog.onto.builder"):
+        OCEDOntoBuilder(DEFAULT_IRI, NO_ORDER).build_ontology(pipeline_store)
+
+    announced = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith(("Instantiating", "No "))
+    ]
+    assert announced == [
+        "Instantiating the upper schema..",
+        "Instantiating event data (3 activities)..",
+        "No event order to instantiate..",
+        "Instantiating time data..",
+        "Instantiating object data (2 object types)..",
+        "Instantiating event to object relation data (2 relation types)..",
+        "Instantiating object to object relation data (1 relation types)..",
+    ]
+
+
+def test_the_history_step_runs_only_when_the_settings_ask_for_it(caplog):
+    data = OCEDStore(ocel_mode=True)
+    for kind, name, frame, kwargs in [
+        (EntityKind.OBJECT, "order", pd.DataFrame({"oid": ["o1"]}), {"id_col": "oid"}),
+        (
+            EntityKind.EVENT,
+            "step",
+            pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2024-01-01"])}),
+            {"id_col": "eid", "time_col": "ts"},
+        ),
+    ]:
+        data.add(kind, name, frame, **kwargs)
+    data.add_object_changes(
+        "order",
+        pd.DataFrame(
+            {
+                "ocel:oid": ["o1"],
+                "ocel:type": ["order"],
+                "ocel:timestamp": pd.to_datetime(["2024-01-02"]),
+                "ocel:field": ["status"],
+                "status": ["shipped"],
+            }
+        ),
+    )
+    history = "Instantiating object attribute change history.."
+    with_history = NO_ORDER.replace(ocel_extensions=[OCELExtension.ATTRIBUTE_HISTORY])
 
     with caplog.at_level(logging.INFO, logger="semanticlog.onto.builder"):
-        builder.build_ontology(store("pipeline"))
+        OCEDOntoBuilder(DEFAULT_IRI, NO_ORDER).build_ontology(clean_oced_data(data))
+        without = caplog.text
+        OCEDOntoBuilder(DEFAULT_IRI, with_history).build_ontology(clean_oced_data(data))
 
-    assert "Instantiating object to object relation data (1 relation types).." in (
-        caplog.text
-    )
-    assert "No object to object relations" not in caplog.text
+    assert history not in without
+    assert history in caplog.text
 
 
-def test_the_unions_a_profile_refuses_are_reported_once_for_the_build(
-    awkward_store, caplog
-):
-    builder = OCEDOntoBuilder(NS, OntoBuildSettings(profile=OWLProfile.OWL2EL))
+def test_the_unions_el_drops_are_reported_once_for_the_build(awkward_store, caplog):
+    builder = OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings(profile=OWLProfile.OWL2EL))
 
     with caplog.at_level(logging.INFO, logger="semanticlog.onto.builder"):
         builder.build_ontology(awkward_store)
 
     omitted = [r.message for r in caplog.records if "omitted" in r.message]
-    assert len(omitted) == 1
-    assert "under OWL 2 EL, which has no disjunction" in omitted[0]
-    unions, classes = builder.sink.dropped_unions
-    assert f"omitted {unions} unions of {classes} classes" in omitted[0]
+    dropped = builder.sink.dropped_unions
+    assert omitted == [
+        f"  omitted {dropped} axioms with a union of classes, which OWL 2 EL does "
+        "not allow"
+    ]
 
 
-def test_no_union_is_reported_when_the_profile_keeps_them_all(awkward_store, caplog):
-    builder = OCEDOntoBuilder(NS, OntoBuildSettings(profile=OWLProfile.OWL2DL))
+def test_the_declaration_order_check_finds_a_late_declaration(recording_sink):
+    sink = recording_sink()
 
-    with caplog.at_level(logging.INFO, logger="semanticlog.onto.builder"):
-        builder.build_ontology(awkward_store)
+    sink.assert_individuals("some_class", ["late"])
+    sink.add_class("late", source="a class declared too late")
 
-    assert builder.sink.dropped_unions == (0, 0)
-    assert not [r for r in caplog.records if "omitted" in r.message]
+    assert sink.declaration_order_violations() == [("late", "some_class")]
 
 
-def test_a_build_rejected_on_a_name_spends_the_builder(tiny_store):
-    builder = OCEDOntoBuilder(NS, OntoBuildSettings(profile=OWLProfile.OWL2EL))
+# --------------------------------------------------------------------------
+# Stores at the edge of empty
+# --------------------------------------------------------------------------
 
-    dirty = OCEDStore()
-    dirty.add_event(
-        "bad name",
+
+def test_an_empty_store_builds_the_upper_schema_alone():
+    result = OCEDOntoBuilder(DEFAULT_IRI, NO_ORDER).build_ontology(
+        clean_oced_data(OCEDStore())
+    )
+
+    onto = result.require_onto()
+    assert {c.iri.remainder for c in onto.classes_in_signature()} == {
+        "Object",
+        "Event",
+        "Attribute",
+        "Time",
+        "ObjectAttribute",
+        "EventAttribute",
+    }
+    assert list(onto.individuals_in_signature()) == []
+
+
+def test_a_single_event_with_no_object_builds():
+    data = OCEDStore()
+    data.add(
+        EntityKind.EVENT,
+        "step",
+        pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2024-01-01"])}),
         id_col="eid",
-        time_col="t",
-        data=pd.DataFrame({"eid": ["e1"], "t": [pd.Timestamp("2024-01-01")]}),
+        time_col="ts",
     )
-    with pytest.raises(ValueError, match="cannot be an IRI local name"):
-        builder.build_ontology(dirty)
 
-    with pytest.raises(ValueError, match="already produced an ontology"):
-        builder.build_ontology(tiny_store)
+    result = OCEDOntoBuilder(DEFAULT_IRI, NO_ORDER).build_ontology(
+        clean_oced_data(data)
+    )
+
+    individuals = {
+        i.iri.remainder for i in result.require_onto().individuals_in_signature()
+    }
+    assert individuals == {"e1", "20240101T000000_000000"}
 
 
 # --------------------------------------------------------------------------
-# The settings a build was given
+# The annotation document
 # --------------------------------------------------------------------------
 
 
-def test_settings_cannot_be_changed_after_a_build(tiny_store):
-    semlog = OCEDOntoBuilder(
-        NS, OntoBuildSettings(bin_labels=["low", "high"], bins=2)
-    ).build_ontology(tiny_store)
-
-    with pytest.raises(FrozenInstanceError):
-        semlog.settings.derive_annotations = True
-    with pytest.raises(AttributeError):
-        semlog.settings.bin_labels.append("sneaky")
-
-    assert semlog.settings.derive_annotations is False
-    assert semlog.settings.bin_labels == ("low", "high")
+def _annotate(tiny_store, recording_sink, annotations, **settings):
+    """Build the tiny store with an annotation document and return what was written."""
+    sink = recording_sink()
+    OCEDOntoBuilder(
+        DEFAULT_IRI, OntoBuildSettings(**settings), sink=sink
+    ).build_ontology(tiny_store, BuildInputs(annotations=annotations))
+    return {(name, kind, text) for _, name, kind, text in sink.of_kind("annotate")}
 
 
-def test_replace_leaves_the_original_alone():
-    settings = OntoBuildSettings(bin_labels=["low", "high"], bins=2)
-
-    changed = settings.replace(profile=OWLProfile.OWL2EL, bin_labels=["a", "b"])
-
-    assert settings.bin_labels == ("low", "high")
-    assert settings.profile is OWLProfile.OWL2DL
-    assert changed.bin_labels == ("a", "b")
-
-
-def test_a_sequence_passed_in_is_not_shared_with_the_settings():
-    labels = ["low", "high"]
-    settings = OntoBuildSettings(bin_labels=labels, bins=2)
-
-    labels.append("higher")
-
-    assert settings.bin_labels == ("low", "high")
-
-
-def test_an_enum_setting_written_as_text_becomes_the_member():
-    """The enums subclass str, so a bare string would work until .value."""
-    settings = OntoBuildSettings(profile="OWL2EL", data_representations=["equal_bins"])
-
-    assert settings.profile is OWLProfile.OWL2EL
-    assert settings.data_representations == (DataRepresentation.EQUAL_BINS,)
-    assert settings.to_dict()["profile"] == "OWL2EL"
-
-
-def test_an_enum_setting_may_also_be_written_as_the_member_name():
-    settings = OntoBuildSettings(data_representations=["VALUES"])
-
-    assert settings.data_representations == (DataRepresentation.VALUES,)
-
-
-def test_an_unknown_enum_setting_is_refused_at_construction():
-    with pytest.raises(ValueError, match="profile: unknown value 'OWL2XL'"):
-        OntoBuildSettings(profile="OWL2XL")
-    with pytest.raises(ValueError, match="data_representations"):
-        OntoBuildSettings(data_representations=["bins"])
-
-
-# --------------------------------------------------------------------------
-# The sink API a build writes through
-# --------------------------------------------------------------------------
-
-
-def test_a_class_is_declared_once_however_many_parents_it_gets(sink):
-    sink.add_class("Human")
-    sink.add_class("Parent", "Human")
-    sink.add_class("Male")
-    sink.add_class("Man", ["Human"])
-    sink.add_class("Man", ["Male"])
-
-    assert len(list(sink.onto.classes_in_signature())) == 4
-
-
-def test_classes_can_be_declared_in_one_call(sink):
-    sink.add_classes(["Human", "Male", "Female"])
-    sink.add_classes(["Man", "Women"], ["Human", "Human"])
-    sink.add_classes(["Man", "Women"], ["Male", "Female"])
-    sink.add_classes(["Child"], [None])
-
-    assert len(list(sink.onto.classes_in_signature())) == 6
-
-
-def test_individuals_are_asserted_into_their_class(sink):
-    sink.add_class("Letter")
-
-    sink.assert_individuals("Letter", ["a", "b", "c", "d", "e"])
-
-    assert len(list(sink.onto.classes_in_signature())) == 1
-    assert len(list(sink.onto.individuals_in_signature())) == 5
-
-
-def test_a_property_can_be_declared_with_a_domain_range_and_inverse(sink):
-    sink.add_classes(["Parent", "Child"])
-    sink.add_class("Boy", superclass="Child")
-
-    sink.add_property(
-        "hasChild",
-        domain_class="Parent",
-        range_class="Child",
-        create_inverse=True,
-        inverse_name="hasParent",
-    )
-    sink.add_property(
-        "hasMaleChild", domain_class="Parent", range_class="Boy", create_inverse=True
-    )
-    sink.add_property(
-        "hasAge", domain_class="Child", range_class="integer", data_prop=True
+def test_a_document_entry_annotates_the_entity_it_names(tiny_store, recording_sink):
+    written = _annotate(
+        tiny_store,
+        recording_sink,
+        {"step": {"label": "A step", "comment": "Someone did something."}},
     )
 
-    assert len(list(sink.onto.properties_in_signature())) == 5
-    assert len(list(sink.onto.data_properties_in_signature())) == 1
+    assert written == {
+        ("step", "label", "A step"),
+        ("step", "comment", "Someone did something."),
+    }
 
 
-def test_two_properties_cannot_share_one_inverse_name(sink):
-    sink.add_classes(["Parent", "Child"])
-    sink.add_property(
-        "hasChild",
-        domain_class="Parent",
-        range_class="Child",
-        create_inverse=True,
-        inverse_name="hasParent",
+def test_a_document_label_and_a_derived_label_are_both_written(
+    tiny_store, recording_sink
+):
+    written = _annotate(
+        tiny_store,
+        recording_sink,
+        {"step": {"label": "A step"}},
+        derive_annotations=True,
     )
-    assert sink.inverse_name("hasParent") == "hasChild"
 
-    with pytest.raises(NameCollisionError, match="already the inverse of 'hasChild'"):
-        sink.add_property(
-            "hasMaleChild",
-            domain_class="Parent",
-            range_class="Child",
-            create_inverse=True,
-            inverse_name="hasParent",
+    assert {
+        text for name, kind, text in written if (name, kind) == ("step", "label")
+    } == {
+        "A step",
+        "step",
+    }
+
+
+def test_a_document_entry_naming_nothing_the_build_declared_is_reported(
+    tiny_store, recording_sink, caplog
+):
+    with caplog.at_level(logging.WARNING):
+        written = _annotate(
+            tiny_store,
+            recording_sink,
+            {
+                "step": {"label": "A step"},
+                "a step": {"label": "the name before cleaning"},
+                "invoice": {"label": "an object type of another log"},
+            },
         )
-    assert sink.inverse_name("hasParent") == "hasChild"
 
-
-def test_a_relation_and_a_literal_reach_the_written_file(sink, tmp_path):
-    path = tmp_path / "written.owl"
-    sink.add_class("Person")
-    sink.assert_individuals("Person", ["Alice", "Bob"])
-    sink.add_property("knows", domain_class="Person", range_class="Person")
-    sink.assert_relations("knows", [("Alice", "Bob")])
-    sink.add_property(
-        "hasAge", domain_class="Person", range_class="integer", data_prop=True
-    )
-    sink.assert_data("hasAge", [("Alice", 25)])
-    sink.save(str(path))
-
-    written = path.read_text(encoding="utf-8")
-    assert "knows" in written
-    assert ">25<" in written
-
-
-def test_a_datetime_column_is_asserted_as_a_typed_literal(sink, tmp_path):
-    path = tmp_path / "written.owl"
-    sink.add_class("Event")
-    sink.assert_individuals("Event", ["e1", "e2"])
-    sink.add_property("occurredAt", domain_class="Event", data_prop=True)
-
-    sink.assert_data(
-        "occurredAt",
-        zip(["e1", "e2"], pd.date_range("2022-01-01", periods=2), strict=True),
-    )
-    sink.save(str(path))
-
-    written = Path(path).read_text(encoding="utf-8")
-    assert "dateTime" in written
-    assert "2022-01-01" in written
-
-
-@pytest.mark.parametrize(
-    ("name", "kwargs"),
-    [
-        ("an inverse name without create_inverse", {"inverse_name": "p_inv"}),
-        (
-            "an inverse on a data property",
-            {"range_class": "integer", "data_prop": True, "create_inverse": True},
-        ),
-        ("a datatype range on an object property", {"range_class": "integer"}),
-        (
-            "an unknown datatype",
-            {"range_class": "stringy", "data_prop": True},
-        ),
-    ],
-)
-def test_a_property_declared_inconsistently_is_refused(sink, name, kwargs):
-    sink.add_class("A")
-
-    with pytest.raises(ValueError):
-        sink.add_property("p", domain_class="A", **kwargs)
+    assert written == {("step", "label", "A step")}
+    assert "Applied 1 of 3 annotation entries" in caplog.text
+    assert "2 name nothing this build declared" in caplog.text
+    assert "invoice" in caplog.text

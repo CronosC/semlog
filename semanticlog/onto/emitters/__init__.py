@@ -1,9 +1,8 @@
 """The build steps that turn stored data into axioms.
 
-Each emitter owns one part of the ontology and writes it through the sink.
-They are independent of each other, apart from `EntityEmitter` delegating its
-attribute columns to `AttributeEmitter`, and the builder decides in which
-order they run.
+Each emitter writes one part of the ontology through the sink. `EntityEmitter`
+and `HistoryEmitter` call `AttributeEmitter` for attribute columns, and
+`HistoryEmitter` calls `TimeEmitter`.
 """
 
 from semanticlog.onto.emitters.attributes import AttributeEmitter

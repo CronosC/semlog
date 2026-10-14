@@ -1,6 +1,5 @@
-"""The choices a build offers.
+"""The enumerated settings of a build.
 
-These sit in `core` because the data, ontology and CLI layers all name them.
 `semanticlog` re-exports the ones a caller sets on a build.
 """
 
@@ -12,19 +11,41 @@ from typing import Self
 from semanticlog.core.errors import ConfigError
 
 
-class BuildEnum(str, Enum):
-    """Base for the choices, which arrive as text as often as they do as members.
+class SinkEntity(str, Enum):
+    """The OWL entity kind a name is declared as.
 
-    A setting reaches a build from a TOML file, a command line or Python, so
-    `parse` is the one place that turns whatever was written into a member.
+    A sink writes a different declaration for each.
+
+    Attributes:
+        CLASS: A class.
+        OBJECT_PROPERTY: An object property, which relates two individuals.
+        DATA_PROPERTY: A data property, which relates an individual to a literal.
+        ANNOTATION_PROPERTY: An annotation property, which carries no meaning
+            for a reasoner.
+    """
+
+    CLASS = "class"
+    OBJECT_PROPERTY = "object"
+    DATA_PROPERTY = "data"
+    ANNOTATION_PROPERTY = "annotation"
+
+    @classmethod
+    def property_for(cls, data_prop: bool) -> SinkEntity:
+        """Return `DATA_PROPERTY` when `data_prop` is true, else `OBJECT_PROPERTY`."""
+        return cls.DATA_PROPERTY if data_prop else cls.OBJECT_PROPERTY
+
+
+class BuildEnum(str, Enum):
+    """Base for a setting given as text or as a member.
+
+    `parse` turns a TOML, command-line or Python value into a member.
     """
 
     @classmethod
     def parse(cls, value: object, *, key: str) -> Self:
         """Return the member a written setting names.
 
-        Both spellings are accepted, case-insensitively, so `df` and `DF` mean
-        the same thing.
+        The value and the member name are both accepted, in any case.
 
         Args:
             value: What was written. A member is returned unchanged.
@@ -34,7 +55,8 @@ class BuildEnum(str, Enum):
             The member the value names.
 
         Raises:
-            ValueError: If nothing matches, listing what would.
+            ConfigError: If no member matches. The message lists the accepted
+                values.
         """
         if isinstance(value, cls):
             return value
@@ -90,7 +112,7 @@ class OCELExtension(BuildEnum):
 
     Attributes:
         ATTRIBUTE_HISTORY: Per-object attribute changes with their timestamps,
-            not just the latest value of each attribute.
+            in addition to the latest value of each attribute.
     """
 
     ATTRIBUTE_HISTORY = "attribute_history"
@@ -121,16 +143,15 @@ class EventOrderRepresentation(BuildEnum):
 
 
 class ReasonerBackend(BuildEnum):
-    """Reasoner that answers for a built ontology.
+    """Reasoner run over a built ontology.
 
-    No backend handles everything. What each one refuses is recorded in
-    `semanticlog.onto.reason`.
+    No backend supports every query. `semanticlog.onto.reason` records what
+    each one does not support.
 
     Attributes:
-        HERMIT: Answers for everything, but refuses a timestamp carrying
-            microseconds.
-        PELLET: Answers for everything, and takes those timestamps.
-        ELK: Answers for classes only, and is the reasoner for OWL 2 EL.
+        HERMIT: Supports every query. Rejects a timestamp with microseconds.
+        PELLET: Supports every query, including those timestamps.
+        ELK: Supports class queries only. The reasoner for OWL 2 EL.
     """
 
     HERMIT = "HermiT"
@@ -142,20 +163,13 @@ REASONER_BACKENDS: tuple[str, ...] = tuple(b.value for b in ReasonerBackend)
 
 
 def resolve_reasoner_backend(text: str, *, key: str) -> str:
-    """Return the backend a written name selects, spelled as the OWL API wants it.
-
-    The name reaches the OWL API and the provenance record as plain text, so
-    this hands back the value rather than the member.
+    """Return the backend name as the OWL API spells it, one of `REASONER_BACKENDS`.
 
     Args:
-        text: Backend name, in any case.
         key: Setting or flag being read, quoted in the error.
 
-    Returns:
-        One of `REASONER_BACKENDS`.
-
     Raises:
-        ValueError: If the name is not one of them.
+        ConfigError: If the name is not one of them.
     """
     return ReasonerBackend.parse(text, key=key).value
 
@@ -163,7 +177,7 @@ def resolve_reasoner_backend(text: str, *, key: str) -> str:
 class InverseRepresentation(BuildEnum):
     """How the inverse of each object property is expressed.
 
-    An empty selection emits no inverses at all.
+    An empty selection emits no inverses.
 
     Attributes:
         AXIOMATIC: Declare the inverse and relate the two with an axiom.

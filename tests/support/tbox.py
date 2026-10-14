@@ -1,8 +1,6 @@
 """Building the upper schema on its own, with no data in it.
 
-What the schema holds is decided by the settings alone, so the tests that
-check it build it this way rather than through a whole log. This lives with
-the tests because nothing in the pipeline builds a schema without data.
+The settings alone decide what the schema holds.
 """
 
 from __future__ import annotations
@@ -23,9 +21,6 @@ def construct_tbox(
     sink: AxiomSink | None = None,
 ) -> BuildResult:
     """Emit only the TBox.
-
-    The TBox emitter is driven directly rather than through a builder, since
-    a builder makes its emitters from a store and there is none here.
 
     Args:
         iri: Base IRI for the ontology.

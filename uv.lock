@@ -13,6 +13,9 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
+[manifest]
+overrides = [{ name = "lark-parser", marker = "sys_platform == 'never'" }]
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.2"
@@ -1513,7 +1516,7 @@ name = "ltlf2dfa"
 version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "lark-parser" },
+    { name = "lark-parser", marker = "sys_platform == 'never'" },
     { name = "sympy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2e/b2/a659c37e6158c3742b2a427268fde1debaef54e2b3598d5758a0d872241d/ltlf2dfa-1.0.2.tar.gz", hash = "sha256:e2c9d7788bd319e753c2aae04dbb3b3bac8199438715104042308580911f8df3", size = 30797, upload-time = "2022-02-25T13:34:17.692Z" }
@@ -3119,6 +3122,7 @@ dependencies = [
 [package.optional-dependencies]
 declare = [
     { name = "declare4py" },
+    { name = "lark" },
 ]
 dev = [
     { name = "mypy" },
@@ -3133,6 +3137,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "declare4py", marker = "extra == 'declare'" },
+    { name = "lark", marker = "extra == 'declare'", specifier = ">=1.1.5" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "owlapy", specifier = ">=1.6,<2" },
     { name = "owlready2", specifier = ">=0.40,<0.51" },

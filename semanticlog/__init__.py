@@ -1,8 +1,8 @@
 """Object-centric event data as OWL 2 ontologies.
 
-A build runs in three steps: read and clean the log, resolve what has to be
-resolved against it, and build. The names used most often are re-exported
-here, and the packages below hold the rest.
+A build runs in three steps: load and clean the log, choose the case
+concepts, and build. The names used most often are re-exported here, and the
+packages below hold the rest.
 
     from semanticlog import BuildInputs, OntoBuildSettings
     from semanticlog import build_log, choose_case_concepts, load_and_clean
@@ -11,9 +11,8 @@ here, and the packages below hold the rest.
     case_concepts, _ = choose_case_concepts(data, None)
     build_log(data, OntoBuildSettings(), BuildInputs(case_concepts), "log.ofn")
 
-Each name is resolved on first use rather than on import. pm4py and the Java
-OWL API are between them most of the cost of loading this package, and a
-caller that only reaches for the data layer should not pay for either.
+Each name is imported on first use. A name from the data layer does not load
+the Java OWL API.
 """
 
 from importlib import import_module
@@ -40,6 +39,8 @@ if TYPE_CHECKING:
     from semanticlog.data.loading.pm4py_loader import PM4PyLoader as PM4PyLoader
     from semanticlog.data.oced import OCEDStore as OCEDStore
     from semanticlog.data.readable import ReadableStore as ReadableStore
+    from semanticlog.data.tables import EntityKind as EntityKind
+    from semanticlog.data.tables import RelationKind as RelationKind
     from semanticlog.enrich.declare import DeclareResult as DeclareResult
     from semanticlog.onto.builder import OCEDOntoBuilder as OCEDOntoBuilder
     from semanticlog.onto.inputs import BuildInputs as BuildInputs
@@ -50,7 +51,7 @@ if TYPE_CHECKING:
 
 try:
     __version__ = version("semlog")
-except PackageNotFoundError:  # running from a checkout that was never installed
+except PackageNotFoundError:
     __version__ = "unknown"
 
 _EXPORTS: dict[str, str] = {
@@ -60,6 +61,7 @@ _EXPORTS: dict[str, str] = {
     "DEFAULT_IRI": "semanticlog.core.vocabulary",
     "DataRepresentation": "semanticlog.core.enums",
     "DeclareResult": "semanticlog.enrich.declare",
+    "EntityKind": "semanticlog.data.tables",
     "EventOrderRepresentation": "semanticlog.core.enums",
     "InverseRepresentation": "semanticlog.core.enums",
     "OCEDOntoBuilder": "semanticlog.onto.builder",
@@ -69,6 +71,7 @@ _EXPORTS: dict[str, str] = {
     "OntoBuildSettings": "semanticlog.onto.settings",
     "PM4PyLoader": "semanticlog.data.loading.pm4py_loader",
     "ReadableStore": "semanticlog.data.readable",
+    "RelationKind": "semanticlog.data.tables",
     "Reasoner": "semanticlog.onto.reason",
     "build_log": "semanticlog.onto.pipeline",
     "choose_case_concepts": "semanticlog.data.flatten",
@@ -80,7 +83,7 @@ __all__ = [*sorted(_EXPORTS), "__version__"]
 
 
 def __getattr__(name: str) -> Any:
-    """Import the module behind a re-exported name the first time it is used."""
+    """Import the module behind a re-exported name on first use."""
     module = _EXPORTS.get(name)
     if module is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

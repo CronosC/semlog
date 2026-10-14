@@ -1,73 +1,119 @@
 # semlog
 
-`semlog` turns object-centric event data into OWL 2 ontologies. It reads an OCEL 2.0 event log, or a flat CSV or XES log, normalizes it into an internal data model, and writes a single ontology file. That file is `<name>.ofn` in OWL functional syntax by default, which a reasoner and the OWL API read directly. Set `streaming = false` for `<name>.owl` in the RDF/XML a triple store, a SPARQL endpoint or rdflib expects.
+`semlog` turns an OCEL 2.0 event log, or a flat CSV or XES log, into one OWL 2 ontology file. The file is `<name>.ofn` in OWL functional syntax by default, or `<name>.owl` in RDF/XML with `--no-streaming`.
 
 ## Installation
 
-Python 3.12 or newer is required. `semlog reason` and `--materialize` run the OWL API on Java, so those two also need a JRE or JDK 17 or newer on PATH or named by `JAVA_HOME`. Building an ontology needs no JVM.
+You need Python 3.12 or newer. `semlog reason` and `--materialize` also need Java 17 or newer on `PATH` or in `JAVA_HOME`. Building an ontology needs no Java.
+
+The package is not on PyPI. Clone the repository and install it with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv sync --extra dev          # recommended
-uv run pre-commit install
+git clone git@github.com:CronosC/semlog.git
+cd semlog
+uv sync
+uv run semlog --version
 ```
 
-or with pip:
+With pip instead, run `pip install .` in a virtual environment and drop the `uv run` prefix from the commands below.
+
+## Running it
+
+The repository ships one small log and one config. From a fresh clone, run:
 
 ```bash
-pip install -e ".[dev]"
+uv run semlog inspect --config examples/pipeline.toml
+uv run semlog build --config examples/pipeline.toml
+uv run semlog reason examples/out/pipeline.ofn --check
 ```
 
-### DECLARE support
+`inspect` prints the activities, object types, relations and time range of the log. `build` writes `examples/out/pipeline.ofn` and prints its path. `reason --check` prints whether the ontology is consistent.
 
-Mining DECLARE constraints is optional and needs the `[declare]` extra plus the [Lydia](https://github.com/whitemech/lydia) LTLf/LDLf solver, which is not on PyPI. Lydia is built from source against CUDD 3.0.0, MONA 1.4 and Syft, which in turn need `cmake`, `build-essential`, `bison`, `flex`, `libboost-dev` and `graphviz-dev`. [Declare4Py](https://github.com/ivanDonadello/Declare4Py) documents the setup. Everything except `semlog mine-declare` works without it.
-
-## Example
-
-The repository ships one small OCEL log and one config, so this runs from a fresh clone with no extra data:
+To build a log with flags, name the object types whose instances are the cases and how event order is written:
 
 ```bash
-semlog inspect tests/fixtures/pipeline.jsonocel
-semlog build --config examples/pipeline.toml
-semlog reason examples/out/pipeline.ofn --check
+uv run semlog build tests/fixtures/pipeline.jsonocel --case-concepts order item --order-representations df
 ```
 
-The same build from Python, in the three steps the CLI runs:
+Without `--case-concepts`, the three most common object types are chosen. Without `--order-representations`, no event order is written. `uv run semlog inspect tests/fixtures/pipeline.jsonocel` lists the type names.
 
-```python
-from semanticlog import (
-    BuildInputs,
-    EventOrderRepresentation,
-    OntoBuildSettings,
-    OWLProfile,
-    build_log,
-    choose_case_concepts,
-    load_and_clean,
-)
+| Command | Purpose |
+|---|---|
+| `semlog build` | Build one ontology per event log. |
+| `semlog inspect` | Summarize a log: activities, object types, relations, time range, and the activity and object type names cleaning changed. |
+| `semlog mine-declare` | Mine DECLARE constraints into a CSV for `--order-representations declare`. Needs Lydia. |
+| `semlog reason` | Materialize or consistency-check an existing ontology. |
 
-data = load_and_clean("tests/fixtures/pipeline.jsonocel")
-case_concepts, _ = choose_case_concepts(data, None)
+`semlog <command> --help` lists every flag.
 
-settings = OntoBuildSettings(
-    profile=OWLProfile.OWL2DL,
-    order_representations=[EventOrderRepresentation.DF],
-)
-result = build_log(data, settings, BuildInputs(case_concepts), "out/pipeline.ofn")
+### Config files
+
+Every setting is a TOML key and a flag. `input` is positional on the command line. `reason` spells the backend flag `--backend`. A flag wins over the file.
+
+Keep your own configs in `runs/`, which git ignores:
+
+```bash
+mkdir -p runs
 ```
 
-`load_and_clean` reads the log and makes its names safe to emit. It must run before any build: it sanitizes every name that will become part of an IRI, resolves collisions with the names the build reserves for itself, and renames apart two source names that would otherwise clean to one. Every rename is recorded in the backmap. Anything still sharing a name once the renames have run is refused.
+A config can extend another one. Create `runs/el.toml` with:
 
-`choose_case_concepts` takes the object types you name, following any that cleaning renamed, or picks the largest ones the log can be projected onto. Passing `None` is what the CLI does without `--case-concepts`.
+```toml
+extends = "../examples/pipeline.toml"
+profile = "OWL2EL"
+```
 
-`OntoBuildSettings` holds the choices a build is configured with, and one settings object describes a build of any log. `BuildInputs` holds what has to be resolved against the log in hand: the case concepts, the mined DECLARE constraints, and any annotations to apply.
+Then build it, or print what it resolves to:
 
-`build_log` writes the file, streaming by default. Pass `streaming=False` for RDF/XML, which also leaves the ontology on `result.onto` to inspect or reason over. Either way the file appears at its destination only once the build is complete, so a failure leaves whatever was there before it untouched.
+```bash
+uv run semlog build --config runs/el.toml
+uv run semlog build --config runs/el.toml --dry-run
+```
+
+`extends` resolves relative to the config file. Other relative paths resolve against the current directory. A config with one input names the output after the config, so `runs/el.toml` writes `examples/out/el.ofn`. A config with several inputs names each output after its input. A build warns before it overwrites an ontology built from different settings.
+
+`build`, `inspect` and `mine-declare` all take `--config` and read `input`, `ocel_extensions` and the column keys from it. `build` and `mine-declare` also read `case_concepts` and `auto_case_concepts`.
+
+`--dry-run` prints the resolved run as TOML and builds nothing. To keep a run you put together with flags, redirect it to a file:
+
+```bash
+uv run semlog build tests/fixtures/pipeline.jsonocel --case-concepts order --profile OWL2EL --order-representations df ef_explicit --dry-run > runs/el-explicit.toml
+uv run semlog build --config runs/el-explicit.toml
+```
+
+### Mining DECLARE constraints
+
+`mine-declare` needs Lydia, see [DECLARE support](#declare-support). It writes to `--output`, else to the config's `declare_file`, else to `<input stem>.csv` in the current directory. Pass the CSV to a build with `--declare-file`:
+
+```bash
+uv run semlog mine-declare tests/fixtures/pipeline.jsonocel --case-concepts order --output runs/pipeline.csv
+uv run semlog build tests/fixtures/pipeline.jsonocel --case-concepts order --order-representations df declare --declare-file runs/pipeline.csv
+```
+
+`mine-declare --config` and `build --config` read the same file. It can hold the mining settings `constraints`, `constraint_support` and `itemset_support` beside the build settings.
+
+### Output and exit codes
+
+The paths a build wrote and the verdict of `reason --check` go to stdout. Progress and problems go to stderr, and `-q` limits stderr to warnings and errors. Exit codes are `0` for success, `1` when a build failed, a log could not be read or an ontology was inconsistent, `2` when the configuration was unusable or `mine-declare` or `reason` could not read its input, and `130` when the command was interrupted.
+
+### Reading a flat log
+
+A `.csv` or `.xes` log has one case notion and no objects. The case column becomes an object type and every event relates to its case. Each column named in `object_cols` becomes another object type the same way. The other columns become attributes.
+
+```bash
+printf 'case_id,activity,timestamp,resource\nc1,register,2024-01-01 09:00,ann\nc1,approve,2024-01-02 10:00,bo\n' > runs/claims.csv
+uv run semlog inspect runs/claims.csv --case-col case_id --act-col activity --time-col timestamp
+uv run semlog build runs/claims.csv --case-col case_id --act-col activity --time-col timestamp --object-cols resource --case-concepts case_id --order-representations df
+```
+
+A timestamp without a time zone is read as UTC. `case_col`, `act_col` and `time_col` default to the XES column names, so an `.xes` file needs none of them unless it renames those columns. `object_cols` is empty by default. All four are TOML keys and flags.
 
 ## What a build produces
 
-The ontology has a fixed upper schema of `Event`, `Object`, `Attribute` and `Time`, and everything from the log hangs below it:
+The ontology has a fixed upper schema of `Event`, `Object`, `Attribute` and `Time`, and the classes and properties taken from the log are placed below it:
 
 - one class per activity and per object type, one individual per event and per object
-- one class per attribute, with a named individual for each distinct value, so values can be reasoned over
+- one class per attribute, with a named individual for each distinct value
 - one individual per distinct timestamp, linked to its events through `observed_at`
 - the relations of the log as sub-properties of `event_object_relation` and `object_object_relation`
 - event order as `df_<case concept>` properties, optionally with eventually-follows and DECLARE constraint membership
@@ -76,80 +122,77 @@ The record of how the file was produced is annotated onto the ontology itself: t
 
 ## Build settings
 
-Every setting below is both a TOML key and a `--flag`. A flag always beats the config file.
-
 | Setting | Default | What it changes |
 |---|---|---|
-| `iri` | `https://oced#` | Base IRI the ontology puts its names in. A trailing `#` is added when missing. Two ontologies built under one IRI are one ontology to a triple store. |
-| `profile` | `OWL2DL` | Which OWL 2 profile the output stays inside. `OWL2EL` omits the inverse and transitivity axioms that profile forbids, and writes a float as `xsd:decimal`, a boolean and a date as `xsd:string`. |
-| `order_representations` | `df` | How event order is represented: `df`, `ef`, `ef_explicit`, `declare`. Several can be combined. `ef` leaves the pairs to a reasoner, which derives them over `df`, so it has to be combined with it. `ef_explicit` asserts every pair itself and needs nothing else. |
-| `case_concepts` | auto | Object types whose instances act as cases, named as the source log spells them. `df`, `ef` and `ef_explicit` need at least one. A type that cleaning renamed is followed to its new name. `declare` takes its traces from the mined CSV. |
+| `output` | the current directory | Directory the ontology and any other artifact of the run go into. |
+| `name` | the config or input name | Stem of every file the run writes. |
+| `iri` | `https://oced#` | Base IRI the ontology puts its names in. A trailing `#` is added when missing. |
+| `profile` | `OWL2DL` | Which OWL 2 profile the output stays inside. `OWL2EL` rejects `ef` and `axiomatic` inverses, drops a domain or range that is a union of classes, and writes a float as `xsd:decimal` and a boolean or date as `xsd:string`. |
+| `order_representations` | none | How event order is written: `df`, `ef`, `ef_explicit`, `declare`. Several can be combined. `ef` declares eventually-follows transitive over `df` and leaves the pairs to a reasoner, so it needs `df` beside it and `OWL2DL`. `ef_explicit` asserts every pair itself. |
+| `case_concepts` | the 3 most common object types | Object types whose instances act as cases, spelled as the source log spells them. `df`, `ef` and `ef_explicit` need at least one. `declare` takes its traces from the mined CSV. |
+| `auto_case_concepts` | `3` | How many object types are chosen when `case_concepts` is not set. |
 | `data_representations` | `values` | How numeric attributes appear: `values` keeps the number, `equal_bins` buckets by frequency, `dist_bins` fits a distribution first. Each attribute is cut once, over every value it takes anywhere in the log. A column with too few distinct values to bin keeps its numbers. |
-| `inverse_representations` | none | `axiomatic` writes inverse property axioms (OWL2DL only), `implicit` materializes the inverse assertions instead. |
+| `inverse_representations` | none | `axiomatic` writes inverse property axioms (OWL2DL only), `implicit` materializes the inverse assertions. |
 | `ocel_extensions` | none | `attribute_history` also emits the timestamped attribute changes of each object. |
 | `bins`, `bin_labels` | `5`, `very_low` … `very_high` | Bin count and labels for the two binning modes. |
 | `max_ef_pairs` | `50000000` | Ceiling on materialized eventually-follows pairs. Zero for no limit. |
 | `size_limit_mb` | `0` | Skip inputs larger than this many MB. Zero for no limit. |
 | `derive_annotations` | `false` | Emit `rdfs:label` and `rdfs:comment` derived from the original names in the log. |
+| `annotation_document` | none | JSON file mapping entity names to `{label, comment}`. |
+| `declare_file` | none | CSV written by `semlog mine-declare`. Required for `declare`. |
 | `materialize` | `false` | Run a reasoner over the result and save what it entails. Needs a JVM. |
-| `streaming` | `true` | Write OWL functional syntax straight to disk as `<name>.ofn`, keeping no axiom. What the build then holds grows with the distinct attribute values and timestamps of the log rather than with its events, and the loaded log itself is the floor. Off builds the ontology in memory and writes `<name>.owl` in RDF/XML, which is what rdflib reads. |
+| `reasoner_backend` | `HermiT` | Reasoner `materialize` runs: `HermiT`, `Pellet`, `ELK`. |
+| `streaming` | `true` | Write OWL functional syntax to disk as `<name>.ofn`. Off builds the ontology in memory and writes `<name>.owl` in RDF/XML, which rdflib reads. |
+| `save_backmap` | `false` | Also write the map from cleaned names to source names as JSON. |
+| `log_dir` | none | Directory for a log file per input. |
 
-`semlog build --help` documents every flag in full.
+`semlog build --help` documents every flag.
 
-### Reading a flat log
+## From Python
 
-A `.csv` or `.xes` log has one case notion and no objects, so the case column becomes an object type and every event relates to its case. Any column named in `object_cols` becomes another object type the same way, and the rest are attributes.
+```python
+from semanticlog import (
+    BuildInputs,
+    EventOrderRepresentation,
+    OntoBuildSettings,
+    build_log,
+    choose_case_concepts,
+    load_and_clean,
+)
+
+data = load_and_clean("tests/fixtures/pipeline.jsonocel")
+case_concepts, _ = choose_case_concepts(data, None)
+settings = OntoBuildSettings(order_representations=[EventOrderRepresentation.DF])
+result = build_log(data, settings, BuildInputs(case_concepts), "examples/out/pipeline.ofn")
+```
+
+`load_and_clean` reads the log and renames every name that cannot be part of an IRI. `choose_case_concepts` follows those renames for the types you name, or picks the most common types when given `None`. `OntoBuildSettings` holds the choices that do not depend on the log. `BuildInputs` holds the case concepts, the mined DECLARE constraints and any annotations. `build_log` writes the file once the build is complete. Pass `streaming=False` for RDF/XML, which also leaves the ontology on `result.onto`.
+
+## Limits
+
+- HermiT is the default reasoner and rejects a timestamp with microseconds. Set `reasoner_backend = "Pellet"` for such a log.
+- ELK answers class queries only. It does not entail disjointness, inverses, data properties or property assertions.
+- `--no-streaming` builds in memory and is about a hundred times slower on a large log.
+- A streamed build writes a float as `xsd:double`. `--no-streaming` writes it as `xsd:decimal`, because owlapy writes every float that way.
+
+## DECLARE support
+
+`semlog mine-declare` needs the `[declare]` extra and the [Lydia](https://github.com/whitemech/lydia) LTLf/LDLf solver. Every other command works without them. Install the extra with:
 
 ```bash
-semlog inspect log.csv --case-col case_id --act-col activity --time-col timestamp
-semlog build log.csv --case-col case_id --act-col activity --time-col timestamp \
-    --object-cols resource --case-concepts case_id
+uv sync --extra declare
 ```
 
-`case_col`, `act_col` and `time_col` default to the XES column names, so an `.xes` file usually needs none of them. `object_cols` is empty by default. All four are TOML keys as well as flags.
-
-## Commands
-
-| Command | Purpose |
-|---|---|
-| `semlog build` | Build one or more ontologies from event logs. |
-| `semlog inspect` | Summarize a log: activities, object types, relations, time range, suggested case concepts. |
-| `semlog mine-declare` | Mine DECLARE constraints into a CSV for `--order-representations declare`. Needs Lydia. |
-| `semlog reason` | Materialize or consistency-check an ontology that already exists. |
-
-Settings can live in a TOML run config, which keeps a build reproducible and lets several configurations of one dataset coexist:
-
-```toml
-# runs/hiring.toml
-extends = "_base.toml"
-
-input = "datasets/ocel/Hiring.xml"
-case_concepts = ["Candidate", "JobRequisition"]
-```
-
-```bash
-semlog build --config runs/hiring.toml
-semlog build --config runs/hiring.toml --profile OWL2EL   # same run, EL instead
-semlog build --config runs/hiring.toml --dry-run          # resolve and print, build nothing
-```
-
-A config naming one input takes its name from the config, so `runs/hiring.toml` writes `hiring.ofn`. A config naming several names each output after its input. `examples/pipeline.toml` is a complete config that runs from a fresh clone.
-
-Exit codes are `0` for success, `1` when a build failed or an ontology was inconsistent, and `2` when the configuration was unusable.
+Lydia is not on PyPI. You build it from source against CUDD 3.0.0, MONA 1.4 and Syft, which need `cmake`, `build-essential`, `bison`, `flex`, `libboost-dev` and `graphviz-dev`. [Declare4Py](https://github.com/ivanDonadello/Declare4Py) documents the setup.
 
 ## Development
 
 ```bash
-make install     # dependencies and git hooks
-make check       # lint, type check, tests
-make test
-make test-fast   # without the JVM and subprocess tests
-make example     # build examples/pipeline.toml end to end
+make install
+make check
 ```
 
-The reasoner tests load HermiT through the OWL API and need a JVM. They skip themselves when there is no Java.
-
-[CHANGELOG.md](CHANGELOG.md) records the releases that moved the shape of the emitted file.
+`make install` installs the dev dependencies and the git hooks. `make check` runs lint, type check and the whole suite. `make help` lists every target. The reasoner tests need a JVM and skip themselves without one.
 
 ## License
 

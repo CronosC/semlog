@@ -5,8 +5,7 @@ Every test that needs data uses one of these. Which one to reach for:
 - `tiny` when the data is not what is under test. Three events in one trace,
   one string attribute and one numeric one.
 - `pipeline` when a test should run against a real OCEL 2.0 file. Read from
-  `tests/fixtures/pipeline.jsonocel`, whose shape is described in the README
-  next to it.
+  `tests/fixtures/pipeline.jsonocel`, described in the README next to it.
 - `awkward` when a hard case has to be reachable. It is also what the build
   configuration matrix builds from, so every configuration meets a name that
   cleaning rewrote, a missing value, two events at one instant, a numeric
@@ -27,6 +26,7 @@ import pandas as pd
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.loading.pm4py_loader import PM4PyLoader
 from semanticlog.data.oced import OCEDStore
+from semanticlog.data.tables import EntityKind, RelationKind
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 PIPELINE_OCEL = FIXTURES / "pipeline.jsonocel"
@@ -42,15 +42,14 @@ def _day(n: int) -> datetime:
 def tiny() -> OCEDStore:
     """Three events of one activity, on one order.
 
-    The smallest store that still has a trace to order, an attribute of each
-    kind and a relation to follow.
+    The smallest store with a trace to order, an attribute of each kind and a
+    relation to follow.
     """
     data = OCEDStore()
-    data.add_event(
+    data.add(
+        EntityKind.EVENT,
         "step",
-        id_col="eid",
-        time_col="ts",
-        data=pd.DataFrame(
+        pd.DataFrame(
             {
                 "eid": ["e1", "e2", "e3"],
                 "ts": [_day(1), _day(2), _day(3)],
@@ -58,31 +57,33 @@ def tiny() -> OCEDStore:
                 "price": [10.0, 25.5, 3.25],
             }
         ),
+        id_col="eid",
+        time_col="ts",
     )
-    data.add_object("order", id_col="oid", data=pd.DataFrame({"oid": ["o1"]}))
-    data.add_event_to_object_relation(
+    data.add(EntityKind.OBJECT, "order", pd.DataFrame({"oid": ["o1"]}), id_col="oid")
+    data.add_relation(
+        RelationKind.E2O,
         "concerns",
-        from_id_col="eid",
-        to_id_col="oid",
+        pd.DataFrame({"eid": ["e1", "e2", "e3"], "oid": ["o1", "o1", "o1"]}),
+        from_id="eid",
+        to_id="oid",
         to_type=["order"],
-        data=pd.DataFrame({"eid": ["e1", "e2", "e3"], "oid": ["o1", "o1", "o1"]}),
     )
     return clean_oced_data(data)
 
 
 def pipeline() -> OCEDStore:
     """The committed OCEL 2.0 log, loaded and cleaned."""
-    return clean_oced_data(PM4PyLoader(str(PIPELINE_OCEL), {}).get_oced())
+    return clean_oced_data(PM4PyLoader(str(PIPELINE_OCEL)).get_oced())
 
 
 def pipeline_raw() -> OCEDStore:
     """The committed OCEL 2.0 log as the loader produced it, before cleaning."""
-    return PM4PyLoader(str(PIPELINE_OCEL), {}).get_oced()
+    return PM4PyLoader(str(PIPELINE_OCEL)).get_oced()
 
 
-# Eleven prices, the last several times the next largest. Wide enough for the
-# distribution binning to fit rather than fall back to plain text, and with one
-# value out at the end for the fitted bins to place.
+# Eleven prices, wide enough for distribution binning to fit, with one value at
+# the far end.
 _PRICES = [
     3.25,
     7.5,
@@ -112,10 +113,10 @@ def awkward() -> OCEDStore:
     - `order` records attribute changes, for the attribute history extension.
     """
     data = OCEDStore(ocel_mode=True)
-    data.add_object(
+    data.add(
+        EntityKind.OBJECT,
         "order",
-        id_col="oid",
-        data=pd.DataFrame(
+        pd.DataFrame(
             {
                 "oid": _ORDERS,
                 "channel": [
@@ -135,37 +136,38 @@ def awkward() -> OCEDStore:
                 "price": [*_PRICES, None],
             }
         ),
+        id_col="oid",
     )
-    data.add_object(
+    data.add(
+        EntityKind.OBJECT,
         "item",
-        id_col="iid",
-        data=pd.DataFrame(
+        pd.DataFrame(
             {
                 "iid": _ITEMS,
                 "channel": ["web", "shop", "web", "by hand"],
                 "weight": [1.5, 2.0, 0.75, 3.25],
             }
         ),
+        id_col="iid",
     )
-    data.add_event(
+    data.add(
+        EntityKind.EVENT,
         "place order",
-        id_col="eid",
-        time_col="ts",
-        data=pd.DataFrame(
+        pd.DataFrame(
             {
                 "eid": [f"e{i}" for i in range(1, 13)],
-                # e11 and e12 fall on the same instant.
                 "ts": [*(_day(n) for n in range(1, 12)), _day(11)],
                 "clerk": ["ann", "bo", "ann", "cy", "bo", "ann"] * 2,
                 "amount": list(range(1, 13)),
             }
         ),
-    )
-    data.add_event(
-        "ship",
         id_col="eid",
         time_col="ts",
-        data=pd.DataFrame(
+    )
+    data.add(
+        EntityKind.EVENT,
+        "ship",
+        pd.DataFrame(
             {
                 "eid": [f"s{i}" for i in range(1, 7)],
                 "ts": [datetime(2024, 2, n, 9, 0) for n in range(1, 7)],
@@ -173,40 +175,45 @@ def awkward() -> OCEDStore:
                 "due": [datetime(2024, 3, n) for n in range(1, 7)],
             }
         ),
+        id_col="eid",
+        time_col="ts",
     )
-    data.add_event_to_object_relation(
+    data.add_relation(
+        RelationKind.E2O,
         "concerns",
-        from_id_col="eid",
-        to_id_col="oid",
-        to_type=["order"],
-        data=pd.DataFrame(
+        pd.DataFrame(
             {
                 "eid": [f"e{i}" for i in range(1, 13)] + [f"s{i}" for i in range(1, 7)],
                 "oid": _ORDERS + _ORDERS[:6],
             }
         ),
+        from_id="eid",
+        to_id="oid",
+        to_type=["order"],
     )
-    data.add_event_to_object_relation(
+    data.add_relation(
+        RelationKind.E2O,
         "handles",
-        from_id_col="eid",
-        to_id_col="iid",
-        to_type=["item"],
-        data=pd.DataFrame(
+        pd.DataFrame(
             {
                 "eid": ["e1", "e2", "s1", "s2", "s3"],
                 "iid": ["i1", "i2", "i1", "i3", "i4"],
             }
         ),
-    )
-    data.add_object_to_object_relation(
-        "contains",
-        from_id_col="oid",
-        from_type=["order"],
-        to_id_col="iid",
+        from_id="eid",
+        to_id="iid",
         to_type=["item"],
-        data=pd.DataFrame(
+    )
+    data.add_relation(
+        RelationKind.O2O,
+        "contains",
+        pd.DataFrame(
             {"oid": ["o1", "o2", "o3", "o4"], "iid": _ITEMS},
         ),
+        from_id="oid",
+        from_type=["order"],
+        to_id="iid",
+        to_type=["item"],
     )
     # One string attribute and one numeric one change, so the history
     # extension meets both kinds of value.

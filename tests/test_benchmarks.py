@@ -1,9 +1,4 @@
-"""The benchmark scripts, run as real processes at a tiny size.
-
-`benchmarks/` is not collected, so nothing else here imports these files and a
-rename elsewhere in the package breaks them silently. Running each one for a
-moment is enough to catch that.
-"""
+"""The benchmark scripts. Each runs as a subprocess at a tiny size and exits cleanly."""
 
 from __future__ import annotations
 

@@ -1,22 +1,20 @@
-# A complete, runnable example. The input is the small OCEL log committed with
-# the test suite, so this works from a fresh clone with no extra data:
-#
-#     semlog build --config examples/pipeline.toml
-#
-# It writes one file, examples/out/pipeline.ofn, in OWL functional syntax.
-# Set streaming = false for RDF/XML, which is written as examples/out/pipeline.owl.
+# A complete example. Its input ships with the test suite, so `semlog build --config examples/pipeline.toml` runs from a fresh clone.
+# It writes examples/out/pipeline.ofn in OWL functional syntax, or examples/out/pipeline.owl in RDF/XML with streaming = false.
 
 input = "tests/fixtures/pipeline.jsonocel"
 output = "examples/out"
 
 profile = "OWL2DL"
+# df: directly-follows between adjacent events of a case.
 order_representations = ["df"]
+# Object type whose instances are the cases. 'semlog inspect' lists them.
 case_concepts = ["order"]
 
 data_representations = ["values"]
+# implicit: assert the reverse of every relation.
 inverse_representations = ["implicit"]
+# Write rdfs:label and rdfs:comment from the names in the log.
 derive_annotations = true
 
-# Reasoning is a separate step. Run it with:
-#     semlog reason examples/out/pipeline.ofn
+# true runs the reasoner after the build. `semlog reason examples/out/pipeline.ofn` runs it separately.
 materialize = false

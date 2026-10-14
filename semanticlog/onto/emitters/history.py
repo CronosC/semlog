@@ -1,8 +1,8 @@
 """Object attribute history, as one individual per recorded change.
 
-Without this, an object carries only the latest value of each attribute. With
-it, every change in the log becomes a change record that holds the new value
-and the moment it took effect, so an object's history can be queried too.
+Every recorded change becomes a change record holding the new value and its
+timestamp. Without it, an object carries only the latest value of each
+attribute.
 
 This runs only for a store loaded with the attribute history extension.
 """
@@ -17,7 +17,11 @@ from semanticlog.core import vocabulary as vocab
 from semanticlog.data.readable import ReadableStore
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.emitted import EmittedIndividuals
-from semanticlog.onto.emitters.attributes import AttributeEmitter, attribute_source
+from semanticlog.onto.emitters.attributes import (
+    AttributeEmitter,
+    attribute_source,
+    is_number_column,
+)
 from semanticlog.onto.emitters.base import Emitter
 from semanticlog.onto.emitters.time import TimeEmitter
 from semanticlog.onto.settings import OntoBuildSettings
@@ -29,8 +33,8 @@ logger = logging.getLogger(__name__)
 class HistoryEmitter(Emitter):
     """Emits the change records of object attributes.
 
-    It reuses the attribute and time emitters, so a value or a moment already
-    written by the main build is not written a second time.
+    It calls the attribute and time emitters, which skip values and
+    timestamps written by the main pass.
     """
 
     def __init__(
@@ -49,10 +53,9 @@ class HistoryEmitter(Emitter):
     def emit(self, data: ReadableStore) -> None:
         """Emit a change record for every recorded attribute change.
 
-        Each record links the object to the new value and to the moment of
-        the change. Values reach the ontology through the same emitter the
-        main pass uses, so a number is binned or kept exactly as it is on the
-        object itself.
+        Each record links the object to the new value and to the timestamp of
+        the change. Values go through `AttributeEmitter`, so a number is
+        binned the same way as on the object.
         """
         for obj_type in data.get_object_change_types():
             changes_df = data.get_object_changes(obj_type)
@@ -69,9 +72,11 @@ class HistoryEmitter(Emitter):
         """
         if attr_name not in grp.columns:
             logger.warning(
-                f"ATTRIBUTE_HISTORY: ocel:field value '{attr_name}' has no "
-                f"matching column in object_changes for type '{obj_type}', "
-                "so it is skipped. The object_changes structure is unexpected."
+                "ocel:field value '%s' has no "
+                "matching column in object_changes for type '%s'. "
+                "The attribute is skipped.",
+                attr_name,
+                obj_type,
             )
             return
 
@@ -79,7 +84,7 @@ class HistoryEmitter(Emitter):
         tmp = tmp[tmp[attr_name].notna()].copy()
         if tmp.empty:
             return
-        if pd.api.types.is_numeric_dtype(tmp[attr_name]) and not (
+        if is_number_column(tmp[attr_name]) and not (
             self.settings.data_representations
         ):
             return
@@ -142,18 +147,21 @@ class HistoryEmitter(Emitter):
     def _warn_on_repeated_changes(
         tmp: pd.DataFrame, attr_name: str, obj_type: str
     ) -> None:
-        """Report objects whose log records two changes at one instant.
+        """Warn about objects with two changes of one attribute at one timestamp.
 
-        An object, an attribute and a moment name one change record, so these
-        rows are the ones `attribute_change_ids` has to number apart.
+        `attribute_change_ids` numbers those records.
         """
         repeated = tmp.loc[
             tmp.duplicated(["ocel:oid", "ts_str"], keep=False), "ocel:oid"
         ].unique()
         if len(repeated):
             logger.warning(
-                f"ATTRIBUTE_HISTORY: {len(repeated)} {obj_type!r} object(s) record "
-                f"more than one change of '{attr_name}' at the same instant, so "
-                "those change records are numbered to keep them apart (sample: "
-                f"{', '.join(sorted(map(str, repeated))[:5])})."
+                "%s %r object(s) record more than one "
+                "change of '%s' at the same instant. Their change "
+                "records are numbered (sample: "
+                "%s).",
+                len(repeated),
+                obj_type,
+                attr_name,
+                ", ".join(sorted(map(str, repeated))[:5]),
             )

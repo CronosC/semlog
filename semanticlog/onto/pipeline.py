@@ -1,14 +1,13 @@
 """One build, from a cleaned store to an ontology file.
 
-`OCEDOntoBuilder` produces axioms and `AxiomSink` writes them, and between the
-two sits a handful of decisions every build makes the same way: which sink the
-output format asks for, where the file goes, and that it appears there only
-once it is complete. Those live here rather than in the command line, so that
-building from Python is the same build the CLI runs.
+`build_log` picks the sink for the output format, runs `OCEDOntoBuilder` and
+writes the file.
 
     from semanticlog.data.flatten import choose_case_concepts
     from semanticlog.data.loading import load_and_clean
+    from semanticlog.onto.inputs import BuildInputs
     from semanticlog.onto.pipeline import build_log
+    from semanticlog.onto.settings import OntoBuildSettings
 
     data = load_and_clean("log.jsonocel")
     case_concepts, _ = choose_case_concepts(data, None)
@@ -42,25 +41,29 @@ def build_log(
     record: Mapping[str, Any] | None = None,
     streaming: bool = True,
 ) -> BuildResult:
-    """Build one cleaned store into an ontology file.
+    """Build one cleaned store into an ontology file and return the result.
 
     Args:
-        data: Store to build from, already cleaned.
-        settings: What to build.
+        data: Store to build from. Must be cleaned.
         inputs: Case concepts, DECLARE constraints and annotations resolved
             against this log.
-        output: Where the ontology belongs. Its directory is created, and the
-            file appears there only once the build is complete.
-        iri: Base IRI for the ontology.
+        output: Path of the ontology file. Its directory is created. The file
+            is written when the build completes.
         source: Path of the log, recorded as provenance.
-        record: Anything else to record about this run, such as the input
-            checksum and the command.
-        streaming: Write functional syntax straight to the file. Off builds
-            the ontology in memory and writes RDF/XML.
+        record: Other values to record about this run, such as the input
+            checksum and the command. Each key must be a safe IRI local name.
+        streaming: Write functional syntax to the file as axioms are emitted.
+            False builds the ontology in memory and writes RDF/XML.
 
     Returns:
-        The finished build, carrying the ontology when it was built in memory
-        and the path either way.
+        The finished build. `onto` is set for an in-memory build. `path` is
+        always set.
+
+    Raises:
+        ConfigError: If the base IRI, the settings or the inputs are unusable.
+        InputError: If the store fails a pre-build check, or a name in it
+            cannot be emitted.
+        ValueError: If a key of `record` cannot be an IRI local name.
     """
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -1,16 +1,13 @@
-"""What datatype a value carries in the ontology.
+"""Datatype resolution for literal values.
 
-A value arrives from a pandas table and leaves as a typed literal. Which type
-it leaves as depends on the OWL 2 profile the build names, because the EL
-datatype map is smaller than the DL one and has no `xsd:double`, `xsd:boolean`
-or `xsd:date`.
-
-That decision is made once, here, so that both sinks agree on it and a backend
-is left with nothing to do but render what it is given.
+A pandas cell becomes a typed literal. Under OWL 2 EL, whose datatype map has
+no `xsd:double`, `xsd:boolean` or `xsd:date`, those three are substituted.
+Both sinks call `resolve_literal` and render the result.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -19,9 +16,12 @@ import numpy as np
 import pandas as pd
 
 from semanticlog.core.enums import OWLProfile
+from semanticlog.core.errors import InputError
 from semanticlog.core.vocabulary import format_number
 
-# The XSD types a build emits, as local names in the XSD namespace.
+XSD = "http://www.w3.org/2001/XMLSchema#"
+RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+
 BOOLEAN = "boolean"
 DATE = "date"
 DATE_TIME = "dateTime"
@@ -30,7 +30,9 @@ DOUBLE = "double"
 INTEGER = "integer"
 STRING = "string"
 
-# What OWL 2 EL has instead, for the three types its datatype map leaves out.
+OWL_DATATYPES: frozenset[str] = frozenset({INTEGER, DOUBLE, BOOLEAN, DATE_TIME})
+"""The datatypes a data property may be declared to range over."""
+
 _EL_SUBSTITUTES: dict[str, str] = {
     BOOLEAN: STRING,
     DATE: STRING,
@@ -39,16 +41,19 @@ _EL_SUBSTITUTES: dict[str, str] = {
 
 
 def normalize_value(value: Any) -> Any:
-    """Convert a pandas value into something a literal can be made from.
+    """Convert a pandas cell to a plain Python value.
 
-    Every flavor of missing value becomes None, and numpy scalars become their
-    Python equivalents, so that nothing below has to handle either.
+    Every kind of missing value becomes None. numpy scalars become Python
+    scalars.
 
     Args:
         value: A cell from a table.
 
     Returns:
         The plain Python value, or None when it was missing.
+
+    Raises:
+        InputError: If the value is infinite.
     """
     if value is None or value is pd.NaT or value is pd.NA:
         return None
@@ -58,9 +63,14 @@ def normalize_value(value: Any) -> Any:
         return value
     if isinstance(value, np.generic):
         value = value.item()
-        return None if isinstance(value, float) and pd.isna(value) else value
-    if isinstance(value, float) and pd.isna(value):
-        return None
+    if isinstance(value, float):
+        if pd.isna(value):
+            return None
+        if not math.isfinite(value):
+            raise InputError(
+                f"{value!r} cannot be written as an XSD numeric literal. Remove "
+                "it from the input or replace it with a finite number."
+            )
     return value
 
 
@@ -69,9 +79,8 @@ class Literal:
     """One value with the datatype it is emitted under.
 
     Attributes:
-        value: The value to emit. A profile that has no room for the type it
-            arrived as replaces it, so a boolean under EL arrives here as the
-            text `true`.
+        value: The value to emit. Under EL a boolean or date is its text form,
+            such as `true`.
         datatype: Local name of its XSD type, such as `integer`.
         text: The value as it is written inside the literal.
     """
@@ -101,8 +110,8 @@ def resolve_literal(value: Any, profile: OWLProfile) -> Literal | None:
 
     Args:
         value: A cell from a table.
-        profile: Profile the build stays inside, which decides what the three
-            types EL has no room for become.
+        profile: Profile of the build. Under EL, boolean, date and double are
+            substituted.
 
     Returns:
         The value with its datatype, or None if there was no value.
@@ -119,8 +128,7 @@ def resolve_literal(value: Any, profile: OWLProfile) -> Literal | None:
     if substitute is None:
         return Literal(value, datatype, text)
     if substitute == DECIMAL:
-        # An exponent is legal in `xsd:double` and not in `xsd:decimal`. The
-        # value stays a float, which is the one Python type both backends
-        # already write as a decimal.
+        # `xsd:decimal` takes no exponent, so the float is formatted without
+        # one. The value stays a float, which both backends write as a decimal.
         return Literal(value, substitute, format_number(value))
     return Literal(text, substitute, text)

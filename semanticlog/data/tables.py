@@ -1,26 +1,41 @@
 """The tables an OCED store is made of.
 
-Each table pairs a DataFrame with the column names that give it meaning, so
-that nothing downstream has to guess which column holds an id or a timestamp.
+Each table pairs a DataFrame with the names of its id and timestamp columns.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 
 import pandas as pd
 
-# What marks a column of a change table as structure rather than an attribute.
 OCEL_PREFIX = "ocel:"
+
+CONSTRAINT_INDEX_COLUMNS: tuple[str, ...] = ("case_concept", "trace_id")
 
 
 class EntityKind(str, Enum):
-    """Which half of the store an entity belongs to."""
+    """The kind of an entity, an event or an object.
+
+    Attributes:
+        EVENT: An event, which has a timestamp.
+        OBJECT: An object, which events relate to.
+    """
 
     EVENT = "event"
     OBJECT = "object"
+
+    @property
+    def word(self) -> str:
+        """The word for this kind in a message, `activity` or `object type`."""
+        return "activity" if self is EntityKind.EVENT else "object type"
+
+    @property
+    def plural(self) -> str:
+        """The plural word for this kind in a message, `activities` or `object types`."""
+        return "activities" if self is EntityKind.EVENT else "object types"
 
 
 class RelationKind(str, Enum):
@@ -36,33 +51,44 @@ class RelationKind(str, Enum):
     E2O = "e2o"
     O2O = "o2o"
 
+    @classmethod
+    def families(cls) -> tuple[RelationKind, RelationKind]:
+        """The two families, in the order a store lists them."""
+        return (cls.E2O, cls.O2O)
+
+    @property
+    def word(self) -> str:
+        """How a message about the store names this family."""
+        return {
+            RelationKind.ALL: "relation",
+            RelationKind.E2O: "event-to-object",
+            RelationKind.O2O: "object-to-object",
+        }[self]
+
 
 @dataclass
-class EventTable:
-    """The events of one activity.
+class EntityTable:
+    """The events of one activity, or the objects of one type.
+
+    An event table has a timestamp column. An object table does not.
 
     Attributes:
-        id: Column holding the event id.
-        time: Column holding the event timestamp.
-        data: One row per event. Every other column is an attribute.
+        id: Column holding the entity id.
+        data: One row per entity. Every column other than `id` and `time` is
+            an attribute.
+        time: Column holding the event timestamp, or None for an object table.
     """
 
     id: str
-    time: str
     data: pd.DataFrame
+    time: str | None = None
 
-
-@dataclass
-class ObjectTable:
-    """The objects of one type.
-
-    Attributes:
-        id: Column holding the object id.
-        data: One row per object. Every other column is an attribute.
-    """
-
-    id: str
-    data: pd.DataFrame
+    @property
+    def key_columns(self) -> frozenset[str]:
+        """The id column and, for events, the time column."""
+        if self.time is None:
+            return frozenset({self.id})
+        return frozenset({self.id, self.time})
 
 
 @dataclass
@@ -87,18 +113,13 @@ class RelationTable:
 
 @dataclass(frozen=True)
 class TableView:
-    """One table of a store, as a pass over the whole store sees it.
-
-    Every stage that rewrites names walks events, objects and change history
-    alike, and the only thing that differs between them is which columns carry
-    structure rather than an attribute. A view states that, so a pass says
-    what it does to a table once instead of once per kind of table.
+    """One table of a store, with its structural columns named.
 
     Attributes:
         frame: The rows themselves.
         name: Activity or object type this table holds.
-        kind: Which half of the store the rows are entities of, or None for a
-            table whose rows are not entities.
+        kind: The kind of entity the rows are, or None for a table whose rows
+            are not entities.
         key_columns: Columns that carry structure. An id, a timestamp, or the
             `ocel:` columns of a change table.
         origin: How this table is named in a message, such as
@@ -118,7 +139,7 @@ class TableView:
 
     @property
     def attributes(self) -> list[str]:
-        """The attribute columns, which are all the ones that carry no structure."""
+        """The columns not in `key_columns`."""
         return [str(c) for c in self.frame.columns if c not in self.key_columns]
 
     @property
@@ -129,12 +150,24 @@ class TableView:
 
 @dataclass
 class Relations:
-    """Both relation families of a store, keyed by relation name.
+    """Both relation families of a store, keyed by kind and then by name.
 
     Attributes:
-        event_to_object: Relations from events to objects.
-        object_to_object: Relations between objects.
+        families: The relation tables of each family. `RelationKind.ALL` names
+            both families at once and is not a key.
     """
 
-    event_to_object: dict[str, RelationTable] = field(default_factory=dict)
-    object_to_object: dict[str, RelationTable] = field(default_factory=dict)
+    families: dict[RelationKind, dict[str, RelationTable]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for kind in RelationKind.families():
+            self.families.setdefault(kind, {})
+
+    def of(self, kind: RelationKind) -> dict[str, RelationTable]:
+        """Return the mutable mapping of one family."""
+        return self.families[kind]
+
+    def items(self) -> Iterator[tuple[str, RelationTable]]:
+        """Yield every relation with its name, event-to-object first."""
+        for kind in RelationKind.families():
+            yield from self.families[kind].items()

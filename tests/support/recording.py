@@ -1,10 +1,8 @@
-"""A sink that records calls instead of writing axioms.
-
-Lets an emitter be tested for what it asks for, with no ontology and no
-backend involved.
-"""
+"""A sink that records each call."""
 
 from __future__ import annotations
+
+from typing import Any
 
 from semanticlog.core.enums import OWLProfile
 from semanticlog.core.vocabulary import DEFAULT_IRI
@@ -12,13 +10,20 @@ from semanticlog.onto.sinks import AxiomSink
 
 
 class RecordingSink(AxiomSink):
+    """Records every `write_*` call as a tuple headed by its kind.
+
+    Attributes:
+        calls: The calls in order. A data assertion carries the resolved
+            literal's value.
+    """
+
     def __init__(
         self, profile: OWLProfile = OWLProfile.OWL2DL, iri: str = DEFAULT_IRI
     ) -> None:
         super().__init__(iri, profile)
-        self.calls: list[tuple] = []
+        self.calls: list[tuple[Any, ...]] = []
 
-    def _record(self, *call) -> None:
+    def _record(self, *call: Any) -> None:
         self._begin_write()
         self.calls.append(call)
 
@@ -29,13 +34,16 @@ class RecordingSink(AxiomSink):
         self._record("sub_class", sub, superclass)
 
     def write_sub_property_of(self, sub, parent, data_prop):
-        self._record("sub_property", sub, parent)
+        self._record("sub_property", sub, parent, data_prop)
 
     def write_domain(self, prop, expression, data_prop):
-        self._record("domain", prop, expression)
+        self._record("domain", prop, expression, data_prop)
 
-    def write_range(self, prop, expression, data_prop):
-        self._record("range", prop, expression)
+    def write_range(self, prop, expression):
+        self._record("range", prop, expression, False)
+
+    def write_data_range(self, prop, datatype):
+        self._record("range", prop, [datatype], True)
 
     def write_inverse_properties(self, prop, inverse):
         self._record("inverse", prop, inverse)
@@ -52,8 +60,8 @@ class RecordingSink(AxiomSink):
             self._record("relation", prop, str(subject), str(obj))
 
     def write_data_assertions(self, prop, pairs):
-        for subject, value in pairs:
-            self._record("data", prop, str(subject), value)
+        for subject, literal in pairs:
+            self._record("data", prop, str(subject), literal.value)
 
     def write_annotations(self, annotation, pairs):
         for name, text in pairs:
@@ -66,10 +74,16 @@ class RecordingSink(AxiomSink):
     def save(self, path):
         raise NotImplementedError("RecordingSink holds no ontology to save")
 
-    def of_kind(self, kind: str) -> list[tuple]:
+    def of_kind(self, kind: str) -> list[tuple[Any, ...]]:
+        """Return the recorded calls of one kind, in order."""
         return [c for c in self.calls if c[0] == kind]
 
     def declaration_order_violations(self) -> list[tuple[str, str]]:
+        """Return each name asserted as an individual before its declaration.
+
+        Returns:
+            Pairs of the name and the class it was asserted into.
+        """
         declared: set[str] = set()
         seen_as_individual: dict[str, str] = {}
         violations: list[tuple[str, str]] = []

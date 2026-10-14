@@ -25,8 +25,7 @@ htmlcov/
 # Build logs
 logs/
 
-# Generated / temporary data. The default output directories are tracked so a
-# build writes into a folder that is already there.
+# Generated data. The default output directories are tracked empty.
 datasets/*
 !datasets/onto/
 !datasets/declare/
@@ -35,6 +34,7 @@ datasets/declare/*
 !datasets/onto/.gitkeep
 !datasets/declare/.gitkeep
 examples/out/
+out/
 simulated.csv
 *.semlog
 
@@ -52,8 +52,5 @@ components/RDFox/RDFox.lic
 .idea/
 .vscode/
 
-# Local run configs (dataset-specific, not shared).
-# examples/ holds the one config that is meant to be shared.
+# Local run configs.
 runs/
-
-# Local machine setup, not part of the library.

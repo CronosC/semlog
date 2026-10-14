@@ -1,31 +1,31 @@
 {
   "Object": {
     "label": "Object",
-    "comment": "An entity that participates in the process, such as an order, invoice, or product. Each object is of exactly one object type and may carry attributes whose values can change over time."
+    "comment": "An entity of the process, such as an order, an invoice or a product. Each object has one object type."
   },
   "Event": {
     "label": "Event",
-    "comment": "An atomic, timestamped occurrence of an activity in the process, such as creating an order or inserting a payment. Each event is of exactly one event type and may relate to any number of objects."
+    "comment": "A timestamped occurrence of an activity, such as placing an order or receiving a payment. Each event has one event type and relates to any number of objects."
   },
   "Attribute": {
     "label": "Attribute",
-    "comment": "A named, typed value associated with an event or object."
+    "comment": "A named value of an event or object."
   },
   "Time": {
     "label": "Time point",
-    "comment": "A point in time, used as an event timestamp or to date an object attribute value."
+    "comment": "A distinct timestamp of the log, such as the time an event was observed."
   },
   "ObjectAttribute": {
     "label": "Object attribute",
-    "comment": "An attribute defined for an object type. Its value is recorded with a timestamp and may change over the object's lifetime."
+    "comment": "An attribute value of an object."
   },
   "EventAttribute": {
     "label": "Event attribute",
-    "comment": "An attribute defined for an event type, carrying a single value fixed at the time of the event."
+    "comment": "An attribute value of an event."
   },
   "AttributeChange": {
     "label": "Object attribute change",
-    "comment": "A timestamped record of an object attribute taking a new value, capturing the history of dynamic object attribute values."
+    "comment": "A record of an object attribute taking a new value at a time point."
   },
   "observed_at": {
     "label": "observed at",
@@ -33,35 +33,35 @@
   },
   "observes": {
     "label": "observes",
-    "comment": "Inverse of observed at: relates a time point to the events timestamped at it."
+    "comment": "Inverse of observed at. Relates a time point to the events timestamped at it."
   },
   "event_object_relation": {
     "label": "involves object",
-    "comment": "A qualified event-to-object relationship, associating an event with an object that takes part in it."
+    "comment": "Relates an event to an object that takes part in it. Every event-to-object relation of the log is a subproperty."
   },
   "object_object_relation": {
     "label": "is related to object",
-    "comment": "A qualified object-to-object relationship, associating an object with another object independently of any event."
+    "comment": "Relates an object to another object, independent of any event. Every object-to-object relation of the log is a subproperty."
   },
   "has_attribute": {
     "label": "has attribute",
-    "comment": "Relates an event or object to one of its attributes."
+    "comment": "Relates an event or object to one of its attribute values."
   },
   "attribute_of": {
     "label": "is attribute of",
-    "comment": "Inverse of has attribute: relates an attribute to its owning event or object."
+    "comment": "Inverse of has attribute. Relates an attribute value to the event or object it belongs to."
   },
   "has_data_value": {
     "label": "has data value",
-    "comment": "Attaches a literal value to an attribute, attribute change, or time individual."
+    "comment": "Relates an attribute value or a time point to its literal."
   },
   "inv_event_object_relation": {
     "label": "is object involved in",
-    "comment": "Inverse of involves object: relates an object to the events it participates in."
+    "comment": "Inverse of involves object. Relates an object to the events it takes part in."
   },
   "inv_object_object_relation": {
     "label": "is related from object",
-    "comment": "Inverse of is related to object: the symmetric counterpart of an object-to-object relationship."
+    "comment": "Inverse of is related to object. Relates an object to the objects related to it."
   },
   "has_attribute_change": {
     "label": "has attribute change",
@@ -69,22 +69,22 @@
   },
   "inv_has_attribute_change": {
     "label": "is attribute change of",
-    "comment": "Inverse of has attribute change: relates an attribute change record to the object whose attribute it tracks."
+    "comment": "Inverse of has attribute change. Relates an attribute change record to its object."
   },
   "attribute_change_value": {
     "label": "changes value to",
-    "comment": "Relates an attribute change record to the value the attribute took at that change."
+    "comment": "Relates an attribute change record to the value the attribute took."
   },
   "inv_attribute_change_value": {
     "label": "is new value in change",
-    "comment": "Inverse of changes value to: relates an attribute value to the change record in which it became the new value."
+    "comment": "Inverse of changes value to. Relates a value to the change records that set it."
   },
   "changed_at": {
     "label": "changed at",
-    "comment": "Relates an attribute change record to the time point at which the change took effect."
+    "comment": "Relates an attribute change record to the time point of the change."
   },
   "inv_changed_at": {
-    "label": "is change time of",
-    "comment": "Inverse of changed at: relates a time point to the attribute change records that took effect at it."
+    "label": "is time of change",
+    "comment": "Inverse of changed at. Relates a time point to the change records that took effect at it."
   }
 }

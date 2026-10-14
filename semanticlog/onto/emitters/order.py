@@ -1,9 +1,8 @@
 """Event order, as properties between the events of a trace.
 
-Order only exists relative to a case notion, so every representation here is
-per case concept: `df_order` orders the events of an order, `df_item` those of
-an item, and the same event can sit in several such chains. Which
-representations run is decided by the settings, and they can be combined.
+Every representation is per case concept: `df_order` orders the events of an
+order, `df_item` those of an item. One event can be in several chains. The
+settings select which representations run.
 """
 
 from __future__ import annotations
@@ -18,32 +17,43 @@ from semanticlog.core import vocabulary as vocab
 from semanticlog.core.errors import ConfigError
 from semanticlog.data.flatten import iter_logs
 from semanticlog.data.readable import ReadableStore
+from semanticlog.data.tables import EntityKind
+from semanticlog.onto.annotations import AnnotationWriter
+from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters.base import Emitter
 from semanticlog.onto.inputs import BuildInputs, constraint_names
+from semanticlog.onto.settings import OntoBuildSettings
+from semanticlog.onto.sinks import AxiomSink
 
 logger = logging.getLogger(__name__)
 
 
 def declare_membership(constraints: pd.DataFrame, constraint: str) -> pd.Series:
-    """Return which traces satisfy one constraint, treating no answer as no."""
+    """Return which traces satisfy one constraint. A missing cell counts as False."""
     return constraints[constraint].fillna(False).astype(bool)
 
 
 class OrderEmitter(Emitter):
     """Emits directly-follows, eventually-follows and DECLARE membership."""
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        sink: AxiomSink,
+        settings: OntoBuildSettings,
+        annotations: AnnotationWriter,
+        emitted: EmittedIndividuals,
+    ) -> None:
+        super().__init__(sink, settings, annotations, emitted)
         self._ef_pairs_so_far = 0
 
     def emit(self, data: ReadableStore, inputs: BuildInputs) -> None:
         """Emit whichever order representations the settings selected."""
         if self.settings.emits_traces:
-            self.emit_trace_order(data, inputs.case_concepts)
-        if self.settings.emits_declare:
-            self.emit_declare(inputs.declare_constraints)
+            self._emit_trace_order(data, inputs.case_concepts)
+        if self.settings.emits_declare and inputs.declare_constraints is not None:
+            self._emit_declare(data, inputs.declare_constraints)
 
-    def emit_trace_order(
+    def _emit_trace_order(
         self, data: ReadableStore, case_concepts: Sequence[str]
     ) -> None:
         """Emit the order super-properties, then the order of each case concept.
@@ -78,9 +88,9 @@ class OrderEmitter(Emitter):
         self.annotations.order_superproperties(include_df, include_ef)
 
         for case_concept, events in iter_logs(data, case_concepts):
-            self.emit_case_order(case_concept, events, include_df, include_ef)
+            self._emit_case_order(case_concept, events, include_df, include_ef)
 
-    def emit_case_order(
+    def _emit_case_order(
         self,
         case_concept: str,
         events: pd.DataFrame,
@@ -89,9 +99,8 @@ class OrderEmitter(Emitter):
     ) -> None:
         """Emit the order of one flattened projection.
 
-        Besides the pairs themselves, the first and last event of each trace
-        are typed as its start and end events, so a trace boundary can be
-        reached without asking for the absence of a predecessor.
+        The first and last event of each trace are also typed as its start
+        and end events.
 
         Args:
             case_concept: Object type this projection was taken on.
@@ -99,10 +108,8 @@ class OrderEmitter(Emitter):
             include_df: Also emit directly-follows.
             include_ef: Also emit eventually-follows.
         """
-        # `iter_logs` already returns this sorted, so the sort is redundant for
-        # order. It is not redundant for memory: sorting reallocates the frame
-        # more compactly than copying it, and dropping it costs 7 MB per
-        # 300k events.
+        # `iter_logs` returns the frame in this order. The sort is kept
+        # because it reallocates the frame more compactly than a copy.
         events = events.sort_values(
             ["case:concept:name", "time:timestamp"], kind="mergesort"
         )
@@ -161,93 +168,95 @@ class OrderEmitter(Emitter):
             self._axiomatize_eventually_follows(df_rel, ef_rel, events)
 
         if self.settings.emits_ef_explicit:
-            self._materialize_eventually_follows(ef_rel, events)
+            self._materialize_eventually_follows(
+                ef_rel, events, skip_self=self.settings.emits_ef_axiomatic
+            )
 
     def _axiomatize_eventually_follows(
         self, df_rel: str, ef_rel: str, events: pd.DataFrame
     ) -> None:
-        """Leave the pairs to a reasoner, via transitivity.
+        """Declare eventually-follows transitive with directly-follows below it.
 
-        Directly-follows is placed below eventually-follows, which is declared
-        transitive, so a reasoner derives every pair. The reflexive pairs are
-        asserted instead of being written as a self-restriction, which OWL 2
-        DL does not allow on a transitive property.
+        The reflexive pairs are asserted. OWL 2 DL allows no self-restriction
+        on a transitive property. With implicit inverses and no inverse
+        axiom, the inverse properties get the same two axioms.
         """
         self.sink.add_sub_property(df_rel, ef_rel)
         self.sink.add_transitive(ef_rel)
+        if self.settings.has_inverses and not self.settings.axiomatic_inverses:
+            self.sink.add_sub_property(
+                self.sink.inverse_name(df_rel), self.sink.inverse_name(ef_rel)
+            )
+            self.sink.add_transitive(self.sink.inverse_name(ef_rel))
 
         self_pairs = pd.DataFrame({"event_id": events["event_id"].unique()})
         self_pairs["event_id_self"] = self_pairs["event_id"]
         self.assert_relations(ef_rel, self_pairs, "event_id", "event_id_self")
 
     def _materialize_eventually_follows(
-        self, ef_rel: str, events: pd.DataFrame
+        self, ef_rel: str, events: pd.DataFrame, skip_self: bool = False
     ) -> None:
         """Assert every eventually-follows pair, including each event with itself.
 
-        This needs no reasoner and works in every profile, at the cost of a
-        number of pairs that grows with the square of the trace length.
+        Works in every profile. The number of pairs is quadratic in trace
+        length.
+
+        Args:
+            ef_rel: The eventually-follows property of the case concept.
+            events: The flat log, with an `event_id` column.
+            skip_self: Leave out the reflexive pairs, when `EF` asserted them.
         """
         groups = list(events.groupby("case:concept:name", sort=False))
-        self._check_ef_budget(ef_rel, groups)
+        self._check_ef_budget(ef_rel, groups, skip_self)
 
         for _, grp in groups:
             ids = grp["event_id"].values
             n = len(ids)
             if n == 0:
                 continue
-            row_idx, col_idx = np.triu_indices(n)
+            row_idx, col_idx = np.triu_indices(n, k=1 if skip_self else 0)
             ef_pairs = pd.DataFrame(
                 {"event_id_from": ids[row_idx], "event_id_to": ids[col_idx]}
             )
             self.assert_relations(ef_rel, ef_pairs, "event_id_from", "event_id_to")
 
-    def _check_ef_budget(self, ef_rel: str, groups: list) -> None:
-        """Refuse to materialize more pairs than the build allows.
-
-        The count runs across every case concept, since the budget covers what
-        the whole build writes.
-        """
-        projected = sum(len(grp) * (len(grp) + 1) // 2 for _, grp in groups)
+    def _check_ef_budget(self, ef_rel: str, groups: list, skip_self: bool) -> None:
+        """Raise when the pairs across all case concepts exceed `max_ef_pairs`."""
+        offset = -1 if skip_self else 1
+        projected = sum(len(grp) * (len(grp) + offset) // 2 for _, grp in groups)
         self._ef_pairs_so_far += projected
         total = self._ef_pairs_so_far
         budget = self.settings.max_ef_pairs
         if budget and total > budget:
             longest = max((len(grp) for _, grp in groups), default=0)
             raise ConfigError(
-                f"EF_EXPLICIT would materialize {total:,} pairs in total "
-                f"(reached at '{ef_rel}'), over the max_ef_pairs limit of "
-                f"{budget:,}. Eventually-follows is "
-                f"quadratic in trace length and the longest trace here has {longest:,} "
-                "events. Use EventOrderRepresentation.EF to let a reasoner derive "
-                "them instead, choose a case concept with shorter traces, or raise "
-                "settings.max_ef_pairs."
+                f"ef_explicit would assert {total:,} pairs (reached at "
+                f"'{ef_rel}'), over max_ef_pairs={budget:,}. The longest trace "
+                f"has {longest:,} events. Use ef under OWL2DL, choose a case "
+                "concept with shorter traces, or raise max_ef_pairs."
             )
         logger.info(
-            f"  {ef_rel}: materializing {projected:,} eventually-follows pairs "
-            f"({total:,} so far)"
+            "  %s: materializing %s eventually-follows pairs (%s so far)",
+            ef_rel,
+            f"{projected:,}",
+            f"{total:,}",
         )
 
-    def emit_declare(self, df_declare: pd.DataFrame | None) -> None:
+    def _emit_declare(self, data: ReadableStore, df_declare: pd.DataFrame) -> None:
         """Type each trace by the DECLARE constraints it satisfies.
 
-        Every mined constraint becomes a class, and a trace that satisfies it
-        becomes a member. The trace is the case object itself, so the
-        assertion is about the object, not its events.
+        Every mined constraint becomes a class. The case object of a trace
+        that satisfies it becomes a member.
 
         Args:
+            data: Store being built from. Its activity names split the
+                constraint names for labels.
             df_declare: One row per trace, as `BuildInputs` carries it.
 
         Raises:
-            ConfigError: If no constraints are available.
+            NameCollisionError: If a constraint has the name of a class the
+                build declared from the log. The sink raises it.
         """
-        if df_declare is None:
-            raise ConfigError(
-                "No DECLARE constraints available. Mine them with "
-                "'semlog mine-declare' and pass the table as "
-                "BuildInputs.declare_constraints."
-            )
-
         constraints = constraint_names(df_declare)
 
         self.sink.add_class(
@@ -259,7 +268,9 @@ class OrderEmitter(Emitter):
                 vocab.DECLARE_CONSTRAINT,
                 source=f"DECLARE constraint {constraint!r}",
             )
-        self.annotations.declare_constraints(vocab.DECLARE_CONSTRAINT, constraints)
+        self.annotations.declare_constraints(
+            vocab.DECLARE_CONSTRAINT, constraints, data.types(EntityKind.EVENT)
+        )
 
         for constraint in constraints:
             trace_ids = df_declare.loc[

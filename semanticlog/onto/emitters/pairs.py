@@ -1,8 +1,6 @@
-"""The step between a table and the pairs a sink asserts.
+"""Pairs of names read from a table, for a sink to assert.
 
-A sink takes pairs of names. The tables they are read from carry gaps and
-repeats, and what to do about those is a decision about the build rather than
-about the axiom boundary, so it is made here.
+A table can hold missing endpoints and repeated rows. Both are dropped here.
 """
 
 from __future__ import annotations
@@ -16,12 +14,7 @@ Pair = tuple[Any, Any]
 
 
 def clean_pairs(df: pd.DataFrame, from_key: str, to_key: str) -> Iterator[Pair]:
-    """Yield the pairs of two columns, without gaps and without repeats.
-
-    A row with a missing endpoint carries no name to assert, and a repeated
-    pair would be the same axiom twice. The result is a generator, because a
-    relation of a large log holds one pair per row and a backend writing them
-    out needs to see only one at a time.
+    """Yield the distinct pairs of two columns, skipping rows with a missing endpoint.
 
     Args:
         df: Table holding the pairs.

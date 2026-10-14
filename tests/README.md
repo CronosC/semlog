@@ -1,82 +1,66 @@
 # tests
 
-`tests/<layer>/` mirrors `semanticlog/<layer>/`. Anything a test imports lives
-under `tests/support/`, so no test module is ever imported by another.
-
-```
-conftest.py     the shared fixtures, and the JVM check that skips the reasoner tests
-fixtures/       committed input: the one OCEL 2.0 file
-support/        importable helpers, never collected
-core/ data/ enrich/ onto/ cli/
-```
-
-## The three stores
-
-Every test that needs data uses one of these, from
-[support/stores.py](support/stores.py):
-
-| Store | What it is | Reach for it when |
-|---|---|---|
-| `tiny` | three events of one activity on one order | the data is not what is under test |
-| `pipeline` | `fixtures/pipeline.jsonocel`, loaded and cleaned | the test should run against a real OCEL file |
-| `awkward` | twelve orders and four items, carrying every hard case | a hard case has to be reachable |
-
-`awkward` is what the build configuration matrix builds from, so every
-configuration meets a name cleaning rewrote, a missing value, two events at one
-instant, a numeric column wide enough to bin and a value at the far end of it.
-
-Fixtures hand out a copy, since a store is mutable.
-
-## The build matrix
-
-[support/settings.py](support/settings.py) names one build configuration per
-combination worth covering. Adding an entry there adds a case to every test
-that runs over the matrix, and a row to the shape table.
-
-The `built` fixture builds each configuration once per session, through each
-sink, and returns it read back as an
-[`Emitted`](support/ontology.py) object. Tests read from that rather than
-building again. `built_path` returns the file the same build wrote, for a test
-that needs a reader other than `Emitted`. Both share one cache, so asking for
-either builds the configuration once.
-
-## Two ways to read a build
-
-[support/ontology.py](support/ontology.py) reads a build as text and answers
-what its axioms say. Either syntax comes back as the same `Emitted` object, so
-a test asserts against the ontology rather than the syntax, and the two sinks
-compare directly.
-
-[support/owlapi.py](support/owlapi.py) answers what the OWL API makes of the
-same file: which profile it is in, what it carries as an ontology annotation,
-and what its signature holds against what it declares. Those are questions
-about the structure a parser builds, which a reader working from the lines
-cannot see. It needs a JVM, so a test using it carries the `reasoner` marker.
-
-## What checks the output
-
-| File | Question it answers |
-|---|---|
-| [onto/test_build_shape.py](onto/test_build_shape.py) | did what a configuration emits change? |
-| [onto/test_build_invariants.py](onto/test_build_invariants.py) | is the result a usable ontology? |
-| [onto/test_build_content.py](onto/test_build_content.py) | does it say the right thing about the log? |
-| [onto/test_profiles.py](onto/test_profiles.py) | is a build in the OWL 2 profile its settings name? |
-| [onto/test_sinks.py](onto/test_sinks.py) | do both sinks agree? |
-| [onto/test_reason.py](onto/test_reason.py) | what does a reasoner make of a build? |
-| [test_imports.py](test_imports.py) | does importing the package start anything heavy? |
-
-`test_build_shape.py` holds the record of the product: entity counts per
-configuration, plus the names that configuration exists to produce and the ones
-it must leave out. A change to the emitter that moves a number fails there,
-naming the configuration. Update the row and say in the commit message which
-change moved it.
+The test suite for `semanticlog`. Each module with logic has one test file at the mirrored path: `semanticlog/data/cleaning/allocate.py` is tested in `tests/data/cleaning/test_allocate.py`, and a package `__init__.py` in a file named after its main function. Tests of a whole build live in `tests/output/`.
 
 ## Running
 
+From the repository root:
+
 ```bash
-pytest -n auto                                  # everything
-pytest -n auto -m "not reasoner and not slow"   # no JVM, no subprocess
+uv run pytest -n auto
+uv run pytest -n auto -m "not reasoner and not slow"
+uv run pytest tests/data/test_flatten.py -k timestamp
 ```
 
-Reasoner tests skip themselves when the machine has no JVM. `slow` marks the
-tests that run the installed command as a real process.
+The second command skips the tests that need a JVM (`reasoner`) and the ones that take seconds (`slow`). Reasoner tests skip themselves on a machine without a JVM.
+
+## Layout
+
+```
+conftest.py   shared fixtures, and the JVM check for the reasoner marker
+fixtures/     the one committed OCEL 2.0 file
+support/      importable helpers, never collected
+core/ data/ enrich/ onto/ cli/   one test file per module
+output/       whole builds, read back and checked
+```
+
+## Stores
+
+Every test that needs data uses one of three stores from [support/stores.py](support/stores.py). Each fixture returns a copy.
+
+| Store | What it is | Use it when |
+|---|---|---|
+| `tiny` | three events of one activity on one order | the data is not under test |
+| `pipeline` | `fixtures/pipeline.jsonocel`, loaded and cleaned | the test needs a real OCEL file |
+| `awkward` | twelve orders and four items with every hard case | a hard case must be reachable |
+
+The build matrix builds from `awkward`. Every configuration meets a name cleaning rewrote, a missing value, two events at one timestamp, a numeric column wide enough to bin and a value at its far end.
+
+## Building and reading back
+
+[support/settings.py](support/settings.py) names the build configurations. `MATRIX` covers every value of every setting at least once, and `test_build_invariants.py` checks that it does. [support/build.py](support/build.py) holds `emit`, which builds one configuration through either sink.
+
+The `built` fixture builds a configuration once per session and returns it as an [`Emitted`](support/emitted.py) object. `built_path` returns the file the same build wrote.
+
+`Emitted` holds what a build's axioms say. [support/functional.py](support/functional.py) reads functional syntax into it, and [support/rdf.py](support/rdf.py) reads RDF/XML. [support/owlapi.py](support/owlapi.py) asks the OWL API about the same file: its profile, its ontology annotations and its undeclared signature. Tests that use it need the `reasoner` marker.
+
+## Whole-build tests
+
+| File | What it checks |
+|---|---|
+| [output/test_build_shape.py](output/test_build_shape.py) | the entity counts and names each configuration emits |
+| [output/test_build_invariants.py](output/test_build_invariants.py) | every build is a well-formed ontology |
+| [output/test_build_content.py](output/test_build_content.py) | a build states the right facts about the log |
+| [output/test_build_refusals.py](output/test_build_refusals.py) | the checks only a whole build makes |
+| [output/test_profiles.py](output/test_profiles.py) | a build stays in the OWL 2 profile its settings name |
+| [output/test_fixture_log.py](output/test_fixture_log.py) | the committed fixture has the shape the tests rely on |
+
+When an emitter change moves a number in `test_build_shape.py`, the test names the configuration. Update the row and say in the commit message which change moved it.
+
+## Adding a test
+
+- Name it `test_<scenario>_<expected>` so the name states the rule. Test one behavior.
+- Put it in the file of the lowest module that holds the rule. Write a whole-build test only when the rule is visible only in the output.
+- Give every `pytest.raises` on a semlog error a `match=`.
+- Parametrize only over inputs that take different code paths.
+- Leave out tests of field access, enum members and log text that is not product text.

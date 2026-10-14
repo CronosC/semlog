@@ -1,89 +1,429 @@
-"""Carrying DECLARE constraints. The mining itself needs a solver that is
-not installed with the package, so it is not exercised here.
-"""
+"""`DeclareResult` files, and `DeclareEnricher` with the Declare4Py classes replaced by fakes."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
 
 import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
-from semanticlog.core.errors import DependencyError
-from semanticlog.enrich.declare import DeclareEnricher, DeclareResult
+from semanticlog.core.errors import ConfigError, DependencyError, InputError
+from semanticlog.data.tables import EntityKind
+from semanticlog.enrich import declare as declare_module
+from semanticlog.enrich.declare import (
+    META_SUFFIX,
+    DeclareEnricher,
+    DeclareResult,
+    template_of,
+)
+from tests.support import stores
+
+# --------------------------------------------------------------------------
+# Reading and writing a constraints table
+# --------------------------------------------------------------------------
 
 
 @pytest.fixture
-def constraints():
-    return pd.DataFrame(
-        {
-            "case_concept": ["order", "order", "item"],
-            "trace_id": ["o1", "o2", "i1"],
-            "Response__A__B__": [True, False, True],
-            "Existence1__A__": [True, True, False],
-        }
+def result():
+    return DeclareResult(
+        constraints=pd.DataFrame(
+            {
+                "case_concept": ["order", "order", "item"],
+                "trace_id": ["o1", "o2", "i1"],
+                "Response__A__B__": [True, False, True],
+                "Existence1__A__": [True, True, False],
+            }
+        ),
+        case_concepts=["order", "item"],
     )
 
 
 @pytest.fixture
-def result(constraints):
-    return DeclareResult(constraints=constraints, case_concepts=["order", "item"])
-
-
-def test_write_then_read_preserves_constraints(result, tmp_path):
-    path = str(tmp_path / "declare.csv")
-    result.write(path)
-    restored = DeclareResult.read(path)
-    assert_frame_equal(restored.constraints, result.constraints)
-
-
-def test_read_infers_case_concepts_from_column(result, tmp_path):
-    path = str(tmp_path / "declare.csv")
-    result.write(path)
-    assert DeclareResult.read(path).case_concepts == ["order", "item"]
-
-
-def test_write_does_not_emit_an_index_column(result, tmp_path):
+def written(result, tmp_path) -> Path:
     path = tmp_path / "declare.csv"
     result.write(str(path))
-    header = path.read_text().splitlines()[0]
-    assert header.startswith("case_concept,trace_id")
+    return path
 
 
-def test_read_preserves_boolean_dtype(result, tmp_path):
-    path = str(tmp_path / "declare.csv")
-    result.write(path)
-    restored = DeclareResult.read(path)
-    assert restored.constraints["Response__A__B__"].dtype == bool
+def test_a_written_table_reads_back_unchanged(result, written):
+    restored = DeclareResult.read(str(written))
+
+    assert_frame_equal(restored.constraints, result.constraints)
+    assert restored.case_concepts == ["order", "item"]
 
 
-def test_to_dict_is_json_shaped(result):
-    d = result.to_dict()
-    assert set(d) == {
-        "constraints",
-        "case_concepts",
-        "source_log",
-        "source_sha256",
-    }
-    assert isinstance(d["constraints"], list)
-    assert d["constraints"][0]["trace_id"] == "o1"
-    assert d["case_concepts"] == ["order", "item"]
+def test_a_written_table_has_no_index_column(written):
+    header = written.read_text(encoding="utf-8").splitlines()[0]
+
+    assert header.startswith("case_concept,trace_id,")
 
 
-def test_enricher_reports_a_missing_dependency_without_declare4py(monkeypatch):
-    import semanticlog.enrich.declare as declare_module
-
-    monkeypatch.setattr(declare_module, "_DECLARE4PY_AVAILABLE", False)
-    with pytest.raises(DependencyError, match="Declare4Py"):
-        DeclareEnricher(data=None)
-
-
-def test_reading_a_csv_without_its_origin_file_warns(result, tmp_path, caplog):
-    import logging
-
-    path = tmp_path / "constraints.csv"
-    result.write(str(path))
-    (tmp_path / "constraints.csv.meta.json").unlink()
+def test_a_table_without_its_meta_file_reads_with_a_warning(written, caplog):
+    Path(str(written) + META_SUFFIX).unlink()
 
     with caplog.at_level(logging.WARNING):
-        reread = DeclareResult.read(str(path))
+        reread = DeclareResult.read(str(written))
 
     assert reread.source_log is None
-    assert "do not record which log" in caplog.text
+    assert "cannot check which log" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("meta", "match"),
+    [("{not json", "not readable as JSON"), ('["oops"]', "not an object")],
+)
+def test_a_meta_file_that_is_not_a_json_object_is_rejected(written, meta, match):
+    Path(str(written) + META_SUFFIX).write_text(meta, encoding="utf-8")
+
+    with pytest.raises(InputError, match=match):
+        DeclareResult.read(str(written))
+
+
+def test_a_csv_of_another_shape_is_rejected(tmp_path):
+    path = tmp_path / "not-constraints.csv"
+    pd.DataFrame({"a": [1], "b": [2]}).to_csv(path, index=False)
+
+    with pytest.raises(InputError, match="is not a DECLARE constraints table"):
+        DeclareResult.read(str(path))
+
+
+def test_a_missing_index_column_is_named_with_the_columns_found(tmp_path):
+    path = tmp_path / "half-constraints.csv"
+    pd.DataFrame({"trace_id": ["o1"], "Response__A__B__": [True]}).to_csv(
+        path, index=False
+    )
+
+    with pytest.raises(InputError, match="no 'case_concept' column") as failure:
+        DeclareResult.read(str(path))
+
+    assert "Response__A__B__" in str(failure.value)
+
+
+def test_an_unnamed_index_column_from_another_tool_is_dropped(result, tmp_path, caplog):
+    path = tmp_path / "constraints.csv"
+    result.constraints.to_csv(path, index=True)
+
+    with caplog.at_level(logging.INFO, logger="semanticlog.enrich.declare"):
+        reread = DeclareResult.read(str(path))
+
+    assert list(reread.constraints.columns) == list(result.constraints.columns)
+    assert "dropping 1 unnamed index column(s)" in caplog.text
+
+
+# --------------------------------------------------------------------------
+# Mining, with fakes for Declare4Py
+# --------------------------------------------------------------------------
+
+
+class FakeTrace(list):
+    """Fake trace, which Declare4Py reads as a sequence of event dicts."""
+
+    def __init__(self, activities, name):
+        super().__init__({"concept:name": a} for a in activities)
+        self.attributes = {"concept:name": name}
+
+
+class FakeEventLog:
+    """Fake `D4PyEventLog`."""
+
+    def __init__(self, log=None, case_name=None):
+        self.wrapped = log
+        self.case_name = case_name
+
+    def get_log(self):
+        return self.wrapped
+
+
+class FakeModel:
+    """Fake `DeclareModel`."""
+
+    def __init__(self, text: str | None = None):
+        self.text = text
+
+    def parse_from_string(self, text: str) -> FakeModel:
+        return FakeModel(text)
+
+
+class FakeAnalyzer:
+    """Fake `MPDeclareAnalyzer`. It records what it was handed."""
+
+    calls: list[dict] = []
+    # Both vary across the two traces, so neither is dropped as constant.
+    metric = pd.DataFrame({"Response[a, b] | | |": [1, 0], "Init[a] | |": [0, 1]})
+
+    def __init__(self, log=None, declare_model=None, consider_vacuity=None):
+        FakeAnalyzer.calls.append(
+            {"log": log, "model": declare_model, "consider_vacuity": consider_vacuity}
+        )
+
+    def run(self) -> FakeAnalyzer:
+        return self
+
+    def get_metric(self, metric: str) -> pd.DataFrame:
+        assert metric == "state"
+        return FakeAnalyzer.metric.copy()
+
+
+class FakeMiner:
+    """Fake `DeclareMiner`. It records the thresholds it was given."""
+
+    calls: list[dict] = []
+
+    def __init__(self, **kwargs):
+        FakeMiner.calls.append(kwargs)
+
+    def run(self) -> FakeModel:
+        return FakeModel("discovered")
+
+
+@pytest.fixture
+def fakes(monkeypatch):
+    """Put the fakes in place of Declare4Py."""
+    FakeAnalyzer.calls = []
+    FakeMiner.calls = []
+    monkeypatch.setattr(declare_module, "_DECLARE4PY_AVAILABLE", True)
+    for name, fake in (
+        ("D4PyEventLog", FakeEventLog),
+        ("DeclareModel", FakeModel),
+        ("MPDeclareAnalyzer", FakeAnalyzer),
+        ("DeclareMiner", FakeMiner),
+    ):
+        monkeypatch.setattr(declare_module, name, fake, raising=False)
+
+
+@pytest.fixture
+def log() -> FakeEventLog:
+    """A two-trace log with three activities between them."""
+    return FakeEventLog([FakeTrace(["a", "b"], "t1"), FakeTrace(["b", "c"], "t2")])
+
+
+@pytest.fixture
+def enricher(fakes, tiny_store, log, monkeypatch):
+    """An enricher whose every case concept flattens to `log`."""
+    monkeypatch.setattr(
+        DeclareEnricher, "get_log", lambda self, cc: (log, [f"{cc}1", f"{cc}2"])
+    )
+    return DeclareEnricher(tiny_store)
+
+
+def test_the_enricher_needs_declare4py_and_lydia(monkeypatch, tiny_store):
+    monkeypatch.setattr(declare_module, "_DECLARE4PY_AVAILABLE", False)
+
+    with pytest.raises(DependencyError, match="needs Declare4Py and its Lydia backend"):
+        DeclareEnricher(tiny_store)
+
+
+def test_the_model_declares_every_activity_once(enricher, log):
+    assert (
+        enricher.construct_model_string(log) == "activity a\nactivity b\nactivity c\n"
+    )
+
+
+def test_a_unary_template_is_instantiated_once_per_activity(enricher, log):
+    model = enricher.construct_model_string(log, constraint_set=["Init"])
+
+    assert [line for line in model.splitlines() if line.startswith("Init")] == [
+        "Init[a] | |",
+        "Init[b] | |",
+        "Init[c] | |",
+    ]
+
+
+def test_a_binary_template_takes_every_ordered_pair_of_distinct_activities(
+    enricher, log
+):
+    model = enricher.construct_model_string(log, constraint_set=["Response"])
+    pairs = [line for line in model.splitlines() if line.startswith("Response")]
+
+    assert len(pairs) == 6
+    assert {"Response[a, b] | | |", "Response[b, a] | | |"} <= set(pairs)
+    assert [line for line in pairs if "[a, a]" in line] == []
+
+
+def test_a_misspelled_template_is_rejected(enricher):
+    with pytest.raises(ConfigError, match="Responce"):
+        enricher.get_constraints_via_discovery(["order"], constraint_set=["Responce"])
+
+
+def test_mining_over_no_case_concept_is_rejected(enricher):
+    with pytest.raises(ConfigError, match="No case concepts to mine"):
+        enricher.get_constraints_via_enumeration([], ["Init"])
+
+
+def test_enumeration_checks_each_case_concept_against_the_model_it_built(enricher, log):
+    result = enricher.get_constraints_via_enumeration(["order", "item"], ["Init"])
+
+    assert [call["model"].text for call in FakeAnalyzer.calls] == [
+        enricher.construct_model_string(log, constraint_set=["Init"])
+    ] * 2
+    assert list(result.constraints["case_concept"]) == ["order"] * 2 + ["item"] * 2
+    assert list(result.constraints["trace_id"]) == [
+        "order1",
+        "order2",
+        "item1",
+        "item2",
+    ]
+
+
+def test_enumeration_passes_the_vacuity_setting_through(enricher):
+    enricher.get_constraints_via_enumeration(
+        ["order"], ["Init"], vacuous_is_considered=True
+    )
+
+    assert FakeAnalyzer.calls[0]["consider_vacuity"] is True
+
+
+def test_discovery_checks_the_model_the_miner_found_with_its_thresholds(enricher):
+    enricher.get_constraints_via_discovery(
+        ["order"], constraint_support_threshold=0.7, itemset_support_threshold=0.3
+    )
+
+    assert (
+        FakeMiner.calls[0]["min_support"],
+        FakeMiner.calls[0]["itemsets_support"],
+    ) == (
+        0.7,
+        0.3,
+    )
+    assert FakeAnalyzer.calls[0]["model"].text == "discovered"
+
+
+def test_discovery_keeps_only_the_templates_it_was_restricted_to(enricher):
+    """The miner proposes whatever the log supports."""
+    result = enricher.get_constraints_via_discovery(["order"], constraint_set=["Init"])
+
+    assert set(result.constraints.columns) - {"trace_id", "case_concept"} == {
+        "Init__a__"
+    }
+
+
+@pytest.mark.parametrize(
+    ("column", "expected"),
+    [("Exclusive Choice[a, b] | | |", "Exclusive Choice"), ("trace_id", "trace_id")],
+)
+def test_the_template_of_a_column_is_the_text_before_the_activities(column, expected):
+    assert template_of(column) == expected
+
+
+# --------------------------------------------------------------------------
+# The checker's output, made into class names and membership
+# --------------------------------------------------------------------------
+
+
+def test_a_constraint_column_becomes_a_boolean_column_named_safely(enricher):
+    frame = pd.DataFrame({"Response[a, b] | | |": [1, 0], "trace_id": ["t1", "t2"]})
+
+    result = enricher.postprocess_results({"order": frame})
+
+    assert result["Response__a__b__"].tolist() == [True, False]
+    assert result["Response__a__b__"].dtype == bool
+
+
+def test_a_trace_with_no_answer_does_not_satisfy_the_constraint(enricher):
+    frame = pd.DataFrame(
+        {"Response[a, b] | | |": [1, 0, float("nan")], "trace_id": ["t1", "t2", "t3"]}
+    )
+
+    result = enricher.postprocess_results({"order": frame})
+
+    assert result["Response__a__b__"].tolist() == [True, False, False]
+
+
+def test_a_zero_one_trace_id_column_is_left_as_it_is(enricher):
+    frame = pd.DataFrame({"Response[a, b] | | |": [1, 0], "trace_id": [0, 1]})
+
+    result = enricher.postprocess_results({"order": frame})
+
+    assert result["trace_id"].tolist() == [0, 1]
+    assert result["trace_id"].dtype != bool
+
+
+def test_a_constraint_that_holds_of_every_trace_is_dropped(enricher):
+    frame = pd.DataFrame(
+        {
+            "Init[a] | |": [1, 1],
+            "Response[a, b] | | |": [1, 0],
+            "trace_id": ["t1", "t2"],
+        }
+    )
+
+    result = enricher.postprocess_results({"order": frame})
+
+    assert "Init__a__" not in result.columns
+    assert "Response__a__b__" in result.columns
+
+
+def test_a_constraint_constant_within_one_case_concept_only_is_kept(enricher):
+    frames = {
+        "order": pd.DataFrame(
+            {
+                "Response[a, b] | | |": [1, 1],
+                "Init[a] | |": [1, 1],
+                "trace_id": ["o1", "o2"],
+            }
+        ),
+        "item": pd.DataFrame(
+            {"Response[a, b] | | |": [1, 0], "trace_id": ["i1", "i2"]}
+        ),
+    }
+
+    result = enricher.postprocess_results(frames)
+
+    assert result["Response__a__b__"].tolist() == [True, True, True, False]
+    assert result.loc[result["case_concept"] == "order", "Init__a__"].tolist() == [
+        True,
+        True,
+    ]
+    assert result.loc[result["case_concept"] == "item", "Init__a__"].isna().all()
+
+
+def test_two_constraints_that_clean_to_one_name_are_rejected(enricher):
+    frame = pd.DataFrame(
+        {"Init[a]] | |": [1, 0], "Init[a__] | |": [0, 1], "trace_id": ["t1", "t2"]}
+    )
+
+    with pytest.raises(InputError, match="Init__a____") as failure:
+        enricher.postprocess_results({"order": frame})
+
+    assert "order" in str(failure.value)
+
+
+# --------------------------------------------------------------------------
+# Flattening, where the trace ids come from
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def awkward_enricher(fakes):
+    return DeclareEnricher(stores.build("awkward"))
+
+
+def test_the_trace_ids_follow_the_order_of_the_traces_in_the_log(awkward_enricher):
+    """`trace_id` is assigned to the checker's rows by position."""
+    log, case_ids = awkward_enricher.get_log("order")
+
+    assert case_ids == [trace.attributes["concept:name"] for trace in log.wrapped]
+    assert set(case_ids) <= set(
+        stores.build("awkward").table(EntityKind.OBJECT, "order").data["oid"]
+    )
+
+
+def test_the_flattened_log_names_its_activity_and_timestamp_keys(awkward_enricher):
+    """`D4PyEventLog` reads both keys from the log's properties."""
+    log, _ = awkward_enricher.get_log("order")
+
+    assert log.wrapped.properties["pm4py:param:timestamp_key"] == "time:timestamp"
+    assert log.wrapped.properties["pm4py:param:activity_key"] == "concept:name"
+
+
+def test_a_change_to_the_root_logger_inside_the_import_guard_is_undone():
+    root = logging.getLogger()
+    before = (root.handlers[:], root.level)
+
+    with declare_module._keep_logging_config():
+        root.addHandler(logging.NullHandler())
+        root.setLevel(logging.DEBUG)
+
+    assert (root.handlers, root.level) == before

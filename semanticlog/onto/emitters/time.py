@@ -1,9 +1,7 @@
-"""Time, as one individual per distinct point in time.
+"""Time, as one individual per distinct timestamp.
 
-Timestamps become individuals rather than plain literals on their events, so
-that several events at the same moment share one time individual and a query
-can reach the events of a moment from the moment itself. The literal value is
-kept on the individual as well.
+Events with the same timestamp share one time individual. The individual
+carries the literal value.
 """
 
 from __future__ import annotations
@@ -12,6 +10,7 @@ import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.data.readable import ReadableStore
+from semanticlog.data.tables import EntityKind
 from semanticlog.onto.annotations import timestamp_labels
 from semanticlog.onto.emitters.base import Emitter
 
@@ -19,22 +18,20 @@ from semanticlog.onto.emitters.base import Emitter
 class TimeEmitter(Emitter):
     """Emits time individuals and links events to them.
 
-    The moments already written are the build's rather than this emitter's,
-    so that the same timestamp reached from several activities, or later from
-    the attribute history, is emitted once.
+    `emitted.timestamps` records which are written, so the attribute history
+    does not write a timestamp twice.
     """
 
     def emit_individuals(self, ids: pd.Series, stamps: pd.Series) -> None:
-        """Emit the time individuals that have not been emitted yet.
+        """Emit the time individuals not yet emitted.
 
-        An entity whose timestamp is missing has no moment to name, so those
-        rows are dropped here and the entity is left without a time.
+        Rows with a missing timestamp are dropped.
 
         Args:
-            ids: Individual names of the moments.
-            stamps: The timestamps themselves, aligned with the ids.
+            ids: Individual name per timestamp.
+            stamps: Timestamps, aligned with `ids`.
         """
-        written = self.emitted.moments
+        written = self.emitted.timestamps
         frame = pd.DataFrame({"time_str": ids.to_numpy(), "time": stamps.to_numpy()})
         frame = frame[frame["time_str"].notna()]
         fresh = frame[~frame["time_str"].isin(written)].drop_duplicates("time_str")
@@ -48,10 +45,10 @@ class TimeEmitter(Emitter):
         self.assert_data(vocab.HAS_DATA_VALUE, fresh, "time_str", "time")
 
     def emit(self, data: ReadableStore) -> None:
-        """Emit the moments of every event, and link each event to its own."""
+        """Emit the timestamp of every event and link each event to it."""
 
-        for activity in data.get_event_types():
-            table = data.get_event_table(activity)
+        for activity in data.types(EntityKind.EVENT):
+            table = data.table(EntityKind.EVENT, activity)
             df_time = table.data[[table.id, table.time]].rename(
                 columns={table.id: "event", table.time: "time"}
             )

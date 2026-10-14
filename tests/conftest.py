@@ -1,8 +1,6 @@
 """The fixtures the whole suite shares.
 
-The stores come from `tests/support/stores.py` and the build configurations
-from `tests/support/settings.py`. Everything that builds an ontology from the
-matrix goes through `built`, which runs each configuration once per session.
+The stores come from `tests/support/stores.py`, the build configurations from `tests/support/settings.py` and the build helper from `tests/support/build.py`. `built` caches each configuration per sink for the session.
 """
 
 from __future__ import annotations
@@ -16,23 +14,17 @@ import pytest
 from semanticlog.core.enums import OWLProfile
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.oced import OCEDStore
-from semanticlog.onto.builder import OCEDOntoBuilder
-from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sinks import StreamingSink
 from tests.support import stores
-from tests.support.ontology import Emitted, read_functional, read_rdf
+from tests.support.build import STREAMING, emit
+from tests.support.emitted import Emitted
 from tests.support.recording import RecordingSink
-from tests.support.settings import CONFIGURATIONS, Configuration, configured
+from tests.support.settings import CONFIGURATIONS
 
 warnings.filterwarnings(
     "ignore",
     message="pkg_resources is deprecated as an API",
     category=UserWarning,
 )
-
-STREAMING = "streaming"
-IN_MEMORY = "in_memory"
-BACKENDS = (STREAMING, IN_MEMORY)
 
 
 # --------------------------------------------------------------------------
@@ -59,7 +51,7 @@ def pytest_collection_modifyitems(config, items) -> None:
         return
     if _jvm_available():
         return
-    skip = pytest.mark.skip(reason="no JVM found, so the OWL API cannot start")
+    skip = pytest.mark.skip(reason="no JVM found")
     for item in items:
         if item.get_closest_marker("reasoner"):
             item.add_marker(skip)
@@ -113,7 +105,7 @@ def ocel() -> Path:
 
 @pytest.fixture
 def recording_sink() -> Callable[..., RecordingSink]:
-    """Return a factory for a sink that records calls instead of writing axioms."""
+    """Return a factory for a sink that records each call."""
 
     def make(
         profile: OWLProfile = OWLProfile.OWL2DL, iri: str = DEFAULT_IRI
@@ -128,48 +120,11 @@ def recording_sink() -> Callable[..., RecordingSink]:
 # --------------------------------------------------------------------------
 
 
-def emit(
-    spec: Configuration | OntoBuildSettings,
-    path: Path,
-    backend: str = STREAMING,
-    data: OCEDStore | None = None,
-    source: str = "matrix",
-) -> Emitted:
-    """Build one ontology, write it, and read it back.
-
-    Args:
-        spec: What to build, as a configuration or as bare settings, which
-            take the default inputs.
-        path: File to write. The extension is left as given.
-        backend: Which sink to build through.
-        data: Store to build from, defaulting to the matrix store.
-        source: Value recorded as the source log annotation.
-
-    Returns:
-        The ontology that was written, read back from the file.
-    """
-    config = configured(spec)
-    data = stores.build(stores.MATRIX_STORE) if data is None else data
-    if backend == STREAMING:
-        sink = StreamingSink(str(path), DEFAULT_IRI, config.settings.profile)
-        OCEDOntoBuilder(DEFAULT_IRI, config.settings, sink=sink).build_ontology(
-            data, config.inputs, source=source
-        )
-        return read_functional(path)
-
-    builder = OCEDOntoBuilder(DEFAULT_IRI, config.settings)
-    builder.build_ontology(data, config.inputs, source=source)
-    builder.sink.save(str(path))
-    return read_rdf(path, DEFAULT_IRI)
-
-
 @pytest.fixture(scope="session")
 def matrix(tmp_path_factory) -> Callable[..., tuple[Emitted, Path]]:
-    """Return one configuration as both the ontology it emits and the file it wrote.
+    """Return one configuration as the ontology it emits and the file it wrote.
 
-    Every test that reads a whole build goes through this, so the matrix is
-    built once rather than once per assertion. `built` and `built_path` are the
-    two halves of it, and both share this cache.
+    Builds are cached for the session and shared with `built` and `built_path`.
     """
     root = tmp_path_factory.mktemp("matrix")
     cache: dict[tuple[str, str], tuple[Emitted, Path]] = {}

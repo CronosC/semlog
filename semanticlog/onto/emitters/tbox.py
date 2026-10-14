@@ -1,8 +1,7 @@
 """The TBox every build starts from.
 
 `Object`, `Event`, `Attribute` and `Time` and the properties between them are
-fixed. Everything a log contributes hangs below them, so two ontologies built
-from different logs are comparable.
+fixed. Everything from the log is placed below them.
 """
 
 from __future__ import annotations
@@ -18,26 +17,19 @@ class TBoxEmitter(Emitter):
         """Emit the TBox.
 
         Args:
-            attribute_history: Whether to include the attribute change part of
-                the schema. Defaults to what the settings ask for. The builder
-                passes False when the settings ask for it but the store cannot
-                supply it, so the schema does not promise something no data
-                will fill.
+            attribute_history: Whether to emit the attribute change part of
+                the schema. Defaults to `settings.emits_attribute_history`.
+                The builder passes False when the store holds no history.
         """
         if attribute_history is None:
             attribute_history = self.settings.emits_attribute_history
 
         has_inverses = self.settings.has_inverses
         axiomatic = self.settings.axiomatic_inverses
-        self.sink.add_classes(
-            [vocab.OBJECT, vocab.EVENT, vocab.ATTRIBUTE, vocab.TIME],
-            source="the TBox",
-        )
-        self.sink.add_classes(
-            [vocab.OBJECT_ATTRIBUTE, vocab.EVENT_ATTRIBUTE],
-            vocab.ATTRIBUTE,
-            source="the TBox",
-        )
+        for name in (vocab.OBJECT, vocab.EVENT, vocab.ATTRIBUTE, vocab.TIME):
+            self.sink.add_class(name, source="the TBox")
+        for name in (vocab.OBJECT_ATTRIBUTE, vocab.EVENT_ATTRIBUTE):
+            self.sink.add_class(name, vocab.ATTRIBUTE, source="the TBox")
 
         self.sink.add_property(
             vocab.OBSERVED_AT,

@@ -1,4 +1,4 @@
-"""How fast each sink accepts axioms. Run by hand, not collected."""
+"""How fast `InMemorySink` accepts individuals and relations."""
 
 from __future__ import annotations
 
@@ -49,7 +49,6 @@ def relations(n: int = DEFAULT_RELATIONS) -> None:
 
 
 if __name__ == "__main__":
-    # One argument scales both measurements down, for a quick run.
     scale = int(sys.argv[1]) if len(sys.argv) > 1 else 0
     individuals(scale or DEFAULT_INDIVIDUALS)
     relations(scale or DEFAULT_RELATIONS)

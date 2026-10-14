@@ -1,9 +1,8 @@
 """Readers that turn source event logs into an OCED store.
 
-`PM4PyLoader` is the one to use for OCEL 2.0. `ClassicalLoader` covers flat
-single-case logs, which have no object-centric structure of their own.
-`loader_for` picks between them by file extension, and `load_and_clean` is the
-whole first step of a build.
+`PM4PyLoader` reads OCEL 2.0. `ClassicalLoader` reads flat single-case logs.
+`loader_for` picks one by file extension, and `load_and_clean` reads and
+cleans a log in one call.
 """
 
 from collections.abc import Mapping, Sequence
@@ -14,7 +13,7 @@ from semanticlog.core.enums import OCELExtension
 from semanticlog.core.errors import InputError
 from semanticlog.data.binning import DEFAULT_BIN_LABELS
 from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.loading.base import Loader
+from semanticlog.data.loading.base import Loader, LoaderColumns
 from semanticlog.data.loading.classical_loader import (
     CLASSICAL_SUFFIXES,
     ClassicalLoader,
@@ -27,33 +26,29 @@ LOG_SUFFIXES: frozenset[str] = OCEL_SUFFIXES | CLASSICAL_SUFFIXES
 
 def loader_for(
     path: str,
-    config: dict[str, Any],
+    columns: Mapping[str, Any] | None = None,
     *,
     ocel_extensions: Sequence[OCELExtension] = (),
 ) -> Loader:
     """Return the loader that reads one file, chosen by its extension.
 
     Args:
-        path: Log to read.
-        config: Reader settings. A classical log takes its column names from
-            here, an OCEL log its format. Either loader fills in the defaults
-            it used.
-        ocel_extensions: OCEL 2.0 extensions to load as well. A classical log
-            has none.
-
-    Returns:
-        A loader bound to that file.
+        columns: Column names for a flat log. An OCEL log ignores them, but
+            an unknown key is rejected for every log.
+        ocel_extensions: OCEL 2.0 extensions to load. Ignored for a flat log.
 
     Raises:
-        ValueError: If no loader reads that extension.
+        ConfigError: If a column setting names no column a loader reads.
+        InputError: If no loader reads that extension.
     """
+    named = LoaderColumns.from_mapping(columns)
     suffix = Path(path).suffix.lower()
     if suffix in OCEL_SUFFIXES:
-        return PM4PyLoader(path, config, ocel_extensions=list(ocel_extensions))
+        return PM4PyLoader(path, ocel_extensions=ocel_extensions)
     if suffix in CLASSICAL_SUFFIXES:
-        return ClassicalLoader(path, config)
+        return ClassicalLoader(path, named)
     raise InputError(
-        f"no loader reads {suffix or path!r}. Supported extensions: "
+        f"No loader reads {suffix or path!r}. Supported extensions: "
         f"{', '.join(sorted(LOG_SUFFIXES))}."
     )
 
@@ -66,24 +61,22 @@ def load_and_clean(
 ) -> OCEDStore:
     """Read one event log and make its names safe to emit.
 
-    This is the whole first step of a build. Nothing below it may be skipped,
-    since a build refuses a store cleaning has not been through.
-
     Args:
-        path: Log to read. The extension chooses the loader.
-        extensions: OCEL extensions to load as well.
-        bin_labels: Bin labels the build will use, which cleaning reserves
-            along with the rest of the names a build derives for itself. The
-            default is what a build reserves when the labels are left alone,
-            so `inspect` reports the names a build would use. A run with its
-            own labels passes them, and only then can the two differ.
+        bin_labels: Bin labels the build will use. Cleaning reserves a class
+            name for each.
         columns: Column names for a flat `.csv` or `.xes` log. An OCEL log
-            carries its own structure and ignores them.
+            ignores them. An unknown key is rejected for every log.
 
     Returns:
         The cleaned store.
+
+    Raises:
+        ConfigError: If a column setting is unknown or names no column of the
+            log.
+        InputError: If no loader reads the extension, or the log holds
+            something a store cannot, such as a repeated id or a missing id.
     """
-    loader = loader_for(str(path), dict(columns or {}), ocel_extensions=extensions)
+    loader = loader_for(str(path), columns, ocel_extensions=extensions)
     return clean_oced_data(loader.get_oced(), bin_labels=bin_labels)
 
 
@@ -93,6 +86,7 @@ __all__ = [
     "OCEL_SUFFIXES",
     "ClassicalLoader",
     "Loader",
+    "LoaderColumns",
     "PM4PyLoader",
     "load_and_clean",
     "loader_for",
