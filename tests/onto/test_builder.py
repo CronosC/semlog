@@ -275,22 +275,36 @@ def test_a_document_entry_annotates_the_entity_it_names(tiny_store, recording_si
     }
 
 
-def test_a_document_label_and_a_derived_label_are_both_written(
-    tiny_store, recording_sink
-):
-    written = _annotate(
-        tiny_store,
-        recording_sink,
-        {"step": {"label": "A step"}},
-        derive_annotations=True,
+def _texts_of(tiny_store, recording_sink, annotations, name):
+    """Build with derived annotations and return every text written for one name."""
+    sink = recording_sink()
+    OCEDOntoBuilder(
+        DEFAULT_IRI, OntoBuildSettings(derive_annotations=True), sink=sink
+    ).build_ontology(tiny_store, BuildInputs(annotations=annotations))
+    return sorted(
+        (kind, text)
+        for _, entity, kind, text in sink.of_kind("annotate")
+        if entity == name
     )
 
-    assert {
-        text for name, kind, text in written if (name, kind) == ("step", "label")
-    } == {
-        "A step",
+
+def test_a_document_entry_replaces_the_derived_label_and_comment(
+    tiny_store, recording_sink
+):
+    texts = _texts_of(
+        tiny_store,
+        recording_sink,
+        {"step": {"label": "A step", "comment": "Someone did something."}},
         "step",
-    }
+    )
+
+    assert texts == [("comment", "Someone did something."), ("label", "A step")]
+
+
+def test_a_document_label_keeps_the_derived_comment(tiny_store, recording_sink):
+    texts = _texts_of(tiny_store, recording_sink, {"step": {"label": "A step"}}, "step")
+
+    assert texts == [("comment", "Events of type 'step'."), ("label", "A step")]
 
 
 def test_a_document_entry_naming_nothing_the_build_declared_is_reported(

@@ -229,6 +229,8 @@ class AnnotationWriter:
         sink: Where the annotations go.
         settings: Settings of the build.
         backmap: Cleaned name to the name in the log.
+        document: Entity name to the label and comment that replace the
+            derived ones.
     """
 
     def __init__(
@@ -236,10 +238,12 @@ class AnnotationWriter:
         sink: AnnotationSink,
         settings: OntoBuildSettings,
         backmap: Mapping[str, str],
+        document: Mapping[str, Mapping[str, str]] | None = None,
     ) -> None:
         self.sink = sink
         self.settings = settings
         self._backmap = backmap
+        self._document = document or {}
 
     @property
     def enabled(self) -> bool:
@@ -261,6 +265,9 @@ class AnnotationWriter:
     def write(self, template: str, name: str, **fields: Any) -> None:
         """Annotate one class or property, and its inverse where it has one.
 
+        A label or comment the annotation document gives for `name` is written
+        in place of the derived one.
+
         Args:
             template: Entry of `derived_annotations.json` to fill.
             name: Local name of the entity to annotate.
@@ -273,10 +280,11 @@ class AnnotationWriter:
         if not self.enabled:
             return
         entry = _entry(template)
+        given = self._document.get(name, {})
         self.sink.annotate_entity(
             name,
-            label=_fill(entry["label"], template, fields),
-            comment=_fill(entry["comment"], template, fields),
+            label=given.get("label") or _fill(entry["label"], template, fields),
+            comment=given.get("comment") or _fill(entry["comment"], template, fields),
         )
         if "inverse_label" not in entry or not self.has_inverses:
             return

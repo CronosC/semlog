@@ -217,11 +217,13 @@ class OCEDOntoBuilder:
         """The settings this build runs with."""
         return self._settings
 
-    def _make_emitters(self, data: ReadableStore) -> Emitters:
-        """Create the emitters for one store."""
+    def _make_emitters(
+        self, data: ReadableStore, document: Mapping[str, Mapping[str, str]]
+    ) -> Emitters:
+        """Create the emitters for one store and its annotation document."""
         owners = attribute_owners(data)
         report_conflated_attributes(owners)
-        annotations = AnnotationWriter(self.sink, self.settings, data.backmap)
+        annotations = AnnotationWriter(self.sink, self.settings, data.backmap, document)
         parts = (self.sink, self.settings, annotations, self.emitted)
         attributes = AttributeEmitter(
             *parts, owners, attribute_binnings(data, self.settings)
@@ -393,7 +395,7 @@ class OCEDOntoBuilder:
             record=run,
             attribute_history=attribute_history,
         )
-        emitters = self._make_emitters(data)
+        emitters = self._make_emitters(data, inputs.annotations)
         for step in BUILD_STEPS:
             if step.when is not None and not step.when(context):
                 continue
