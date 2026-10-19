@@ -15,6 +15,7 @@ import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.errors import ConfigError
+from semanticlog.data.cleaning import object_type_renames
 from semanticlog.data.declare import DeclareResult
 from semanticlog.data.flatten import iter_logs
 from semanticlog.data.readable import ReadableStore
@@ -239,10 +240,11 @@ class OrderEmitter(Emitter):
         )
 
     def _emit_declare(self, data: ReadableStore, declare: DeclareResult) -> None:
-        """Type each trace by the DECLARE constraints it satisfies.
+        """Type each case object by the DECLARE constraints its trace satisfies.
 
-        Every mined constraint becomes a class. The case object of a trace
-        that satisfies it becomes a member.
+        Every mined constraint becomes a class below the constraint hierarchy
+        and below the object types of the case concepts it holds in. The case
+        object of a trace that satisfies it becomes a member.
 
         Args:
             data: Store being built from. Its activity names split the
@@ -254,19 +256,47 @@ class OrderEmitter(Emitter):
                 build declared from the log. The sink raises it.
         """
         constraints = declare.constraint_names()
+        object_types = _case_concept_types(data, declare.case_concepts)
 
         self.sink.add_class(
-            vocab.DECLARE_CONSTRAINT, source="the DECLARE constraint hierarchy"
+            vocab.DECLARE_CONSTRAINT,
+            vocab.OBJECT,
+            source="the DECLARE constraint hierarchy",
         )
         for constraint in constraints:
-            self.sink.add_class(
-                constraint,
-                vocab.DECLARE_CONSTRAINT,
-                source=f"DECLARE constraint {constraint!r}",
-            )
+            source = f"DECLARE constraint {constraint!r}"
+            self.sink.add_class(constraint, vocab.DECLARE_CONSTRAINT, source=source)
+            # A constraint named after its own object type is a collision the
+            # entity emitter reports. A class below itself would fail first.
+            types = [
+                object_types[c]
+                for c in declare.case_concepts_of(constraint)
+                if c in object_types and object_types[c] != constraint
+            ]
+            if types:
+                self.sink.add_class(constraint, types, source=source)
         self.annotations.declare_constraints(
             vocab.DECLARE_CONSTRAINT, constraints, data.types(EntityKind.EVENT)
         )
 
         for constraint in constraints:
             self.sink.assert_individuals(constraint, declare.members(constraint))
+
+
+def _case_concept_types(
+    data: ReadableStore, case_concepts: Sequence[str]
+) -> dict[str, str]:
+    """Return each case concept with the object type the store holds it under.
+
+    A concept that names no object type, before or after cleaning, is left out.
+    """
+    object_types = set(data.types(EntityKind.OBJECT))
+    renames = object_type_renames(data)
+    found = {}
+    for case_concept in case_concepts:
+        name = (
+            case_concept if case_concept in object_types else renames.get(case_concept)
+        )
+        if name is not None:
+            found[case_concept] = name
+    return found

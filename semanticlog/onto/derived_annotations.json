@@ -72,11 +72,11 @@
   },
   "declare.hierarchy": {
     "label": "DECLARE constraint",
-    "comment": "A rule about the order of activities in a trace. Each subclass is one mined constraint, and its members are the traces that satisfy it."
+    "comment": "Objects whose trace satisfies a DECLARE constraint mined from the log. Each subclass is one constraint and holds the objects that satisfy it."
   },
   "declare.constraint": {
     "label": "{constraint}",
-    "comment": "Traces that satisfy the DECLARE constraint '{constraint}'."
+    "comment": "Objects whose trace satisfies the DECLARE constraint '{constraint}'."
   },
   "change.class": {
     "label": "{original} change",

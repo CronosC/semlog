@@ -220,14 +220,17 @@ def test_a_column_with_too_few_values_to_bin_keeps_its_numbers(built, name):
 # --------------------------------------------------------------------------
 
 
-def test_each_trace_is_typed_by_the_constraints_of_its_case_concept(built):
+def test_each_case_object_is_typed_by_the_constraints_of_its_case_concept(built):
     onto = built("dl_declare_multi_cc")
 
     assert {
         t for t, c in onto.types.items() if "Response__place_order__ship__" in c
     } == {"o1"}
     assert {t for t, c in onto.types.items() if "Existence__ship__" in c} == {"i1"}
-    assert onto.parents["Response__place_order__ship__"] == {"DeclareConstraint"}
+    assert onto.parents["Response__place_order__ship__"] == {
+        "DeclareConstraint",
+        "order",
+    }
 
 
 def test_a_mined_constraint_is_labeled_with_what_it_says(built):

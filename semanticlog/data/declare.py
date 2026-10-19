@@ -116,6 +116,10 @@ class DeclareResult:
         """Return every constraint name, in the order the concepts first list them."""
         return list(dict.fromkeys(n for c in self.concepts for n in c.satisfied))
 
+    def case_concepts_of(self, constraint: str) -> list[str]:
+        """Return the case concepts with a trace that satisfies `constraint`, in mining order."""
+        return [c.case_concept for c in self.concepts if c.satisfied.get(constraint)]
+
     def members(self, constraint: str) -> list[str]:
         """Return the traces that satisfy `constraint`, concept by concept in trace order."""
         return [

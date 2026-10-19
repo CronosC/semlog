@@ -20,13 +20,20 @@ from semanticlog.core.enums import (
 from semanticlog.core.errors import ConfigError
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.cleaning import clean_oced_data
+from semanticlog.data.declare import ConceptConstraints, DeclareResult
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.reason import Reasoner
 from tests.support.build import STREAMING, emit
 from tests.support.functional import read_functional
-from tests.support.settings import CONFIGURATIONS, Configuration, configuration
+from tests.support.settings import (
+    CONFIGURATIONS,
+    DISCOVERY,
+    Configuration,
+    configuration,
+    ragged_declare_constraints,
+)
 
 DF = EventOrderRepresentation.DF
 EF = EventOrderRepresentation.EF
@@ -302,3 +309,62 @@ def test_a_reasoner_derives_from_ef_the_pairs_ef_explicit_asserts(tmp_path):
     reached = _pairs(read_functional(axiomatic), "ef_order") | entailed
 
     assert reached == asserted
+
+
+# --------------------------------------------------------------------------
+# DECLARE
+# --------------------------------------------------------------------------
+
+
+def _shared_constraint() -> DeclareResult:
+    """One constraint that an order trace and an item trace satisfy."""
+    return DeclareResult(
+        concepts=(
+            ConceptConstraints(
+                "order", ("o1", "o2"), {"Existence__ship__": frozenset({"o1"})}
+            ),
+            ConceptConstraints(
+                "item", ("i1", "i2"), {"Existence__ship__": frozenset({"i1"})}
+            ),
+        ),
+        mining=DISCOVERY,
+    )
+
+
+def _declare_settings(declare: DeclareResult, profile=OWLProfile.OWL2DL):
+    return _settings(
+        [EventOrderRepresentation.DECLARE],
+        profile=profile,
+        case_concepts=["order", "item"],
+        declare=declare,
+    )
+
+
+def test_the_constraint_hierarchy_is_below_object(tmp_path):
+    onto = emit(_declare_settings(ragged_declare_constraints()), tmp_path / "d.ofn")
+
+    assert onto.parents[vocab.DECLARE_CONSTRAINT] == {vocab.OBJECT}
+
+
+def test_a_constraint_satisfied_in_one_concept_is_below_its_object_type(tmp_path):
+    onto = emit(_declare_settings(ragged_declare_constraints()), tmp_path / "d.ofn")
+
+    assert onto.parents["Existence__ship__"] == {vocab.DECLARE_CONSTRAINT, "item"}
+
+
+def test_a_constraint_satisfied_in_two_concepts_is_below_their_union_under_dl(
+    tmp_path,
+):
+    onto = emit(_declare_settings(_shared_constraint()), tmp_path / "d.ofn")
+
+    assert (
+        "SubClassOf(:Existence__ship__ ObjectUnionOf(:order :item))" in onto.axiom_lines
+    )
+
+
+def test_a_constraint_satisfied_in_two_concepts_has_one_parent_under_el(tmp_path):
+    onto = emit(
+        _declare_settings(_shared_constraint(), OWLProfile.OWL2EL), tmp_path / "d.ofn"
+    )
+
+    assert onto.parents["Existence__ship__"] == {vocab.DECLARE_CONSTRAINT}

@@ -60,6 +60,11 @@ def test_the_members_of_a_constraint_span_every_concept_in_trace_order():
     assert _result().members("Response__a__b__") == ["o1", "o3", "i1"]
 
 
+def test_the_concepts_satisfying_a_constraint_follow_the_concept_order():
+    assert _result().case_concepts_of("Response__a__b__") == ["order", "item"]
+    assert _result().case_concepts_of("Init__a__") == []
+
+
 def test_the_constraint_names_are_the_union_over_concepts_in_first_seen_order():
     assert _result().constraint_names() == ["Response__a__b__", "Init__a__"]
 

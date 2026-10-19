@@ -133,7 +133,7 @@ EXPECTED: dict[str, Shape] = {
         object_properties=30,
         data_properties=1,
         individuals=69,
-        axioms=606,
+        axioms=609,
         must_contain=_DF
         | _DECLARE
         | frozenset(
