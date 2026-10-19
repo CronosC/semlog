@@ -11,8 +11,8 @@ order_representations = ["df"]
 case_concepts = ["order"]
 
 data_representations = ["values"]
-# implicit: assert the reverse of every relation.
-inverse_representations = ["implicit"]
+# axiomatic: declare each inverse property with an InverseObjectProperties axiom.
+inverse_representations = ["axiomatic"]
 # Write rdfs:label and rdfs:comment from the names in the log.
 derive_annotations = true
 
