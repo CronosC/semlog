@@ -167,6 +167,15 @@ class OCEDStore:
         table = self._require(kind, name, "read the ids of")
         return table.data[table.id].unique()
 
+    def types_holding(self, kind: EntityKind, ids: Iterable[object]) -> list[str]:
+        """Return the sorted types of one kind whose tables hold any of the ids."""
+        wanted = set(ids)
+        return sorted(
+            name
+            for name, table in self.tables_of(kind).items()
+            if table.data[table.id].isin(wanted).any()
+        )
+
     def rename(self, kind: EntityKind, old_name: str, new_name: str) -> None:
         """Rename an activity or object type, in relation types and change tables too.
 

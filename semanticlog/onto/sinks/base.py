@@ -60,6 +60,7 @@ class AxiomSink(ABC):
         self.profile = profile
         self._names = NameLedger()
         self._dropped_unions = 0
+        self._replaced_unions = 0
         self._axiom_count = 0
         self._opened = False
         self._closed = False
@@ -94,6 +95,11 @@ class AxiomSink(ABC):
     def dropped_unions(self) -> int:
         """How many axioms were dropped under OWL 2 EL for holding a union."""
         return self._dropped_unions
+
+    @property
+    def replaced_unions(self) -> int:
+        """How many unions OWL 2 EL replaced by a single class."""
+        return self._replaced_unions
 
     def is_declared(self, name: str) -> bool:
         """Whether a class or property of this name has been declared."""
@@ -267,17 +273,23 @@ class AxiomSink(ABC):
             self._check_name(part, source)
         return parts or None
 
-    def _profile_allows(self, expression: list[str] | None) -> list[str] | None:
-        """Return the expression, or None for a union under OWL 2 EL.
+    def _profile_allows(
+        self, expression: list[str] | None, fallback: str | None = None
+    ) -> list[str] | None:
+        """Return the expression, or what replaces a union under OWL 2 EL.
 
-        Call it after the ledger check, so a repeated axiom is counted once.
+        Under OWL 2 EL a union becomes `fallback`, or None without one. Call it
+        after the ledger check, so a repeated axiom is counted once.
         """
         if expression is None or len(expression) <= 1:
             return expression
-        if self.profile == OWLProfile.OWL2EL:
+        if self.profile != OWLProfile.OWL2EL:
+            return expression
+        if fallback is None:
             self._dropped_unions += 1
             return None
-        return expression
+        self._replaced_unions += 1
+        return [fallback]
 
     def _resolve(self, value: Any) -> Literal | None:
         """Return the literal a value is emitted as, or None when it is missing."""
@@ -366,6 +378,8 @@ class AxiomSink(ABC):
         data_prop: bool = False,
         axiomatic_inverse: bool = False,
         *,
+        domain_fallback: str | None = None,
+        range_fallback: str | None = None,
         source: str = "a build step",
     ) -> None:
         """Declare a property, with its domain, range and optional inverse.
@@ -382,6 +396,10 @@ class AxiomSink(ABC):
             data_prop: Whether this is a data property.
             axiomatic_inverse: Also state that the two are inverses of each
                 other.
+            domain_fallback: Class that replaces a union domain under OWL 2
+                EL. Without one the domain is dropped.
+            range_fallback: Class that replaces a union range under OWL 2 EL.
+                Without one the range is dropped.
             source: Origin of the property.
 
         Raises:
@@ -405,7 +423,7 @@ class AxiomSink(ABC):
             self.add_sub_property(prop_name, superprop, data_prop, source=source)
         domain = self._disjuncts(domain_class, f"the domain of {prop_name!r}")
         if domain and self._names.first_domain(prop_name, domain, data_prop):
-            allowed = self._profile_allows(domain)
+            allowed = self._profile_allows(domain, domain_fallback)
             if allowed:
                 self.write_domain(prop_name, allowed, data_prop)
         range_ = self._disjuncts(range_class, f"the range of {prop_name!r}")
@@ -413,7 +431,7 @@ class AxiomSink(ABC):
             if data_prop:
                 self.write_data_range(prop_name, range_[0])
             else:
-                allowed = self._profile_allows(range_)
+                allowed = self._profile_allows(range_, range_fallback)
                 if allowed:
                     self.write_range(prop_name, allowed)
 

@@ -266,14 +266,20 @@ class OCEDOntoBuilder:
         )
 
     def _report_dropped_unions(self) -> None:
-        """Log how many union class expressions the profile dropped."""
+        """Log how many union class expressions the profile dropped or replaced."""
         dropped = self.sink.dropped_unions
-        if not dropped:
-            return
-        logger.info(
-            "  omitted %s with a union of classes, which OWL 2 EL does not allow",
-            counted(dropped, "axiom", "axioms"),
-        )
+        if dropped:
+            logger.info(
+                "  omitted %s with a union of classes, which OWL 2 EL does not allow",
+                counted(dropped, "axiom", "axioms"),
+            )
+        replaced = self.sink.replaced_unions
+        if replaced:
+            logger.info(
+                "  replaced the union of classes in %s by their common superclass "
+                "under OWL 2 EL",
+                counted(replaced, "axiom", "axioms"),
+            )
 
     def _report_what_was_kept(self) -> None:
         """Log the counts of declared names and of emitted values, bins and timestamps.

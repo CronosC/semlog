@@ -222,6 +222,28 @@ def test_a_union_under_el_is_dropped_and_counted_once(recording_sink):
     assert sink.dropped_unions == 1
 
 
+def test_a_union_with_a_fallback_writes_the_fallback_under_el(recording_sink):
+    sink = recording_sink(OWLProfile.OWL2EL)
+
+    sink.add_property(
+        "ships",
+        domain_class=["pay", "ship"],
+        range_class=["item", "order"],
+        domain_fallback="Event",
+        range_fallback="Object",
+    )
+
+    assert sink.of_kind("domain") == [("domain", "ships", ["Event"], False)]
+    assert sink.of_kind("range") == [("range", "ships", ["Object"], False)]
+    assert (sink.dropped_unions, sink.replaced_unions) == (0, 2)
+
+
+def test_a_union_with_a_fallback_is_kept_under_dl(sink):
+    sink.add_property("ships", domain_class=["pay", "ship"], domain_fallback="Event")
+
+    assert sink.of_kind("domain") == [("domain", "ships", ["pay", "ship"], False)]
+
+
 def test_a_second_annotation_text_on_one_entity_is_kept(sink):
     sink.add_class("order", source="an object type")
     sink.annotate_entity("order", label="derived label")

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.data.readable import ReadableStore
-from semanticlog.data.tables import RelationKind
+from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.emitters.base import Emitter
 
 _SUPERPROPERTY = {
@@ -23,9 +23,11 @@ class RelationEmitter(Emitter):
     def emit(self, data: ReadableStore, kind: RelationKind) -> None:
         """Emit one relation family, each relation with its domain and range.
 
-        The domain of an event-to-object relation is always the event class.
-        For an object-to-object relation it is the source types the store
-        records, falling back to the object class when it records none.
+        The domain of an event-to-object relation is the activities of its
+        source events. For an object-to-object relation it is the source types
+        the store records. Either falls back to the event or object class when
+        it is empty, and under OWL 2 EL when it is a union. A range of several
+        object types falls back to the object class under OWL 2 EL.
 
         Raises:
             ValueError: If `kind` is `RelationKind.ALL`.
@@ -41,9 +43,12 @@ class RelationEmitter(Emitter):
             table = data.get_relation(relation)
             from_types = table.from_type or []
             if kind is RelationKind.O2O:
-                domain = from_types or [vocab.OBJECT]
+                parent = vocab.OBJECT
+                domain = from_types or [parent]
             else:
-                domain = [vocab.EVENT]
+                parent = vocab.EVENT
+                sources = table.data[table.from_id].dropna().unique()
+                domain = data.types_holding(EntityKind.EVENT, sources) or [parent]
             self.sink.add_property(
                 relation,
                 superprop=superprop,
@@ -51,6 +56,8 @@ class RelationEmitter(Emitter):
                 range_class=list(table.to_type),
                 create_inverse=self.settings.has_inverses,
                 axiomatic_inverse=self.settings.axiomatic_inverses,
+                domain_fallback=parent,
+                range_fallback=vocab.OBJECT,
                 source=f"relation {relation!r}",
             )
             self.annotations.relation(relation, from_types, table.to_type)

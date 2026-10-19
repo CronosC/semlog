@@ -117,6 +117,14 @@ def test_a_table_without_the_columns_it_names_is_rejected_listing_its_columns():
         )
 
 
+def test_types_holding_ids_lists_each_type_once_sorted(oced):
+    assert oced.types_holding(EntityKind.EVENT, ["e3", "e1", "e2", "x9"]) == [
+        "pay",
+        "ship",
+    ]
+    assert oced.types_holding(EntityKind.EVENT, ["x9"]) == []
+
+
 def test_a_second_table_for_one_type_is_rejected(oced):
     with pytest.raises(InputError, match="Object type 'B' is already in this store"):
         oced.add(EntityKind.OBJECT, "B", pd.DataFrame({"oid": ["b9"]}), id_col="oid")

@@ -49,6 +49,9 @@ class ReadableStore(Protocol):
     def ids(self, kind: EntityKind, name: str) -> Iterable[object]:
         """Return the distinct ids of one activity or object type."""
 
+    def types_holding(self, kind: EntityKind, ids: Iterable[object]) -> list[str]:
+        """Return the sorted types of one kind whose tables hold any of the ids."""
+
     def get_most_common_objects(self, n: int = 1) -> list[str]:
         """Return the object types with the most instances."""
 
