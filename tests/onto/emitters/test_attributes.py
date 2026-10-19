@@ -67,7 +67,7 @@ def _price_emitter(sink, settings: OntoBuildSettings, binning) -> AttributeEmitt
         settings,
         AnnotationWriter(sink, settings, {}),
         EmittedIndividuals(),
-        {"price": ["order"]},
+        {"price": {EntityKind.OBJECT: ["order"]}},
         {"price": binning} if binning is not None else {},
     )
 
@@ -92,8 +92,12 @@ def test_an_attribute_of_one_type_has_that_type_as_its_domain(tiny_store, tmp_pa
     assert onto.ranges["has_channel"] == {"channel"}
 
 
-def test_an_attribute_of_two_types_has_one_domain_naming_both(awkward_store, tmp_path):
-    onto = emit(OntoBuildSettings(), tmp_path / "awkward.ofn", data=awkward_store)
+def test_an_attribute_of_two_types_has_one_domain_naming_both(
+    awkward_shared_store, tmp_path
+):
+    onto = emit(
+        OntoBuildSettings(), tmp_path / "awkward.ofn", data=awkward_shared_store
+    )
     domain_axioms = [
         line
         for line in onto.axiom_lines
@@ -104,9 +108,26 @@ def test_an_attribute_of_two_types_has_one_domain_naming_both(awkward_store, tmp
     assert len(domain_axioms) == 1
 
 
-def test_an_attribute_shared_by_several_types_is_reported(awkward_store, caplog):
+def test_an_attribute_of_two_types_gets_one_comment_naming_both(
+    awkward_shared_store, tmp_path
+):
+    onto = emit(
+        OntoBuildSettings(derive_annotations=True),
+        tmp_path / "awkward.ofn",
+        data=awkward_shared_store,
+    )
+    comments = [
+        text
+        for name, kind, text in onto.annotations
+        if (name, kind) == ("channel", "comment")
+    ]
+
+    assert comments == ["Values of the 'channel' attribute of item and order objects."]
+
+
+def test_an_attribute_shared_by_several_types_is_reported(awkward_shared_store, caplog):
     with caplog.at_level(logging.WARNING):
-        conflated = report_conflated_attributes(attribute_owners(awkward_store))
+        conflated = report_conflated_attributes(attribute_owners(awkward_shared_store))
 
     assert conflated == {"channel": ["item", "order"], "clerk": ["place_order", "ship"]}
     assert "4 different entities share 2 attribute names" in caplog.text

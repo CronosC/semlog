@@ -183,8 +183,10 @@ def test_a_negative_count_of_common_object_types_is_a_programming_error(oced):
     assert not isinstance(excinfo.value, SemlogError)
 
 
-def test_an_attribute_is_owned_by_every_type_whose_table_carries_it(awkward_store):
-    owners = attribute_owners(awkward_store)
+def test_an_attribute_is_owned_by_every_type_whose_table_carries_it(
+    awkward_shared_store,
+):
+    owners = attribute_owners(awkward_shared_store)
 
     assert owners["channel"] == ["item", "order"]
     assert owners["clerk"] == ["place_order", "ship"]

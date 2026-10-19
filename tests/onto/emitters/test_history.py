@@ -19,9 +19,9 @@ from semanticlog.onto.settings import OntoBuildSettings
 from tests.support.build import emit
 
 CHANGES = {
-    "AttrChange_o1_channel_20240102T090000_000000",
-    "AttrChange_o1_channel_20240106T090000_000000",
-    "AttrChange_o2_channel_20240103T090000_000000",
+    "AttrChange_o1_order_channel_20240102T090000_000000",
+    "AttrChange_o1_order_channel_20240106T090000_000000",
+    "AttrChange_o2_order_channel_20240103T090000_000000",
     "AttrChange_o1_price_20240104T090000_000000",
     "AttrChange_o2_price_20240105T090000_000000",
 }
@@ -85,8 +85,8 @@ def test_every_recorded_change_becomes_a_record_under_its_attribute(history):
     }
 
     assert changes == CHANGES
-    assert history.parents["channelChange"] == {"AttributeChange"}
-    assert history.parents["channel"] == {vocab.OBJECT_ATTRIBUTE}
+    assert history.parents["order_channelChange"] == {"AttributeChange"}
+    assert history.parents["order_channel"] == {vocab.OBJECT_ATTRIBUTE}
 
 
 def test_a_change_record_hangs_off_the_object_it_happened_to(history):
@@ -97,10 +97,14 @@ def test_a_change_record_hangs_off_the_object_it_happened_to(history):
 
 
 def test_a_change_record_points_at_the_value_it_changed_to(history):
-    channel = {o for p, _, o in history.relations if p == "change_value_channel"}
+    channel = {o for p, _, o in history.relations if p == "change_value_order_channel"}
     price = {o for p, _, o in history.relations if p == "change_value_price"}
 
-    assert channel == {"channel_shop", "channel_web", "channel_by_hand"}
+    assert channel == {
+        "order_channel_shop",
+        "order_channel_web",
+        "order_channel_by_hand",
+    }
     assert price == {"price_12.75", "price_41"}
 
 
@@ -130,7 +134,7 @@ def test_a_numeric_change_is_left_out_when_no_numbers_are_emitted(
     )
     targets = {p for p, _, _ in onto.relations if p.startswith("change_value_")}
 
-    assert targets == {"change_value_channel"}
+    assert targets == {"change_value_order_channel"}
 
 
 def test_a_numeric_change_is_binned_like_a_current_value(awkward_store, tmp_path):

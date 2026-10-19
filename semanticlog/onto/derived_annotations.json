@@ -43,14 +43,26 @@
     "comment": "Events with no successor in their '{case}' trace."
   },
   "attribute.class": {
-    "label": "{original}",
-    "comment": "Values of the '{original}' attribute of an {owner}."
+    "label": "{original} ({types})",
+    "comment": "Values of the '{original}' attribute of {owners}."
   },
   "attribute.property": {
     "label": "has {original}",
-    "comment": "Relates an {owner} to its '{original}' value.",
+    "comment": "Relates {owners} to their '{original}' value.",
     "inverse_label": "is {original} of",
-    "inverse_comment": "Inverse of has {original}. Relates a '{original}' value to its {owner}."
+    "inverse_comment": "Inverse of has {original}. Relates a '{original}' value to the {owners} carrying it."
+  },
+  "attribute.bin_lowest": {
+    "label": "{original} ({types}): {bin}",
+    "comment": "Values of the '{original}' attribute of {owners} that are at most {high}."
+  },
+  "attribute.bin": {
+    "label": "{original} ({types}): {bin}",
+    "comment": "Values of the '{original}' attribute of {owners} that are greater than {low} and at most {high}."
+  },
+  "attribute.bin_highest": {
+    "label": "{original} ({types}): {bin}",
+    "comment": "Values of the '{original}' attribute of {owners} that are greater than {low}."
   },
   "relation": {
     "label": "{original}",

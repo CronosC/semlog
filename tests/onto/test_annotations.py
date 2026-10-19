@@ -6,6 +6,7 @@ import ast
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -212,20 +213,74 @@ def test_an_inverse_is_not_annotated_when_the_build_has_none(writer):
 
 
 def test_an_attribute_annotates_its_class_its_property_and_the_inverse(writer):
-    annotations, sink = writer(inverses=True, backmap={"unit_price": "unit price"})
-    sink.add_class("unit_price", source="a test")
-    sink.add_property("has_unit_price", create_inverse=True, source="a test")
+    annotations, sink = writer(
+        inverses=True,
+        backmap={"order_unit_price": "unit price", "purchase_order": "purchase order"},
+    )
+    sink.add_class("order_unit_price", source="a test")
+    sink.add_property("has_order_unit_price", create_inverse=True, source="a test")
 
-    annotations.attribute("unit_price", "has_unit_price", "object")
+    annotations.attribute(
+        "order_unit_price",
+        "has_order_unit_price",
+        {EntityKind.OBJECT: ["purchase_order"]},
+    )
 
     assert texts(sink) == {
-        ("unit_price", "label"): "unit price",
-        ("unit_price", "comment"): "Values of the 'unit price' attribute of an object.",
-        ("has_unit_price", "label"): "has unit price",
-        ("has_unit_price", "comment"): "Relates an object to its 'unit price' value.",
-        ("inv_has_unit_price", "label"): "is unit price of",
-        ("inv_has_unit_price", "comment"): (
-            "Inverse of has unit price. Relates a 'unit price' value to its object."
+        ("order_unit_price", "label"): "unit price (purchase order)",
+        ("order_unit_price", "comment"): (
+            "Values of the 'unit price' attribute of purchase order objects."
+        ),
+        ("has_order_unit_price", "label"): "has unit price",
+        ("has_order_unit_price", "comment"): (
+            "Relates purchase order objects to their 'unit price' value."
+        ),
+        ("inv_has_order_unit_price", "label"): "is unit price of",
+        ("inv_has_order_unit_price", "comment"): (
+            "Inverse of has unit price. Relates a 'unit price' value to the "
+            "purchase order objects carrying it."
+        ),
+    }
+
+
+def test_an_attribute_of_events_and_objects_names_every_owner_in_one_comment(writer):
+    annotations, sink = writer()
+    sink.add_class("weight", source="a test")
+    sink.add_property("has_weight", source="a test")
+
+    annotations.attribute(
+        "weight",
+        "has_weight",
+        {EntityKind.EVENT: ["pack", "ship"], EntityKind.OBJECT: ["item"]},
+    )
+
+    assert texts(sink)[("weight", "comment")] == (
+        "Values of the 'weight' attribute of pack and ship events and item objects."
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "bounds", "comment"),
+    [
+        ("very_low", (-np.inf, 3.5), "that are at most 3.5."),
+        ("low", (3.5, 10.25), "that are greater than 3.5 and at most 10.25."),
+        ("very_high", (10.25, np.inf), "that are greater than 10.25."),
+    ],
+)
+def test_a_bin_class_is_annotated_with_the_values_it_holds(
+    writer, label, bounds, comment
+):
+    annotations, sink = writer()
+    sink.add_class("price_bin_x", source="a test")
+
+    annotations.bin_class(
+        "price_bin_x", "price", {EntityKind.OBJECT: ["order"]}, label, bounds
+    )
+
+    assert texts(sink) == {
+        ("price_bin_x", "label"): f"price (order): {label.replace('_', ' ')}",
+        ("price_bin_x", "comment"): (
+            f"Values of the 'price' attribute of order objects {comment}"
         ),
     }
 

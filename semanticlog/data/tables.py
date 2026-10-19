@@ -141,6 +141,15 @@ class TableView:
         return [str(c) for c in self.frame.columns if c not in self.key_columns]
 
     @property
+    def filled_attributes(self) -> list[str]:
+        """The attribute columns that hold at least one value.
+
+        A change table holds a column for every attribute that changes in the
+        log, empty in the rows of the types that do not carry it.
+        """
+        return [c for c in self.attributes if self.frame[c].notna().any()]
+
+    @property
     def structural(self) -> list[str]:
         """The structural columns other than the id, such as an event timestamp."""
         return [c for c in self.key_columns if c != self.id_column]

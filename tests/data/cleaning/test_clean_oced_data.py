@@ -88,7 +88,7 @@ def test_two_spellings_of_one_attribute_across_tables_are_read_as_one_with_a_war
     )
 
     with caplog.at_level(logging.WARNING, logger="semanticlog.data.cleaning"):
-        cleaned = clean_oced_data(oced)
+        cleaned = clean_oced_data(oced, qualify_shared=False)
 
     assert (
         "Attribute 'Total_Cost' is spelled 'Total Cost' in activity 'act', "

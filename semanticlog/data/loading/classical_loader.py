@@ -5,6 +5,7 @@ column in `object_cols` become object types, and the other columns become
 attributes.
 """
 
+import csv
 import logging
 from pathlib import Path
 
@@ -37,6 +38,26 @@ def _free_column(log: pd.DataFrame, name: str) -> str:
             free,
         )
     return free
+
+
+def _read_csv(path: str) -> pd.DataFrame:
+    """Read a CSV log without the columns whose header is blank.
+
+    A blank header is what pandas writes for its row index.
+    """
+    with open(path, newline="", encoding="utf-8") as handle:
+        header = next(csv.reader(handle), [])
+    blank = [i for i, name in enumerate(header) if not name.strip()]
+    log = pd.read_csv(path)
+    if blank:
+        logger.warning(
+            "Dropped %d column(s) of %s with no header, at position(s) %s.",
+            len(blank),
+            path,
+            ", ".join(str(i + 1) for i in blank),
+        )
+        log = log.drop(columns=log.columns[blank])
+    return log
 
 
 class ClassicalLoader(Loader):
@@ -78,7 +99,7 @@ class ClassicalLoader(Loader):
         log = (
             pm.read_xes(self.path)
             if Path(self.path).suffix.lower() == ".xes"
-            else pd.read_csv(self.path)
+            else _read_csv(self.path)
         )
         self._require_columns(log)
         self._require_filled(log)

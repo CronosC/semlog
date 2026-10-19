@@ -3,7 +3,6 @@
 import numpy as np
 import pandas as pd
 import pytest
-from scipy import stats
 
 from semanticlog.core.errors import ConfigError
 from semanticlog.data.binning import (
@@ -12,7 +11,6 @@ from semanticlog.data.binning import (
     check_bins,
     fit_dist_bins,
     fit_equal_bins,
-    get_best_fit_distribution,
 )
 
 LABELS = ("very_low", "low", "average", "high", "very_high")
@@ -78,90 +76,69 @@ def test_a_column_with_too_few_distinct_values_is_not_binned(fit):
 # --------------------------------------------------------------------------
 
 
-def test_a_close_fit_cuts_by_the_distribution_the_ranking_chose():
-    series = pd.Series(_rng().lognormal(0, 1, 300))
+def _shares(binning, series) -> list[float]:
+    counts = binning.apply(series).value_counts(sort=False)
+    return [counts[label] / len(series) for label in binning.labels]
 
-    fit = get_best_fit_distribution(series)
-    binning = fit_dist_bins(series, bins=3, labels=THREE)
 
-    assert (binning.dist, binning.params) == ("lognorm", fit.params)
+def test_a_normal_column_puts_the_normal_share_in_each_bin():
+    series = pd.Series(_rng().normal(50, 10, 20000))
+
+    shares = _shares(fit_dist_bins(series, bins=5, labels=LABELS), series)
+
+    # Cuts at -1.5, -0.5, 0.5 and 1.5 standard deviations.
+    assert shares == pytest.approx([0.067, 0.242, 0.383, 0.242, 0.067], abs=0.02)
+
+
+def test_a_skewed_column_is_cut_around_its_typical_value_not_by_frequency():
+    series = pd.Series(_rng().lognormal(8, 0.8, 20000))
+
+    by_distance = _shares(fit_dist_bins(series, bins=5, labels=LABELS), series)
+
+    assert by_distance == pytest.approx([0.067, 0.242, 0.383, 0.242, 0.067], abs=0.03)
+    assert fit_dist_bins(series).edges != fit_equal_bins(series).edges
+
+
+def test_a_column_without_outliers_fills_no_outer_bin():
+    series = pd.Series(_rng().uniform(0, 100, 5000))
+
+    shares = _shares(fit_dist_bins(series, bins=5, labels=LABELS), series)
+
+    assert (shares[0], shares[-1]) == (0, 0)
 
 
 @pytest.mark.parametrize(
     "sample",
-    [lambda rng: rng.normal(0, 1, 300), lambda rng: rng.gamma(2, 2, 300)],
-    ids=["norm", "gamma"],
+    [
+        lambda rng: rng.normal(0, 1, 2000) ** 3,
+        lambda rng: rng.lognormal(14, 1, 2000),
+        lambda rng: -rng.lognormal(3, 1, 2000),
+    ],
+    ids=["negative and positive", "large", "negative"],
 )
-def test_every_value_of_a_fitted_column_and_zero_land_in_a_bin(sample):
+def test_the_cuts_rise_strictly_and_label_every_value(sample):
     series = pd.Series(sample(_rng()))
-    binning = fit_dist_bins(series, bins=3, labels=THREE)
-
-    labeled = binning.apply(pd.concat([series, pd.Series([0.0])], ignore_index=True))
-
-    assert int(labeled.isna().sum()) == 0
-
-
-def test_a_value_beyond_either_tail_of_the_fitted_shape_lands_in_the_outer_bin():
-    """The fitted cdf maps it to an infinite z-score, which the outer edges include."""
-    binning = Binning(
-        labels=("low", "high"),
-        edges=(-np.inf, 0.0, np.inf),
-        dist="gamma",
-        params=(2.0, 0.0, 2.0),
-    )
-
-    assert labels_of(binning, pd.Series([0.0, 1e-320, np.inf])) == [
-        "low",
-        "low",
-        "high",
-    ]
-
-
-def test_a_column_no_candidate_fits_closely_is_cut_by_equal_frequency():
-    """A uniform column wins as a normal on AIC and loses on the p-value."""
-    series = pd.Series(_rng().uniform(0, 100, 500))
 
     binning = fit_dist_bins(series, bins=5, labels=LABELS)
 
-    assert get_best_fit_distribution(series, p=0.0).name == "norm"
-    assert binning.dist is None
-    assert set(labels_of(binning, series)) == set(LABELS)
+    assert all(a < b for a, b in zip(binning.edges, binning.edges[1:], strict=False))
+    assert int(binning.apply(series).isna().sum()) == 0
 
 
-# --------------------------------------------------------------------------
-# Choosing the distribution
-# --------------------------------------------------------------------------
+@pytest.mark.parametrize("bins", [2, 3, 4])
+def test_the_bins_are_one_standard_deviation_wide_around_the_median(bins):
+    series = pd.Series(_rng().normal(0, 1, 50000))
+
+    inner = fit_dist_bins(series, bins=bins, labels=LABELS[:bins]).edges[1:-1]
+
+    assert inner == pytest.approx(np.arange(1, bins) - bins / 2, abs=0.05)
 
 
-def test_nothing_fits_an_empty_column():
-    assert get_best_fit_distribution(pd.Series([], dtype=float)) is None
+def test_a_bin_reports_its_bounds():
+    binning = Binning(labels=("low", "high"), edges=(-np.inf, 3.5, np.inf))
 
-
-@pytest.mark.parametrize(("dist_name", "free_params"), [("norm", 2), ("gamma", 2)])
-def test_the_aic_charges_only_the_parameters_the_fit_left_free(dist_name, free_params):
-    series = pd.Series(_rng().gamma(2, 2, 300))
-
-    fit = get_best_fit_distribution(series, candidates=[dist_name], p=0.0)
-    loglik = np.sum(getattr(stats, dist_name).logpdf(series.to_numpy(), *fit.params))
-
-    assert fit.aic == pytest.approx(2 * free_params - 2 * loglik)
-
-
-def test_a_candidate_without_a_finite_aic_is_skipped(monkeypatch):
-    monkeypatch.setattr(
-        stats.norm, "logpdf", lambda x, *params: np.full(np.shape(x), np.nan)
-    )
-    series = pd.Series(_rng().exponential(1, 200))
-
-    assert (
-        get_best_fit_distribution(series, candidates=["norm", "expon"]).name == "expon"
-    )
-
-
-def test_a_positive_only_distribution_is_skipped_for_a_column_with_negatives():
-    series = pd.Series(_rng().normal(0, 1, 300))
-
-    assert get_best_fit_distribution(series, candidates=["lognorm", "gamma"]) is None
+    assert binning.bounds("low") == (-np.inf, 3.5)
+    assert binning.bounds("high") == (3.5, np.inf)
 
 
 # --------------------------------------------------------------------------

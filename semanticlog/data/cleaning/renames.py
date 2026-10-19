@@ -6,6 +6,7 @@ backmap. The ontology is annotated with the source names.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import Enum
 
 from semanticlog.core import vocabulary as vocab
@@ -69,6 +70,21 @@ class RenameLog:
         }
         self._values.update(moved)
 
+    def split_value_column(self, old: str, new_names: Iterable[str]) -> None:
+        """Copy the values of a column that became several columns under each new name."""
+        moved = {
+            (new, value): original
+            for (column, value), original in self._values.items()
+            if column == old
+            for new in new_names
+        }
+        if not moved:
+            return
+        self._values = {
+            key: original for key, original in self._values.items() if key[0] != old
+        }
+        self._values.update(moved)
+
     def value_renames(self) -> dict[str, str]:
         """Return the value renames, as individual name to source value."""
         renamed = {}
@@ -85,6 +101,15 @@ class RenameLog:
         if new != root:
             self._original[kind][new] = root
         self._current[kind][new] = root
+
+    def split(self, kind: RenameKind, old: str, new_names: Iterable[str]) -> None:
+        """Record that one name became several, each keeping the source name of `old`."""
+        root = self._current[kind].pop(old, old)
+        self._original[kind].pop(old, None)
+        for new in new_names:
+            if new != root:
+                self._original[kind][new] = root
+            self._current[kind][new] = root
 
     def flat(self) -> dict[str, str]:
         """Return every rename in one map, as current name to source name."""

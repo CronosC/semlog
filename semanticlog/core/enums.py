@@ -98,8 +98,8 @@ class DataRepresentation(BuildEnum):
             as a literal.
         EQUAL_BINS: Equal-frequency bins, each becoming a subclass of the
             attribute class.
-        DIST_BINS: Bins cut from a fitted distribution, falling back to equal
-            frequency when no distribution fits.
+        DIST_BINS: Bins one standard deviation wide around the median, after
+            a power transform makes the column close to normal.
     """
 
     VALUES = "values"

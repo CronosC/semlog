@@ -544,9 +544,28 @@ class OCEDStore:
 
 
 def attribute_owners(data: ReadableStore) -> dict[str, list[str]]:
-    """Return each attribute with the sorted types whose tables carry it."""
-    owners: dict[str, set[str]] = defaultdict(set)
+    """Return each attribute with the sorted types whose tables carry a value of it."""
+    return {
+        attribute: sorted({t for types in by_kind.values() for t in types})
+        for attribute, by_kind in attribute_owners_by_kind(data).items()
+    }
+
+
+def attribute_owners_by_kind(
+    data: ReadableStore,
+) -> dict[str, dict[EntityKind, list[str]]]:
+    """Return each attribute with the sorted types carrying a value of it, per kind.
+
+    A change table counts as its object type.
+    """
+    owners: dict[str, dict[EntityKind, set[str]]] = defaultdict(
+        lambda: defaultdict(set)
+    )
     for view in data.tables():
-        for column in view.attributes:
-            owners[column].add(view.name)
-    return {attribute: sorted(types) for attribute, types in owners.items()}
+        kind = view.kind if view.kind is not None else EntityKind.OBJECT
+        for column in view.filled_attributes:
+            owners[column][kind].add(view.name)
+    return {
+        attribute: {kind: sorted(types) for kind, types in by_kind.items()}
+        for attribute, by_kind in owners.items()
+    }

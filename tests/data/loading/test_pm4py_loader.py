@@ -345,3 +345,97 @@ def test_an_event_id_the_reader_returns_twice_is_rejected(simple_ocel, monkeypat
         match=r"Event ids are not unique across the log: e1\. Give every event and object an id of its own\.",
     ):
         PM4PyLoader(simple_ocel).get_oced()
+
+
+def _typed_ocel(tmp_path, suffix: str) -> str:
+    """Write a log declaring a text `code` of digits and an integer `rank`, and return its path."""
+    doc = {
+        "objectTypes": [
+            {
+                "name": "order",
+                "attributes": [
+                    {"name": "code", "type": "string"},
+                    {"name": "rank", "type": "integer"},
+                ],
+            }
+        ],
+        "eventTypes": [{"name": "place_order", "attributes": []}],
+        "objects": [
+            {
+                "id": f"o{i}",
+                "type": "order",
+                "attributes": [
+                    {"name": "code", "time": "1970-01-01T00:00:00Z", "value": str(i)},
+                    {"name": "rank", "time": "1970-01-01T00:00:00Z", "value": str(i)},
+                ],
+            }
+            for i in (1, 2)
+        ],
+        "events": [
+            {
+                "id": "e1",
+                "type": "place_order",
+                "time": "2022-01-01T00:00:00Z",
+                "attributes": [],
+                "relationships": [
+                    {"objectId": "o1", "qualifier": "places"},
+                    {"objectId": "o2", "qualifier": "places"},
+                ],
+            }
+        ],
+    }
+    path = tmp_path / f"typed{suffix}"
+    if suffix == ".jsonocel":
+        path.write_text(json.dumps(doc))
+        return str(path)
+    path.write_text(
+        """<?xml version='1.0' encoding='UTF-8'?>
+<log>
+  <object-types>
+    <object-type name="order">
+      <attributes>
+        <attribute name="code" type="string"/>
+        <attribute name="rank" type="integer"/>
+      </attributes>
+    </object-type>
+  </object-types>
+  <event-types>
+    <event-type name="place_order"><attributes/></event-type>
+  </event-types>
+  <objects>
+"""
+        + "".join(
+            f"""    <object id="o{i}" type="order">
+      <attributes>
+        <attribute name="code" time="1970-01-01T00:00:00Z">{i}</attribute>
+        <attribute name="rank" time="1970-01-01T00:00:00Z">{i}</attribute>
+      </attributes>
+    </object>
+"""
+            for i in (1, 2)
+        )
+        + """  </objects>
+  <events>
+    <event id="e1" type="place_order" time="2022-01-01T00:00:00Z">
+      <attributes/>
+      <objects>
+        <relationship object-id="o1" qualifier="places"/>
+        <relationship object-id="o2" qualifier="places"/>
+      </objects>
+    </event>
+  </events>
+</log>
+"""
+    )
+    return str(path)
+
+
+@pytest.mark.parametrize("suffix", [".jsonocel", ".xmlocel"])
+def test_an_attribute_keeps_the_type_the_log_declares(tmp_path, suffix):
+    path = _typed_ocel(tmp_path, suffix)
+
+    frame = PM4PyLoader(path).get_oced().table(EntityKind.OBJECT, "order").data
+
+    assert list(frame["code"]) == ["1", "2"]
+    assert list(frame["rank"]) == [1, 2]
+    assert str(frame["rank"].dtype) == "Int64"

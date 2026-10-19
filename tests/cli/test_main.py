@@ -54,6 +54,13 @@ def test_the_command_line_is_recorded_in_the_ontology(ocel, tmp_path):
     )
 
 
+def test_an_in_memory_build_prints_only_the_written_path(ocel, tmp_path, capsys):
+    out = tmp_path / "onto"
+    main(["build", str(ocel), "--output", str(out), "--no-streaming", "-q"])
+
+    assert capsys.readouterr().out == f"{out / 'pipeline.owl'}\n"
+
+
 def test_a_failed_build_exits_one(tmp_path):
     folder = tmp_path / "in"
     folder.mkdir()

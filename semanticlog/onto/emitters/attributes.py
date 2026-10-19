@@ -22,6 +22,7 @@ from semanticlog.core.enums import DataRepresentation
 from semanticlog.core.summary import counted, report_names
 from semanticlog.data.binning import Binning, fit_dist_bins, fit_equal_bins
 from semanticlog.data.readable import ReadableStore
+from semanticlog.data.tables import EntityKind
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters.base import Emitter
@@ -94,6 +95,12 @@ def attribute_binnings(
         binning = fit(values, bins=settings.bins, labels=settings.bin_labels)
         if binning is not None:
             binnings[attribute] = binning
+            logger.info(
+                "  %s: bins %s cut at %s",
+                attribute,
+                ", ".join(binning.labels),
+                ", ".join(f"{edge:g}" for edge in binning.edges[1:-1]),
+            )
     return binnings
 
 
@@ -120,7 +127,8 @@ def report_conflated_attributes(owners: dict[str, list[str]]) -> dict[str, list[
 
     entities = len({owner for types in conflated.values() for owner in types})
     logger.warning(
-        "%s share %s. The values of each name are merged in one class.",
+        "%s share %s. The values of each name are merged in one class. Set "
+        "qualify_shared_attributes to true to keep them apart per type.",
         counted(entities, "different entity", "different entities"),
         counted(len(conflated), "attribute name", "attribute names"),
     )
@@ -150,8 +158,8 @@ class AttributeEmitter(Emitter):
         settings: Settings of this build.
         annotations: Writer for the labels and comments.
         emitted: The individuals the build has asserted.
-        owners: Attribute name to the types carrying it. Domain of each
-            `has_` property.
+        owners: Attribute name to the types carrying it, per kind. Domain of
+            each `has_` property.
         binnings: The cut of each attribute the build bins.
     """
 
@@ -161,13 +169,14 @@ class AttributeEmitter(Emitter):
         settings: OntoBuildSettings,
         annotations: AnnotationWriter,
         emitted: EmittedIndividuals,
-        owners: Mapping[str, list[str]],
+        owners: Mapping[str, Mapping[EntityKind, list[str]]],
         binnings: Mapping[str, Binning],
     ) -> None:
         super().__init__(sink, settings, annotations, emitted)
         self._owners = owners
         self._binnings = binnings
         self._warned_unbinnable: set[str] = set()
+        self._annotated: set[str] = set()
 
     def emit_columns(
         self,
@@ -201,7 +210,8 @@ class AttributeEmitter(Emitter):
             prop = vocab.has_attribute_property(attr)
             source = attribute_source(attr)
             self.sink.add_class(attr, attribute_parent, source=source)
-            owners = self._owners.get(attr, [])
+            by_kind = self._owners.get(attr, {})
+            owners = sorted({t for types in by_kind.values() for t in types})
             self.sink.add_property(
                 prop,
                 domain_class=owners or None,
@@ -211,8 +221,9 @@ class AttributeEmitter(Emitter):
                 axiomatic_inverse=self.settings.axiomatic_inverses,
                 source=source,
             )
-            owner = "event" if attribute_parent == vocab.EVENT_ATTRIBUTE else "object"
-            self.annotations.attribute(attr, prop, owner)
+            if attr not in self._annotated:
+                self._annotated.add(attr)
+                self.annotations.attribute(attr, prop, by_kind)
 
             self.emit_column_values(df_attr, key_col, attr, prop)
 
@@ -301,11 +312,21 @@ class AttributeEmitter(Emitter):
         Values placed in a bin by an earlier table are skipped.
         """
         placed = self.emitted.bins_of(attr)
+        binning = self._binnings[attr]
         for bin_label, bin_group in in_bin.groupby("_bin", observed=True):
             bin_cls = vocab.bin_class(attr, bin_label)
             self.sink.add_class(
                 bin_cls, attr, source=f"a bin of {attribute_source(attr)}"
             )
+            if bin_cls not in self._annotated:
+                self._annotated.add(bin_cls)
+                self.annotations.bin_class(
+                    bin_cls,
+                    attr,
+                    self._owners.get(attr, {}),
+                    str(bin_label),
+                    binning.bounds(str(bin_label)),
+                )
             fresh = [
                 name
                 for value in bin_group[attr].unique()

@@ -87,16 +87,23 @@ class Inference:
         self.columns = 0
         self.tables = 0
 
-    def infer(self, data: pd.DataFrame, id_col: str) -> pd.DataFrame:
+    def infer(
+        self,
+        data: pd.DataFrame,
+        id_col: str,
+        declared: Mapping[str, str] | None = None,
+    ) -> pd.DataFrame:
         """Return the table with dtypes inferred, and count the all-empty rows and columns dropped.
 
         Args:
             id_col: Column holding the id. It is not inferred.
+            declared: Column name to the type the log declares for it. Those
+                columns are cast instead of inferred.
 
         Returns:
             A new table. The input is not modified.
         """
-        inferred = infer_dtypes(data, ignore_cols=[id_col])
+        inferred = infer_dtypes(data, ignore_cols=[id_col], declared=declared)
         rows = len(data) - len(inferred)
         columns = len(data.columns) - len(inferred.columns)
         if rows or columns:

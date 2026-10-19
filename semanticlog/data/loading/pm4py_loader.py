@@ -20,7 +20,9 @@ from pm4py.objects.ocel.obj import OCEL
 from semanticlog.core.enums import OCELExtension
 from semanticlog.core.errors import InputError
 from semanticlog.data.cleaning.names import free_name
+from semanticlog.data.dtypes import cast_declared
 from semanticlog.data.loading.base import Inference, Loader
+from semanticlog.data.loading.ocel_schema import DeclaredTypes, declared_types
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, RelationKind
 
@@ -189,7 +191,8 @@ class PM4PyLoader(Loader):
         each relation qualifier becomes one named relation. A qualifier used
         by both families is suffixed with `_e2o` and `_o2o`. A relation with
         no qualifier takes `modifies` or `relates`. The ids of a type whose
-        ids are all numeric are prefixed with the type.
+        ids are all numeric are prefixed with the type. An attribute keeps the
+        type the log declares for it, and only undeclared ones are inferred.
 
         Returns:
             A store, in OCEL mode when attribute history was requested. A log
@@ -207,7 +210,8 @@ class PM4PyLoader(Loader):
 
         frames = _read_frames(self._read(read), load_attr_history)
         _prefix_numeric_ids(frames)
-        return _fill_store(frames, load_attr_history)
+        declared = declared_types(self.path, self.file_format)
+        return _fill_store(frames, load_attr_history, declared)
 
     def _read(self, read: Callable[[str], OCEL]) -> OCEL:
         """Read the file with PM4Py.
@@ -351,8 +355,14 @@ def _prefix_numeric_ids(frames: _Frames) -> None:
         )
 
 
-def _fill_store(frames: _Frames, load_attr_history: bool) -> OCEDStore:
+def _fill_store(
+    frames: _Frames, load_attr_history: bool, declared: DeclaredTypes
+) -> OCEDStore:
     """Return a store with one table per type and one relation per qualifier.
+
+    Args:
+        declared: The attribute types the log declares, per event or object
+            type.
 
     Raises:
         InputError: If an object-to-object relation names an object the log
@@ -366,7 +376,11 @@ def _fill_store(frames: _Frames, load_attr_history: bool) -> OCEDStore:
         oced.add(
             EntityKind.OBJECT,
             str(object_type),
-            inference.infer(frame, "ocel:oid"),
+            inference.infer(
+                frame,
+                "ocel:oid",
+                declared.get((EntityKind.OBJECT, str(object_type))),
+            ),
             id_col="ocel:oid",
         )
 
@@ -375,7 +389,11 @@ def _fill_store(frames: _Frames, load_attr_history: bool) -> OCEDStore:
         oced.add(
             EntityKind.EVENT,
             str(activity),
-            inference.infer(frame, "ocel:eid"),
+            inference.infer(
+                frame,
+                "ocel:eid",
+                declared.get((EntityKind.EVENT, str(activity))),
+            ),
             id_col="ocel:eid",
             time_col="ocel:timestamp",
         )
@@ -417,6 +435,9 @@ def _fill_store(frames: _Frames, load_attr_history: bool) -> OCEDStore:
 
     if frames.changes is not None:
         for object_type, frame in frames.changes.groupby("ocel:type"):
+            frame = cast_declared(
+                frame, declared.get((EntityKind.OBJECT, str(object_type)), {})
+            )
             oced.add_object_changes(str(object_type), frame.reset_index(drop=True))
 
     inference.report()

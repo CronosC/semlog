@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import json
+import math
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from importlib import resources
@@ -141,6 +142,13 @@ def _format_value(value: Any) -> str:
             return value.strftime(_SUB_SECOND_LABEL_FORMAT)
         return value.strftime(_TIMESTAMP_LABEL_FORMAT)
     return str(value)
+
+
+def _joined(names: Sequence[str]) -> str:
+    """Return the names as a list in prose: `a`, `a and b`, `a, b and c`."""
+    if len(names) <= 1:
+        return "".join(names)
+    return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
 def _split_activities(rest: str, known: Collection[str]) -> list[str]:
@@ -374,17 +382,67 @@ class AnnotationWriter:
             return
         self.sink.annotate_individuals_bulk(list(zip(ids, labels, strict=True)))
 
-    def attribute(self, attr: str, prop: str, owner: str) -> None:
+    def attribute(
+        self, attr: str, prop: str, owners: Mapping[EntityKind, Sequence[str]]
+    ) -> None:
         """Annotate an attribute class and its `has_` property.
 
         Args:
             attr: Attribute class name.
             prop: The `has_` property of the attribute.
-            owner: Either `event` or `object`.
+            owners: The types carrying the attribute, per kind.
         """
-        original = self.original(attr)
-        self.write("attribute.class", attr, original=original, owner=owner)
-        self.write("attribute.property", prop, original=original, owner=owner)
+        fields = self._attribute_fields(attr, owners)
+        self.write("attribute.class", attr, **fields)
+        self.write("attribute.property", prop, **fields)
+
+    def bin_class(
+        self,
+        bin_cls: str,
+        attr: str,
+        owners: Mapping[EntityKind, Sequence[str]],
+        label: str,
+        bounds: tuple[float, float],
+    ) -> None:
+        """Annotate one bin class of a numeric attribute with the values it holds.
+
+        Args:
+            bin_cls: The bin class name.
+            attr: Attribute class the bin is below.
+            owners: The types carrying the attribute, per kind.
+            label: The bin label, such as `very_high`.
+            bounds: The lower and upper edge of the bin. The lowest bin has
+                -inf below it and the highest inf above it.
+        """
+        low, high = bounds
+        fields = {
+            **self._attribute_fields(attr, owners),
+            "bin": label.replace("_", " "),
+            "low": repr(float(low)),
+            "high": repr(float(high)),
+        }
+        if math.isinf(low):
+            self.write("attribute.bin_lowest", bin_cls, **fields)
+        elif math.isinf(high):
+            self.write("attribute.bin_highest", bin_cls, **fields)
+        else:
+            self.write("attribute.bin", bin_cls, **fields)
+
+    def _attribute_fields(
+        self, attr: str, owners: Mapping[EntityKind, Sequence[str]]
+    ) -> dict[str, str]:
+        """Return the template fields that name an attribute and the types carrying it."""
+        types = [self.original(t) for kind in EntityKind for t in owners.get(kind, [])]
+        phrases = [
+            f"{_joined([self.original(t) for t in owners[kind]])} {kind.value}s"
+            for kind in EntityKind
+            if owners.get(kind)
+        ]
+        return {
+            "original": self.original(attr),
+            "types": ", ".join(types),
+            "owners": " and ".join(phrases),
+        }
 
     def attribute_values(self, value_to_name: dict[Any, str]) -> None:
         """Label value individuals with the value as the log wrote it."""

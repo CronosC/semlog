@@ -44,8 +44,8 @@ def onto(request):
 def test_each_type_of_the_log_is_a_subclass_of_its_schema_class(onto):
     assert onto.parents["place_order"] == {vocab.EVENT}
     assert onto.parents["order"] == {vocab.OBJECT}
-    assert onto.parents["channel"] == {vocab.OBJECT_ATTRIBUTE}
-    assert onto.parents["clerk"] == {vocab.EVENT_ATTRIBUTE}
+    assert onto.parents["order_channel"] == {vocab.OBJECT_ATTRIBUTE}
+    assert onto.parents["place_order_clerk"] == {vocab.EVENT_ATTRIBUTE}
 
 
 def test_every_event_and_object_becomes_an_individual_of_its_type(onto):
@@ -78,26 +78,25 @@ def test_two_events_at_one_instant_share_one_time_individual(onto):
     assert len({o for s, o in observed if s in ("e11", "e12")}) == 1
 
 
-def test_a_value_individual_is_shared_by_everything_carrying_it(onto):
-    web = {s for s, o in _pairs(onto, "has_channel") if o == "channel_web"}
+def test_a_value_individual_is_shared_by_every_entity_of_its_type_carrying_it(onto):
+    web = {s for s, o in _pairs(onto, "has_order_channel") if o == "order_channel_web"}
 
-    assert {"o1", "o4", "i1"} <= web
+    assert {"o1", "o4"} <= web
+    assert ("i1", "item_channel_web") in _pairs(onto, "has_item_channel")
 
 
-def test_an_attribute_carried_by_two_types_has_one_domain_axiom_naming_both(onto):
-    domains = [
-        line
-        for line in onto.axiom_lines
-        if line.startswith("ObjectPropertyDomain(:has_channel ")
-    ]
-
-    assert domains == ["ObjectPropertyDomain(:has_channel ObjectUnionOf(:item :order))"]
+def test_an_attribute_carried_by_two_types_gets_a_property_per_type(onto):
+    assert onto.domains["has_order_channel"] == {"order"}
+    assert onto.domains["has_item_channel"] == {"item"}
+    assert "has_channel" not in onto.properties
     assert onto.domains["has_price"] == {"order"}
 
 
 def test_a_missing_value_produces_no_assertion(onto):
     # o12 has no channel and no price.
-    owners = {s for p, s, _ in onto.relations if p in ("has_channel", "has_price")}
+    owners = {
+        s for p, s, _ in onto.relations if p in ("has_order_channel", "has_price")
+    }
 
     assert "o12" not in owners
 
@@ -118,7 +117,7 @@ def test_the_first_and_last_event_of_a_case_are_typed(onto):
 def test_a_name_cleaning_rewrote_is_emitted_in_its_cleaned_form(onto):
     assert "place_order" in onto.classes
     assert "place order" not in onto.classes
-    assert "channel_by_hand" in onto.individuals
+    assert "order_channel_by_hand" in onto.individuals
 
 
 def test_the_build_records_where_it_came_from(onto):
@@ -158,11 +157,22 @@ def test_a_bin_class_sits_under_its_attribute(built):
 def test_distribution_bins_follow_the_shape_of_the_column(built):
     assert _bins(built(DIST_BINS), "price") == {
         "price_bin_very_low": {3.25},
-        "price_bin_low": {7.5, 10.0},
-        "price_bin_average": {12.75, 18.0, 21.5, 25.5, 30.0, 33.25},
-        "price_bin_high": {41.0},
+        "price_bin_low": {7.5, 10.0, 12.75},
+        "price_bin_average": {18.0, 21.5, 25.5, 30.0},
+        "price_bin_high": {33.25, 41.0},
         "price_bin_very_high": {120.0},
     }
+
+
+def test_every_bin_class_carries_one_label_and_one_comment(built):
+    onto = built(VALUES_AND_EQUAL_BINS)
+    bin_classes = {c for c in onto.classes if "_bin_" in c}
+    annotated = [(n, kind) for n, kind, _ in onto.annotations if n in bin_classes]
+
+    assert bin_classes
+    assert sorted(annotated) == sorted(
+        (c, kind) for c in bin_classes for kind in ("comment", "label")
+    )
 
 
 def test_a_binned_value_keeps_its_number_only_with_values(built):
@@ -192,7 +202,7 @@ def test_no_numeric_representation_leaves_the_numbers_out(built):
     onto = built("dl_declare_multi_cc")
 
     assert "price" not in onto.declared
-    assert "channel" in onto.classes
+    assert "order_channel" in onto.classes
 
 
 @pytest.mark.parametrize("name", [DIST_BINS, VALUES_AND_EQUAL_BINS])
@@ -256,8 +266,10 @@ def test_the_inverse_of_every_attribute_property_sits_under_attribute_of(built):
 
     assert reversed_attributes == {
         "inv_has_amount",
-        "inv_has_channel",
-        "inv_has_clerk",
+        "inv_has_item_channel",
+        "inv_has_order_channel",
+        "inv_has_place_order_clerk",
+        "inv_has_ship_clerk",
         "inv_has_due",
         "inv_has_price",
         "inv_has_weight",

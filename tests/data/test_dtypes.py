@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
-from semanticlog.data.dtypes import infer_dtypes
+from semanticlog.data.dtypes import cast_declared, infer_dtypes
 
 
 def test_numeric_and_boolean_columns_pass_through_unchanged():
@@ -97,3 +97,26 @@ def test_an_ignored_column_is_kept_as_it_is_even_when_empty():
     out = infer_dtypes(df, ignore_cols=["id", "ts"])
 
     assert_frame_equal(out, df)
+
+
+def test_a_declared_string_of_digits_stays_text():
+    out = infer_dtypes(pd.DataFrame({"code": ["1", "2"]}), declared={"code": "string"})
+
+    assert out["code"].tolist() == ["1", "2"]
+
+
+@pytest.mark.parametrize(
+    ("declared", "values", "expected"),
+    [
+        ("integer", ["1", "2.5"], [1, None]),
+        ("float", ["1.5", "abc"], [1.5, None]),
+        ("boolean", ["yes", "maybe"], [True, None]),
+    ],
+)
+def test_a_value_that_is_not_its_declared_type_is_missing_and_warned_about(
+    declared, values, expected, caplog
+):
+    out = cast_declared(pd.DataFrame({"x": values}), {"x": declared})
+
+    assert [None if pd.isna(v) else v for v in out["x"]] == expected
+    assert f"declared {declared}, but 1 of its value(s)" in caplog.text

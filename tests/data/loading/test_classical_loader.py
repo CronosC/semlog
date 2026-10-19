@@ -152,6 +152,24 @@ def test_an_event_id_column_of_the_log_is_kept_as_an_attribute(tmp_path):
     assert _all_events(oced, "event_id_2") == {"e0", "e1"}
 
 
+def test_a_column_with_no_header_is_dropped(tmp_path):
+    path = tmp_path / "log.csv"
+    pd.DataFrame(
+        {
+            CASE: ["c1", "c1"],
+            "concept:name": ["a", "b"],
+            "time:timestamp": ["2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z"],
+        }
+    ).to_csv(path)
+
+    oced = ClassicalLoader(str(path)).get_oced()
+
+    assert list(oced.table(EntityKind.EVENT, "a").data.columns) == [
+        "event_id",
+        "time:timestamp",
+    ]
+
+
 @pytest.mark.parametrize(
     ("columns", "message"),
     [

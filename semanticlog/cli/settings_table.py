@@ -400,7 +400,8 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
             "Numeric attribute representations: "
             f"{enum_choices(DataRepresentation)} (default: values). values "
             "keeps the number, equal_bins bins by frequency, dist_bins bins by "
-            "a fitted distribution. At most one binning mode. Pass no values "
+            "distance from the typical value. At most one binning mode. Pass "
+            "no values "
             "to omit numeric attributes."
         ),
         argparse={"nargs": "*", "metavar": "MODE"},
@@ -464,6 +465,18 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         help=(
             "Write rdfs:label and rdfs:comment on the classes and properties "
             "taken from the log, and rdfs:label on individuals (default: off)."
+        ),
+        argparse={"action": argparse.BooleanOptionalAction},
+    ),
+    Setting(
+        "qualify_shared_attributes",
+        settings_default("qualify_shared_attributes"),
+        _as_bool,
+        "settings",
+        help=(
+            "Rename an attribute that more than one event or object type "
+            "carries to <type>_<attribute> in each type, so the types keep "
+            "separate attribute classes, values and bins (default: on)."
         ),
         argparse={"action": argparse.BooleanOptionalAction},
     ),

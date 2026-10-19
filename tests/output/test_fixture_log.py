@@ -37,9 +37,9 @@ def test_the_log_holds_four_events_per_activity_and_the_documented_object_ids(
     ]
 
 
-def test_each_type_keeps_the_attributes_the_readme_lists(pipeline_store):
+def test_each_type_keeps_the_attributes_the_readme_lists(pipeline_raw_store):
     def columns(kind, name):
-        return set(pipeline_store.table(kind, name).data.columns)
+        return set(pipeline_raw_store.table(kind, name).data.columns)
 
     assert {"amount", "resource"} <= columns(EntityKind.EVENT, "place_order")
     assert {"amount", "resource"} <= columns(EntityKind.EVENT, "pay")

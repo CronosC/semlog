@@ -26,6 +26,7 @@ from semanticlog.data.cleaning.names import (
     clean_string,
     cleaned,
 )
+from semanticlog.data.cleaning.qualify import qualify_shared_attributes
 from semanticlog.data.cleaning.renames import WORDS, RenameKind, RenameLog
 from semanticlog.data.cleaning.rewrite import entity_ids, text_values
 from semanticlog.data.integrity import check_missing_ids
@@ -54,7 +55,11 @@ _RENAME_KIND = {
 }
 
 
-def clean_oced_data(data: OCEDStore, bin_labels: Collection[str] = ()) -> OCEDStore:
+def clean_oced_data(
+    data: OCEDStore,
+    bin_labels: Collection[str] = (),
+    qualify_shared: bool = True,
+) -> OCEDStore:
     """Make every name in a store safe to emit, and record what changed.
 
     Sets `data.backmap` to the map of new name to source name.
@@ -63,6 +68,8 @@ def clean_oced_data(data: OCEDStore, bin_labels: Collection[str] = ()) -> OCEDSt
         data: Store to clean, modified in place.
         bin_labels: Bin labels the build will use. Each bin class name is
             reserved.
+        qualify_shared: Rename an attribute that more than one type carries
+            to `<type>_<attribute>` in each type.
 
     Returns:
         The same store.
@@ -78,7 +85,7 @@ def clean_oced_data(data: OCEDStore, bin_labels: Collection[str] = ()) -> OCEDSt
 
     _record_id_renames(data, log)
     _record_value_renames(data, log)
-    _record_attribute_renames(data, log)
+    _record_attribute_renames(data, log, warn_merged=not qualify_shared)
 
     data.replace_tables(
         entities={kind: _clean_entities(data, kind, log) for kind in EntityKind},
@@ -93,6 +100,8 @@ def clean_oced_data(data: OCEDStore, bin_labels: Collection[str] = ()) -> OCEDSt
                 for obj_type in data.get_object_change_types()
             }
         )
+    if qualify_shared:
+        qualify_shared_attributes(data, log)
     fix_duplicate_names(data, log, bin_labels)
     verify_unique_names(data)
     data.backmap = log.flat()
@@ -149,10 +158,13 @@ def _record_value_renames(data: OCEDStore, log: RenameLog) -> None:
                     log.record_value(cleaned_column, cleaned_value, value)
 
 
-def _record_attribute_renames(data: OCEDStore, log: RenameLog) -> None:
+def _record_attribute_renames(
+    data: OCEDStore, log: RenameLog, warn_merged: bool
+) -> None:
     """Record the attribute columns that cleaning is about to rename.
 
-    An attribute spelled two ways is logged and gets no source name.
+    An attribute spelled two ways gets no source name, and is logged when
+    `warn_merged` is set.
     """
     spellings: dict[str, dict[str, list[str]]] = {}
     for view in data.tables(changes=False):
@@ -161,6 +173,8 @@ def _record_attribute_renames(data: OCEDStore, log: RenameLog) -> None:
             by_source.setdefault(column, []).append(view.origin)
     for name, by_source in spellings.items():
         if len(by_source) > 1:
+            if not warn_merged:
+                continue
             found = ", ".join(
                 f"{source!r} in {' and '.join(origins)}"
                 for source, origins in sorted(by_source.items())

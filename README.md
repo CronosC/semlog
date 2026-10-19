@@ -118,6 +118,8 @@ The ontology has a fixed upper schema of `Event`, `Object`, `Attribute` and `Tim
 - the relations of the log as sub-properties of `event_object_relation` and `object_object_relation`
 - event order as `df_<case concept>` properties, optionally with eventually-follows and DECLARE constraint membership
 
+An OCEL attribute keeps the type the log declares for it: `string`, `integer`, `float`, `boolean` or `time`. A value that does not parse as its declared type is read as missing, with a warning. Undeclared attributes, and every column of a CSV or XES log, are typed by their content.
+
 The record of how the file was produced is annotated onto the ontology itself: the input checksum, the resolved settings, the command and the semlog version.
 
 ## Build settings
@@ -131,12 +133,13 @@ The record of how the file was produced is annotated onto the ontology itself: t
 | `order_representations` | none | How event order is written: `df`, `ef`, `ef_explicit`, `declare`. Several can be combined. `ef` declares eventually-follows transitive over `df` and leaves the pairs to a reasoner, so it needs `df` beside it and `OWL2DL`. `ef_explicit` asserts every pair itself. |
 | `case_concepts` | the 3 most common object types | Object types whose instances act as cases, spelled as the source log spells them. `df`, `ef` and `ef_explicit` need at least one. `declare` takes its traces from the mined file. |
 | `auto_case_concepts` | `3` | How many object types are chosen when `case_concepts` is not set. |
-| `data_representations` | `values` | How numeric attributes appear: `values` keeps the number, `equal_bins` buckets by frequency, `dist_bins` fits a distribution first. Each attribute is cut once, over every value it takes anywhere in the log. A column with too few distinct values to bin keeps its numbers. |
+| `data_representations` | `values` | How numeric attributes appear: `values` keeps the number, `equal_bins` buckets by frequency, `dist_bins` buckets by distance from the typical value, in standard deviations after a power transform, so the outer bins hold the unusual values. Each attribute is cut once, over every value it takes anywhere in the log. A column with too few distinct values to bin keeps its numbers. |
 | `inverse_representations` | none | `axiomatic` writes inverse property axioms (OWL2DL only), `implicit` materializes the inverse assertions. |
 | `ocel_extensions` | none | `attribute_history` also emits the timestamped attribute changes of each object. |
 | `bins`, `bin_labels` | `5`, `very_low` … `very_high` | Bin count and labels for the two binning modes. |
 | `max_ef_pairs` | `50000000` | Ceiling on materialized eventually-follows pairs. Zero for no limit. |
 | `size_limit_mb` | `0` | Skip inputs larger than this many MB. Zero for no limit. |
+| `qualify_shared_attributes` | `true` | Rename an attribute that more than one event or object type carries to `<type>_<attribute>` in each type, such as `item_weight` and `ship_order_weight`. Each type then gets its own attribute class, values and bins. Off merges them into one. |
 | `derive_annotations` | `false` | Emit `rdfs:label` and `rdfs:comment` derived from the original names in the log. |
 | `annotation_document` | none | JSON file mapping entity names to `{label, comment}`. |
 | `declare_file` | none | File written by `semlog mine-declare`. Required for `declare`. |

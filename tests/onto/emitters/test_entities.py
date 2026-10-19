@@ -1,7 +1,7 @@
 import pytest
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.data.oced import attribute_owners
+from semanticlog.data.oced import attribute_owners_by_kind
 from semanticlog.data.tables import EntityKind
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.emitted import EmittedIndividuals
@@ -13,7 +13,7 @@ from semanticlog.onto.settings import OntoBuildSettings
 def _emit(sink, data, kind: EntityKind) -> None:
     settings = OntoBuildSettings()
     parts = (sink, settings, AnnotationWriter(sink, settings, {}), EmittedIndividuals())
-    attributes = AttributeEmitter(*parts, attribute_owners(data), {})
+    attributes = AttributeEmitter(*parts, attribute_owners_by_kind(data), {})
     EntityEmitter(*parts, attributes).emit(data, kind)
 
 

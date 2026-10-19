@@ -12,7 +12,7 @@ license = { file = "LICENSE" }
 requires-python = ">=3.12"
 dependencies = [
     "pm4py>=2.7",
-    "owlapy>=1.6,<2",
+    "owlapy>=1.6.7,<2",
     "owlready2>=0.40,<0.51",
     "scipy<2",
     "pandas>=2.2",

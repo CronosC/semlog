@@ -116,7 +116,7 @@ def test_values_of_one_attribute_cleaning_alike_are_kept_apart_across_tables():
             id_col="oid",
         )
 
-    cleaned = clean_oced_data(oced)
+    cleaned = clean_oced_data(oced, qualify_shared=False)
 
     assert [
         cleaned.table(EntityKind.OBJECT, t).data["channel"].iloc[0]

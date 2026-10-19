@@ -2082,7 +2082,7 @@ wheels = [
 
 [[package]]
 name = "owlapy"
-version = "1.6.5"
+version = "1.6.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dspy" },
@@ -2090,7 +2090,6 @@ dependencies = [
     { name = "httpx" },
     { name = "jpype1" },
     { name = "litserve" },
-    { name = "owlready2" },
     { name = "pandas" },
     { name = "parsimonious" },
     { name = "rdflib" },
@@ -2100,9 +2099,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/79/dc/713750650a1016d4ede487d7e56edbf31804bc4f6669f0e74f945a75d2b1/owlapy-1.6.5.tar.gz", hash = "sha256:37b72aa17c1b7023f0004f9d013743366de11389741a203b1b5dabb273e67c01", size = 17626280, upload-time = "2026-05-26T15:02:35.978Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/55/3b/0efbdabf611ea8fd05fd78dce890f832eda353dea93502db697631550aa2/owlapy-1.6.7.tar.gz", hash = "sha256:05cf361c31dc52bd3bae974178e135353205845d3dc71156d38709bff88e2d19", size = 17780039, upload-time = "2026-10-07T14:01:02.581Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/94/0b/fdccece36e3fb8268b5fce7dd2887e2af9c377dcc6ce490b4e23e2d1d361/owlapy-1.6.5-py3-none-any.whl", hash = "sha256:820874c12cb9ec5c3dee5619b17b5cf1666d5a7fcdaac1912865b9cd96b6add5", size = 17582592, upload-time = "2026-05-26T15:02:29.07Z" },
+    { url = "https://files.pythonhosted.org/packages/63/87/43ad8d2c03371616678bc09665ac1e7fb2305af97d6efb02876312d5d63e/owlapy-1.6.7-py3-none-any.whl", hash = "sha256:1bab5a9dd652803d97a2b8b2453985e0acf1552013b371a3606a1ec391be45d3", size = 17653182, upload-time = "2026-10-07T14:00:55.801Z" },
 ]
 
 [[package]]
@@ -3139,7 +3138,7 @@ requires-dist = [
     { name = "declare4py", marker = "extra == 'declare'" },
     { name = "lark", marker = "extra == 'declare'", specifier = ">=1.1.5" },
     { name = "mypy", marker = "extra == 'dev'" },
-    { name = "owlapy", specifier = ">=1.6,<2" },
+    { name = "owlapy", specifier = ">=1.6.7,<2" },
     { name = "owlready2", specifier = ">=0.40,<0.51" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pm4py", specifier = ">=2.7" },
