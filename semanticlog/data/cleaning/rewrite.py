@@ -52,12 +52,16 @@ def text_values(view: TableView, column: str) -> list[str]:
     ]
 
 
-def value_groups(data: OCEDStore) -> dict[str, list[str]]:
-    """Return the distinct text values of each attribute, keyed by cleaned name."""
-    groups: dict[str, list[str]] = {}
+def value_groups(data: OCEDStore) -> dict[tuple[str, str], list[str]]:
+    """Return the distinct text values of each attribute, keyed by type and cleaned attribute.
+
+    A change table counts as its object type.
+    """
+    groups: dict[tuple[str, str], list[str]] = {}
     for view in data.tables():
         for column in view.attributes:
-            groups.setdefault(cleaned(column), []).extend(text_values(view, column))
+            key = (view.name, cleaned(column))
+            groups.setdefault(key, []).extend(text_values(view, column))
     return groups
 
 
@@ -111,10 +115,19 @@ def apply_id_renames(data: OCEDStore, renames: Mapping[str, str]) -> None:
 
 
 def apply_value_renames(
-    data: OCEDStore, attribute: str, renames: Mapping[str, str]
+    data: OCEDStore,
+    attribute: str,
+    renames: Mapping[str, str],
+    *,
+    type_name: str | None = None,
 ) -> None:
-    """Rewrite values in every column that carries the attribute, change tables included."""
+    """Rewrite values in every column that carries the attribute, change tables included.
+
+    Only the tables of `type_name` are rewritten when it is given.
+    """
     for view in data.tables():
+        if type_name is not None and view.name != type_name:
+            continue
         columns = [c for c in view.attributes if cleaned(c) == attribute]
         if columns:
             view.replace(remap(view.frame, columns, renames))

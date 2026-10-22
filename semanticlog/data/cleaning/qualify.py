@@ -64,4 +64,3 @@ def qualify_attributes(data: OCEDStore, log: RenameLog) -> None:
 
     for old, news in new_names.items():
         log.split(RenameKind.ATTRIBUTE, old, sorted(news))
-        log.split_value_column(old, sorted(news))

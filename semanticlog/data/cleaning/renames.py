@@ -70,21 +70,6 @@ class RenameLog:
         }
         self._values.update(moved)
 
-    def split_value_column(self, old: str, new_names: Iterable[str]) -> None:
-        """Copy the values of a column that became several columns under each new name."""
-        moved = {
-            (new, value): original
-            for (column, value), original in self._values.items()
-            if column == old
-            for new in new_names
-        }
-        if not moved:
-            return
-        self._values = {
-            key: original for key, original in self._values.items() if key[0] != old
-        }
-        self._values.update(moved)
-
     def value_renames(self) -> dict[str, str]:
         """Return the value renames, as individual name to source value."""
         renamed = {}

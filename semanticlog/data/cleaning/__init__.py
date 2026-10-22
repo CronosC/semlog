@@ -26,7 +26,7 @@ from semanticlog.data.cleaning.names import (
     clean_string,
     cleaned,
 )
-from semanticlog.data.cleaning.qualify import qualify_attributes
+from semanticlog.data.cleaning.qualify import qualified_attribute, qualify_attributes
 from semanticlog.data.cleaning.renames import WORDS, RenameKind, RenameLog
 from semanticlog.data.cleaning.rewrite import entity_ids, text_values
 from semanticlog.data.integrity import check_missing_ids
@@ -150,7 +150,7 @@ def _record_value_renames(data: OCEDStore, log: RenameLog) -> None:
     """Record the attribute values that cleaning is about to rewrite."""
     for view in data.tables():
         for column in view.attributes:
-            cleaned_column = cleaned(column)
+            cleaned_column = qualified_attribute(cleaned(view.name), cleaned(column))
             for value in text_values(view, column):
                 cleaned_value = clean_string(value)
                 if cleaned_value != value:

@@ -1,6 +1,6 @@
 # benchmarks
 
-Timing and memory measurements of a build. pytest does not collect them. Run each script from the repository root:
+Timing and memory measurements of a build. Run each script from the repository root:
 
 ```bash
 uv run python benchmarks/sink_throughput.py
