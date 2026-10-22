@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from semanticlog.core.vocabulary import TBOX_IRI
 from tests.support.emitted import Emitted, inverse_pair
 
 # owlapy writes every float as xsd:decimal whatever the literal declares. The
@@ -25,7 +26,8 @@ def read_rdf(path: str | Path, iri: str) -> Emitted:
 
     Args:
         path: File to read.
-        iri: Base IRI, whose local names are the ones a test asks about.
+        iri: Log base IRI. Names under it and under the TBox IRI are read as
+            their local names.
 
     Returns:
         The same `Emitted` that `read_functional` returns, without axiom
@@ -36,18 +38,17 @@ def read_rdf(path: str | Path, iri: str) -> Emitted:
     graph = Graph()
     graph.parse(str(path))
 
-    base = iri if iri.endswith("#") else iri + "#"
-    ontology_iri = URIRef(iri.rstrip("#"))
+    base = iri if iri.endswith("/") else iri + "/"
+    ontology_iri = URIRef(base.removesuffix("/"))
 
     def local(term: object) -> str | None:
-        """Return the local name of a term of this ontology, or None."""
+        """Return the local name of a log or TBox term, or None."""
         if not isinstance(term, URIRef):
             return None
         text = str(term)
-        if text.startswith(base):
-            return text[len(base) :]
-        if text.startswith(iri) and text[len(iri) :].startswith("#"):
-            return text[len(iri) + 1 :]
+        for namespace in (TBOX_IRI, base):
+            if text.startswith(namespace):
+                return text[len(namespace) :]
         return None
 
     def expression(term: object) -> set[str]:

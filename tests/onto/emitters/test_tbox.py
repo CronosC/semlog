@@ -69,11 +69,16 @@ def test_the_attribute_history_extension_adds_its_class_and_properties():
     }
 
 
-def test_every_name_the_upper_schema_can_emit_is_reserved_against_the_log():
-    schema = _schema(
+def test_every_name_the_upper_schema_emits_is_in_the_tbox_namespace():
+    settings = OntoBuildSettings(
         ocel_extensions=[OCELExtension.ATTRIBUTE_HISTORY],
         inverse_representations=[InverseRepresentation.AXIOMATIC],
     )
-    emitted = schema["classes"] | schema["object"] | schema["data"]
+    onto = construct_tbox(DEFAULT_IRI, settings).require_onto()
+    entities = [
+        *onto.classes_in_signature(),
+        *onto.object_properties_in_signature(),
+        *onto.data_properties_in_signature(),
+    ]
 
-    assert emitted - vocab.RESERVED_NAMES == set()
+    assert [e for e in entities if not e.iri.str.startswith(vocab.TBOX_IRI)] == []

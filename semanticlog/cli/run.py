@@ -202,7 +202,7 @@ def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
             settings,
             inputs,
             onto_path,
-            iri=cfg.iri,
+            iri=cfg.log_iri(input_path),
             source=str(input_path),
             record=record,
             streaming=cfg.streaming,

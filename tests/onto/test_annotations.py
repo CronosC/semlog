@@ -409,7 +409,8 @@ def test_a_change_record_label_pairs_each_record_with_its_own_row(writer):
 
 def test_only_the_upper_schema_this_build_declared_is_annotated(writer):
     annotations, sink = writer()
-    sink.add_class("Event", source="a test")
+    sink.add_class(vocab.EVENT, source="a test")
+    sink.add_class("Object", source="a log class named like a TBox class")
 
     annotations.tbox()
 

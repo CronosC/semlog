@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from semanticlog.core.enums import OCELExtension, OWLProfile
-from semanticlog.core.vocabulary import DEFAULT_IRI, UnsafeLocalNameError
+from semanticlog.core.vocabulary import DEFAULT_IRI, TBOX_IRI, UnsafeLocalNameError
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, RelationKind
@@ -246,6 +246,24 @@ def test_a_single_event_with_no_object_builds():
         i.iri.remainder for i in result.require_onto().individuals_in_signature()
     }
     assert individuals == {"e1", "20240101T000000_000000"}
+
+
+def test_an_activity_named_like_a_schema_class_keeps_its_name():
+    data = OCEDStore()
+    data.add(
+        EntityKind.EVENT,
+        "Event",
+        pd.DataFrame({"eid": ["e1"], "ts": pd.to_datetime(["2024-01-01"])}),
+        id_col="eid",
+        time_col="ts",
+    )
+
+    result = OCEDOntoBuilder(DEFAULT_IRI, NO_ORDER).build_ontology(
+        clean_oced_data(data)
+    )
+
+    classes = {c.iri.str for c in result.require_onto().classes_in_signature()}
+    assert {f"{TBOX_IRI}Event", f"{DEFAULT_IRI}Event"} <= classes
 
 
 # --------------------------------------------------------------------------

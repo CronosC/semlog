@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from semanticlog.core.enums import OWLProfile
-from semanticlog.core.vocabulary import DEFAULT_IRI
+from semanticlog.core.vocabulary import DEFAULT_IRI, EVENT, TBOX_IRI
 from semanticlog.onto.sinks import StreamingSink
 
 PROFILE = OWLProfile.OWL2DL
@@ -17,6 +17,17 @@ def path(tmp_path):
 @pytest.fixture
 def streaming(path):
     return StreamingSink(str(path), DEFAULT_IRI, PROFILE)
+
+
+def test_a_schema_name_is_written_under_the_tbox_prefix(streaming, path):
+    streaming.add_class(EVENT, source="the TBox")
+    streaming.add_class("order", EVENT, source="an object type")
+    streaming.close()
+
+    text = path.read_text(encoding="utf-8")
+    assert f"Prefix(oced:=<{TBOX_IRI}>)" in text
+    assert "Declaration(Class(oced:Event))" in text
+    assert "SubClassOf(:order oced:Event)" in text
 
 
 def test_the_file_appears_only_once_the_ontology_is_complete(streaming, path):
@@ -36,18 +47,18 @@ def test_a_sink_given_no_record_writes_a_complete_ontology(streaming, path):
 
     text = path.read_text(encoding="utf-8")
     assert text.startswith("Prefix(")
-    assert f"Ontology(<{DEFAULT_IRI.rstrip('#')}>" in text
+    assert f"Ontology(<{DEFAULT_IRI.removesuffix('/')}>" in text
     assert text.rstrip().endswith(")")
 
 
 def test_the_record_is_written_inside_the_ontology_header(streaming, path):
-    streaming.open_ontology({DEFAULT_IRI + "sourceLog": "some.jsonocel"})
+    streaming.open_ontology({TBOX_IRI + "sourceLog": "some.jsonocel"})
     streaming.add_class("order", source="a build step")
     streaming.close()
 
     lines = path.read_text(encoding="utf-8").splitlines()
-    header = lines.index(f"Ontology(<{DEFAULT_IRI.rstrip('#')}>")
-    annotation = lines.index(f'Annotation(<{DEFAULT_IRI}sourceLog> "some.jsonocel")')
+    header = lines.index(f"Ontology(<{DEFAULT_IRI.removesuffix('/')}>")
+    annotation = lines.index(f'Annotation(<{TBOX_IRI}sourceLog> "some.jsonocel")')
     declaration = lines.index("Declaration(Class(:order))")
     assert header < annotation < declaration
 

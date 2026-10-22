@@ -55,7 +55,7 @@ def test_an_in_memory_build_writes_rdf_xml_and_keeps_the_ontology(tiny_store, tm
 
 def test_the_iri_and_the_run_record_reach_the_file(tiny_store, tmp_path):
     output = tmp_path / "named.ofn"
-    iri = "https://example.org/tiny#"
+    iri = "https://example.org/tiny/"
 
     result = build_log(
         tiny_store,
@@ -69,7 +69,7 @@ def test_the_iri_and_the_run_record_reach_the_file(tiny_store, tmp_path):
 
     annotations = read_functional(output).ontology_annotations
     assert result.iri == iri
-    assert f"Ontology(<{iri.rstrip('#')}>" in output.read_text(encoding="utf-8")
+    assert f"Ontology(<{iri.removesuffix('/')}>" in output.read_text(encoding="utf-8")
     assert annotations["sourceLog"] == "tiny.jsonocel"
     assert annotations["sourceLogSha256"] == "abc"
     assert json.loads(annotations["stats"]) == {"events": 3}

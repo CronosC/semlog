@@ -24,7 +24,7 @@ from semanticlog.core.enums import (
     resolve_reasoner_backend,
 )
 from semanticlog.core.errors import ConfigError
-from semanticlog.core.vocabulary import DEFAULT_IRI
+from semanticlog.core.vocabulary import default_iri
 from semanticlog.data.binning import DEFAULT_BIN_LABELS, DEFAULT_BINS
 from semanticlog.data.loading import LOG_SUFFIXES
 from semanticlog.onto.settings import DEFAULT_MAX_EF_PAIRS, OntoBuildSettings
@@ -302,12 +302,12 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         "iri",
-        DEFAULT_IRI,
-        _as_str,
+        None,
+        _optional(_as_str),
         "run",
         help=(
-            f"Base IRI of the ontology (default: {DEFAULT_IRI}). A trailing # "
-            "is added when missing."
+            f"Base IRI of every name from the log (default: {default_iri('STEM')}, "
+            "with STEM the artifact stem). A trailing / is added when missing."
         ),
         argparse={"metavar": "IRI"},
     ),

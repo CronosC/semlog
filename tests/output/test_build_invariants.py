@@ -201,7 +201,7 @@ def test_a_build_states_its_ontology_iri_and_version(backend, built_path):
     path = built_path(NAMES[0], backend)
     ontology_iri, _ = ontology_iris(path)
 
-    assert ontology_iri == vocab.DEFAULT_IRI.rstrip("#")
+    assert ontology_iri == vocab.DEFAULT_IRI.removesuffix("/")
     assert ontology_annotations(path)["versionInfo"].startswith("semlog ")
 
 

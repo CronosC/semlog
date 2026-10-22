@@ -16,6 +16,7 @@ from semanticlog.cli.run import (
     mine_declare,
 )
 from semanticlog.core.errors import ConfigError, DependencyError
+from semanticlog.core.vocabulary import default_iri
 from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
 from tests.support.owlapi import ontology_annotations
 from tests.support.rdf import read_rdf
@@ -110,7 +111,7 @@ def test_no_streaming_writes_rdf_xml(tmp_path, ocel):
         == EXIT_OK
     )
     assert (out / "pipeline.owl").read_text(encoding="utf-8").startswith("<?xml")
-    assert "order" in read_rdf(out / "pipeline.owl", "https://oced#").classes
+    assert "order" in read_rdf(out / "pipeline.owl", default_iri("pipeline")).classes
 
 
 def test_a_flat_csv_builds_with_its_columns_named_by_flag(flat_csv, tmp_path):
@@ -141,18 +142,21 @@ def test_a_flat_csv_builds_with_its_columns_named_by_flag(flat_csv, tmp_path):
 
 
 def test_configured_case_concepts_follow_a_rename(ocel, tmp_path):
-    """An object type named after an upper-schema class is renamed, and a configured case concept follows."""
+    """`order` derives `df_order`, which another object type holds, so `order` is renamed and a configured case concept follows."""
     raw = json.loads(ocel.read_text())
+    for declared in raw["objectTypes"]:
+        if declared["name"] == "item":
+            declared["name"] = "df_order"
     for obj in raw["objects"]:
-        if obj["type"] == "order":
-            obj["type"] = "Event"
+        if obj["type"] == "item":
+            obj["type"] = "df_order"
     collided = tmp_path / "collided.jsonocel"
     collided.write_text(json.dumps(raw))
     cfg = resolve_run_config(
         {
             "input": [str(collided)],
             "output": str(tmp_path / "onto"),
-            "case_concepts": ["Event"],
+            "case_concepts": ["order"],
             "order_representations": ["df"],
         }
     )
@@ -160,7 +164,7 @@ def test_configured_case_concepts_follow_a_rename(ocel, tmp_path):
     build_one(cfg, collided)
 
     assert (
-        "df_object_Event" in read_built(cfg.ontology_path(collided)).object_properties
+        "df_object_order" in read_built(cfg.ontology_path(collided)).object_properties
     )
 
 

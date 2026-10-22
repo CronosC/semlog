@@ -303,7 +303,7 @@ def test_a_reasoner_derives_from_ef_the_pairs_ef_explicit_asserts(tmp_path):
         for axiom in Reasoner(
             str(axiomatic), backend="Pellet"
         ).inferred_property_assertions()
-        if str(axiom.get_property().iri.as_str()).endswith("#ef_order")
+        if str(axiom.get_property().iri.as_str()) == f"{DEFAULT_IRI}ef_order"
     }
     # A backend may answer with every entailed pair or only the new ones.
     reached = _pairs(read_functional(axiomatic), "ef_order") | entailed

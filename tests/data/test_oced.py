@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from semanticlog.core.errors import InputError, SemlogError
+from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.oced import OCEDStore, attribute_owners
 from semanticlog.data.tables import EntityKind, EntityTable, RelationKind, Relations
 
@@ -204,7 +205,7 @@ def test_an_iri_under_the_base_maps_back_to_its_source_name():
     store = OCEDStore()
     store.backmap = {"o__1": "o #1"}
 
-    assert store.get_original("https://oced#o__1") == "o #1"
+    assert store.get_original(f"{DEFAULT_IRI}o__1") == "o #1"
     assert store.get_original("https://x.org/#o__1", base_iri="https://x.org/#") == (
         "o #1"
     )

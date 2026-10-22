@@ -122,25 +122,25 @@ def test_a_change_table_is_keyed_by_the_cleaned_type_and_keeps_its_ocel_column_n
 
 def test_a_renamed_id_is_rewritten_in_relations_and_change_rows(make_store):
     oced = make_store(
-        objects=pd.DataFrame({"oid": ["Event"], "status": ["new"]}),
+        objects=pd.DataFrame({"oid": ["order"], "status": ["new"]}),
         obj_type="order",
         ocel_mode=True,
     )
     oced.add_relation(
         RelationKind.E2O,
         "modifies",
-        pd.DataFrame({"eid": ["e1"], "oid": ["Event"]}),
+        pd.DataFrame({"eid": ["e1"], "oid": ["order"]}),
         from_id="eid",
         to_id="oid",
         to_type=["order"],
     )
-    oced.add_object_changes("order", _changes("order", "Event", status=["shipped"]))
+    oced.add_object_changes("order", _changes("order", "order", status=["shipped"]))
 
     cleaned = clean_oced_data(oced)
 
-    assert list(cleaned.ids(EntityKind.OBJECT, "order")) == ["id_Event"]
-    assert list(cleaned.get_relation("modifies").data["oid"]) == ["id_Event"]
-    assert list(cleaned.get_object_changes("order")["ocel:oid"]) == ["id_Event"]
+    assert list(cleaned.ids(EntityKind.OBJECT, "order")) == ["id_order"]
+    assert list(cleaned.get_relation("modifies").data["oid"]) == ["id_order"]
+    assert list(cleaned.get_object_changes("order")["ocel:oid"]) == ["id_order"]
 
 
 def test_a_blank_id_is_rejected_before_cleaning_rewrites_it(make_store):
@@ -154,6 +154,10 @@ def test_a_blank_id_is_rejected_before_cleaning_rewrites_it(make_store):
 
 
 def test_only_a_moved_object_type_is_listed_with_its_new_name(make_store):
-    cleaned = clean_oced_data(make_store(obj_type="Event", activity="place order"))
+    """`order` derives `df_order`, which an object type claims first."""
+    oced = make_store(obj_type="order", activity="place order")
+    oced.add(EntityKind.OBJECT, "df_order", pd.DataFrame({"x": ["d1"]}), id_col="x")
 
-    assert object_type_renames(cleaned) == {"Event": "object_Event"}
+    cleaned = clean_oced_data(oced)
+
+    assert object_type_renames(cleaned) == {"order": "object_order"}

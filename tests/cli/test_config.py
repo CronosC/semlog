@@ -51,6 +51,20 @@ def test_a_single_input_takes_its_output_name_from_the_config_file(ocel, write_c
     assert cfg.backmap_path(ocel).name == "hiring-el-df.backmap.json"
 
 
+def test_the_default_iri_holds_the_run_stem(ocel, write_config):
+    cfg = resolve_run_config(
+        {}, config_file=write_config("hiring el.toml", f'input = "{ocel}"\n')
+    )
+
+    assert cfg.log_iri(ocel) == "https://example.org/oced/hiring%20el/"
+
+
+def test_a_set_iri_is_the_log_base_of_every_input(ocel):
+    assert resolve(ocel, iri="https://example.org/x/").log_iri(ocel) == (
+        "https://example.org/x/"
+    )
+
+
 def test_a_batch_names_each_output_after_its_input(tmp_path, ocel, write_config):
     for name in ("a.jsonocel", "b.jsonocel"):
         (tmp_path / name).write_bytes(ocel.read_bytes())

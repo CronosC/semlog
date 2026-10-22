@@ -23,11 +23,12 @@ def _columns(oced, obj_type="obj"):
     return list(oced.table(EntityKind.OBJECT, obj_type).data.columns)
 
 
-def test_an_activity_named_after_a_schema_name_takes_the_event_prefix(make_store):
-    cleaned = clean_oced_data(make_store(activity="observes"))
+@pytest.mark.parametrize("activity", ["observes", "Event", "df"])
+def test_a_log_name_equal_to_a_schema_name_keeps_the_name(make_store, activity):
+    cleaned = clean_oced_data(make_store(activity=activity))
 
-    assert cleaned.types(EntityKind.EVENT) == ["event_observes"]
-    assert cleaned.backmap["event_observes"] == "observes"
+    assert cleaned.types(EntityKind.EVENT) == [activity]
+    assert activity not in cleaned.backmap
 
 
 @pytest.mark.parametrize(
@@ -89,54 +90,68 @@ def test_a_relation_cannot_open_a_property_name_with_a_digit(make_store):
     assert clean_oced_data(oced).get_relation_types() == ["relation_2modifies"]
 
 
+def _with_object_type(oced, name):
+    oced.add(EntityKind.OBJECT, name, pd.DataFrame({"x": [f"{name}_1"]}), id_col="x")
+    return oced
+
+
 def test_a_prefixed_name_the_log_holds_is_numbered_past(make_store):
-    oced = make_store(obj_type="Event")
-    oced.add(EntityKind.OBJECT, "object_Event", pd.DataFrame({"x": ["o2"]}), id_col="x")
+    """`order` derives `df_order`, which an object type claims first."""
+    oced = _with_object_type(make_store(obj_type="order"), "df_order")
+    _with_object_type(oced, "object_order")
 
     cleaned = clean_oced_data(oced)
 
     assert sorted(cleaned.types(EntityKind.OBJECT)) == [
-        "object_Event",
-        "object_Event_2",
+        "df_order",
+        "object_order",
+        "object_order_2",
     ]
-    assert cleaned.backmap["object_Event_2"] == "Event"
+    assert cleaned.backmap["object_order_2"] == "order"
 
 
 def test_a_rename_never_discards_a_type_already_in_the_store(make_store):
-    oced = make_store(obj_type="Event")
-    oced.add(EntityKind.OBJECT, "Event_", pd.DataFrame({"x": ["b1"]}), id_col="x")
+    oced = make_store(obj_type="order", activity="order")
+    oced.add(
+        EntityKind.EVENT,
+        "event_order",
+        pd.DataFrame({"eid": ["e9"], "ts": pd.to_datetime(["2022-01-01"], utc=True)}),
+        id_col="eid",
+        time_col="ts",
+    )
 
     fix_duplicate_names(oced)
 
-    assert sorted(oced.types(EntityKind.OBJECT)) == ["Event_", "object_Event"]
+    assert sorted(oced.types(EntityKind.EVENT)) == ["event_order", "event_order_2"]
 
 
 def test_the_names_derived_from_a_renamed_type_are_claimed_under_its_new_name(
     make_store,
 ):
-    """`object_Event` derives `df_object_Event`, which the log holds as an attribute.
+    """`object_order` derives `df_object_order`, which the log holds as an attribute.
 
-    Its prefixed name derives `has_attribute_df_object_Event`, which another attribute holds.
+    Its prefixed name derives `has_attribute_df_object_order`, which another attribute holds.
     """
     oced = make_store(
         objects=pd.DataFrame(
             {
                 "oid": ["o1"],
-                "df_object_Event": ["a"],
-                "has_df_object_Event": ["b"],
-                "has_attribute_df_object_Event": ["c"],
+                "df_object_order": ["a"],
+                "has_df_object_order": ["b"],
+                "has_attribute_df_object_order": ["c"],
             }
         ),
-        obj_type="Event",
+        obj_type="order",
     )
+    _with_object_type(oced, "df_order")
 
     cleaned = clean_oced_data(oced)
 
-    assert _columns(cleaned, "object_Event") == [
+    assert _columns(cleaned, "object_order") == [
         "oid",
-        "attribute_df_object_Event_2",
-        "has_df_object_Event",
-        "has_attribute_df_object_Event",
+        "attribute_df_object_order_2",
+        "has_df_object_order",
+        "has_attribute_df_object_order",
     ]
 
 
@@ -174,12 +189,13 @@ def test_the_names_do_not_depend_on_the_order_the_store_holds_things_in():
 def test_a_value_of_a_renamed_attribute_is_recorded_under_the_new_column(
     make_store, events
 ):
-    oced = make_store(events=events("e1", observed_at=["by hand"]))
+    """An attribute named after the object type `obj` is renamed."""
+    oced = make_store(events=events("e1", obj=["by hand"]))
 
     backmap = clean_oced_data(oced).backmap
 
-    assert backmap["attribute_observed_at_by_hand"] == "by hand"
-    assert "observed_at_by_hand" not in backmap
+    assert backmap["attribute_obj_by_hand"] == "by hand"
+    assert "obj_by_hand" not in backmap
 
 
 def test_an_attribute_only_the_history_carries_is_renamed_in_the_change_rows(

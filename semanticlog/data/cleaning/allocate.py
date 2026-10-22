@@ -84,7 +84,7 @@ def allocate_schema_names(
     Returns:
         The registry, holding every schema name the build will emit.
     """
-    registry = NameRegistry(vocab.RESERVED_NAMES)
+    registry = NameRegistry()
     labels = list(bin_labels)
 
     def rename_attribute(old: str, new: str) -> None:

@@ -1,23 +1,51 @@
-"""The namespace and every local name a build may emit.
+"""The two namespaces and every local name a build may emit.
 
-Upper schema names are constants. Names derived from log content come from
-the functions below. No other module formats an emitted name. Cleaning derives
-its reserved-name set from `RESERVED_NAMES`.
+Upper schema names are `Term`s in the TBox namespace, the same in every build.
+Names derived from log content are plain strings under the log base and come
+from the functions below. No other module formats an emitted name.
 """
 
 from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any
+from urllib.parse import quote
 
 import pandas as pd
 
 from semanticlog.core.errors import InputError
 
-DEFAULT_IRI: str = "https://oced#"
+TBOX_IRI: str = "https://example.org/oced#"
+TBOX_PREFIX = "oced"
+
+_LOG_IRI_ROOT = "https://example.org/oced/"
+
+DEFAULT_IRI: str = f"{_LOG_IRI_ROOT}log/"
+"""Log base of a build that names none."""
+
+
+def default_iri(run: str) -> str:
+    """Return the log base of a run that sets no `iri`, one path per run stem."""
+    return f"{_LOG_IRI_ROOT}{quote(run, safe='')}/"
+
+
+class Term(str):
+    """A name in the TBox namespace.
+
+    It compares and hashes as its text, so it works wherever a name does. A
+    sink writes it under `TBOX_IRI` and any plain string under the log base.
+    """
+
+    __slots__ = ()
+
+
+def is_tbox(name: str) -> bool:
+    """Whether a name belongs to the TBox namespace."""
+    return isinstance(name, Term)
+
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
 
@@ -42,27 +70,27 @@ def is_safe_local_name(name: str) -> bool:
     return bool(SAFE_LOCAL_NAME.fullmatch(str(name)))
 
 
-OBJECT = "Object"
-EVENT = "Event"
-ATTRIBUTE = "Attribute"
-TIME = "Time"
-OBJECT_ATTRIBUTE = "ObjectAttribute"
-EVENT_ATTRIBUTE = "EventAttribute"
-ATTRIBUTE_CHANGE = "AttributeChange"
-DECLARE_CONSTRAINT = "DeclareConstraint"
+OBJECT = Term("Object")
+EVENT = Term("Event")
+ATTRIBUTE = Term("Attribute")
+TIME = Term("Time")
+OBJECT_ATTRIBUTE = Term("ObjectAttribute")
+EVENT_ATTRIBUTE = Term("EventAttribute")
+ATTRIBUTE_CHANGE = Term("AttributeChange")
+DECLARE_CONSTRAINT = Term("DeclareConstraint")
 
-OBSERVED_AT = "observed_at"
-OBSERVES = "observes"
-EVENT_OBJECT_RELATION = "event_object_relation"
-OBJECT_OBJECT_RELATION = "object_object_relation"
-HAS_ATTRIBUTE = "has_attribute"
-ATTRIBUTE_OF = "attribute_of"
-HAS_DATA_VALUE = "has_data_value"
-HAS_ATTRIBUTE_CHANGE = "has_attribute_change"
-ATTRIBUTE_CHANGE_VALUE = "attribute_change_value"
-CHANGED_AT = "changed_at"
-DF = "df"
-EF = "ef"
+OBSERVED_AT = Term("observed_at")
+OBSERVES = Term("observes")
+EVENT_OBJECT_RELATION = Term("event_object_relation")
+OBJECT_OBJECT_RELATION = Term("object_object_relation")
+HAS_ATTRIBUTE = Term("has_attribute")
+ATTRIBUTE_OF = Term("attribute_of")
+HAS_DATA_VALUE = Term("has_data_value")
+HAS_ATTRIBUTE_CHANGE = Term("has_attribute_change")
+ATTRIBUTE_CHANGE_VALUE = Term("attribute_change_value")
+CHANGED_AT = Term("changed_at")
+DF = Term("df")
+EF = Term("ef")
 
 ATTRIBUTE_CHANGE_RECORD = "AttrChange"
 
@@ -98,43 +126,47 @@ SCHEMA_PROPERTIES: frozenset[str] = _INVERTIBLE_PROPERTIES | {HAS_DATA_VALUE}
 
 INVERSE_PREFIX = "inv_"
 
-_EXPLICIT_INVERSES: dict[str, str] = {
+_EXPLICIT_INVERSES: dict[Term, Term] = {
     HAS_ATTRIBUTE: ATTRIBUTE_OF,
     OBSERVED_AT: OBSERVES,
 }
 
-SCHEMA_NAMED_INVERSES: dict[str, str] = {
+SCHEMA_NAMED_INVERSES: dict[Term, Term] = {
     **_EXPLICIT_INVERSES,
     **{inverse: prop for prop, inverse in _EXPLICIT_INVERSES.items()},
 }
 
 
-def inverse(prop: str, named: dict[str, str] | None = None) -> str:
-    """Return the name of the inverse of a property.
+def inverse(prop: str, named: Mapping[str, str] | None = None) -> str:
+    """Return the name of the inverse of a property, in its namespace.
 
-    A property in `named` takes its paired name. Everything else takes the
-    `inv_` prefix.
+    A TBox property in `SCHEMA_NAMED_INVERSES` takes its paired name. A
+    property in `named` takes the name paired with it there. Everything else
+    takes the `inv_` prefix.
 
     Args:
-        named: Inverse pairs, defaulting to `SCHEMA_NAMED_INVERSES`.
+        named: Inverse pairs of log properties.
     """
-    pairs = SCHEMA_NAMED_INVERSES if named is None else named
-    return pairs.get(prop, INVERSE_PREFIX + prop)
+    if isinstance(prop, Term):
+        return SCHEMA_NAMED_INVERSES.get(prop, Term(INVERSE_PREFIX + prop))
+    if named is not None and prop in named:
+        return named[prop]
+    return INVERSE_PREFIX + prop
 
 
-BUILD_CONFIGURATION = "buildConfiguration"
-SOURCE_LOG = "sourceLog"
-SOURCE_LOG_SHA256 = "sourceLogSha256"
-SOURCE_LOG_BYTES = "sourceLogBytes"
-CASE_CONCEPTS = "caseConcepts"
-CASE_CONCEPT_SOURCE = "caseConceptSource"
-DECLARE_FILE = "declareFile"
-ANNOTATION_DOCUMENT = "annotationDocument"
-BUILD_COMMAND = "buildCommand"
-BUILD_CONFIG_FILE = "buildConfigFile"
-BUILD_INPUT_STATISTICS = "buildInputStatistics"
-BUILD_OUTPUTS = "buildOutputs"
-MATERIALIZE_REQUESTED = "materializeRequested"
+BUILD_CONFIGURATION = Term("buildConfiguration")
+SOURCE_LOG = Term("sourceLog")
+SOURCE_LOG_SHA256 = Term("sourceLogSha256")
+SOURCE_LOG_BYTES = Term("sourceLogBytes")
+CASE_CONCEPTS = Term("caseConcepts")
+CASE_CONCEPT_SOURCE = Term("caseConceptSource")
+DECLARE_FILE = Term("declareFile")
+ANNOTATION_DOCUMENT = Term("annotationDocument")
+BUILD_COMMAND = Term("buildCommand")
+BUILD_CONFIG_FILE = Term("buildConfigFile")
+BUILD_INPUT_STATISTICS = Term("buildInputStatistics")
+BUILD_OUTPUTS = Term("buildOutputs")
+MATERIALIZE_REQUESTED = Term("materializeRequested")
 
 PROVENANCE_ANNOTATIONS: frozenset[str] = frozenset(
     {
@@ -152,15 +184,6 @@ PROVENANCE_ANNOTATIONS: frozenset[str] = frozenset(
         BUILD_OUTPUTS,
         MATERIALIZE_REQUESTED,
     }
-)
-
-
-RESERVED_NAMES: frozenset[str] = (
-    SCHEMA_CLASSES
-    | SCHEMA_PROPERTIES
-    | PROVENANCE_ANNOTATIONS
-    | frozenset(inverse(p) for p in _INVERTIBLE_PROPERTIES)
-    | frozenset({ATTRIBUTE_CHANGE_RECORD})
 )
 
 

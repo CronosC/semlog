@@ -44,7 +44,7 @@ def test_an_annotation_property_outside_the_base_namespace_keeps_its_iri():
     sink = InMemorySink(DEFAULT_IRI, OWLProfile.OWL2DL)
     sink.open_ontology({creator: "semlog"})
 
-    ontology_iri = DEFAULT_IRI.rstrip("#")
+    ontology_iri = DEFAULT_IRI.removesuffix("/")
     stored = {
         prop.iri
         for prop, _ in sink.onto._onto.world.sparql(

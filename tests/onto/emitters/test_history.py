@@ -167,14 +167,14 @@ def test_two_changes_of_one_attribute_at_one_instant_stay_two_records(tmp_path, 
 def test_an_attribute_cleaning_renamed_keeps_its_history_under_the_new_name(
     tmp_path,
 ):
-    """`observes` is the inverse of `observed_at`, so cleaning renames it."""
-    store = _store_with_changes("o1", "observes", ["y"], {"observes": ["x"]})
+    """`order` is the object type, so cleaning renames the attribute."""
+    store = _store_with_changes("o1", "order", ["y"], {"order": ["x"]})
 
     onto = emit(history_settings(), tmp_path / "renamed.ofn", data=store)
 
-    assert "observes" not in onto.classes
-    assert "change_value_attribute_observes" in onto.object_properties
-    assert {"attribute_observes_x", "attribute_observes_y"} <= onto.individuals
+    assert "change_value_order" not in onto.object_properties
+    assert "change_value_attribute_order" in onto.object_properties
+    assert {"attribute_order_x", "attribute_order_y"} <= onto.individuals
 
 
 def test_a_change_record_is_labeled_with_the_object_id_the_log_wrote(tmp_path):

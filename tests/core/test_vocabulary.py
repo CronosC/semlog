@@ -95,8 +95,15 @@ def test_punctuation_is_safe_inside_a_name_but_not_at_its_edges(name, safe):
 
 def test_an_inverse_takes_its_paired_name_or_the_inv_prefix():
     assert vocab.inverse(vocab.HAS_ATTRIBUTE) == vocab.ATTRIBUTE_OF
+    assert vocab.inverse(vocab.DF) == "inv_df"
     assert vocab.inverse("df_order") == "inv_df_order"
-    assert vocab.inverse(vocab.HAS_ATTRIBUTE, {"a": "b"}) == "inv_has_attribute"
+    assert vocab.inverse("a", {"a": "b"}) == "b"
+
+
+def test_an_inverse_stays_in_the_namespace_of_its_property():
+    assert vocab.is_tbox(vocab.inverse(vocab.DF))
+    assert not vocab.is_tbox(vocab.inverse("has_attribute"))
+    assert vocab.inverse("has_attribute") == "inv_has_attribute"
 
 
 def test_change_records_of_one_object_attribute_and_instant_are_numbered_from_two():

@@ -128,7 +128,7 @@ The record of how the file was produced is annotated onto the ontology itself: t
 |---|---|---|
 | `output` | the current directory | Directory the ontology and any other artifact of the run go into. |
 | `name` | the config or input name | Stem of every file the run writes. |
-| `iri` | `https://oced#` | Base IRI the ontology puts its names in. A trailing `#` is added when missing. |
+| `iri` | `https://example.org/oced/<stem>/` | Base IRI of every name from the log, with `<stem>` the artifact stem. A trailing `/` is added when missing. Schema names are under `https://example.org/oced#`. |
 | `profile` | `OWL2DL` | Which OWL 2 profile the output stays inside. `OWL2EL` rejects `ef` and `axiomatic` inverses, drops a domain or range that is a union of classes, and writes a float as `xsd:decimal` and a boolean or date as `xsd:string`. |
 | `order_representations` | none | How event order is written: `df`, `ef`, `ef_explicit`, `declare`. Several can be combined. `ef` declares eventually-follows transitive over `df` and leaves the pairs to a reasoner, so it needs `df` beside it and `OWL2DL`. `ef_explicit` asserts every pair itself. |
 | `case_concepts` | the 3 most common object types | Object types whose instances act as cases, spelled as the source log spells them. `df`, `ef` and `ef_explicit` need at least one. `declare` takes its traces from the mined file. |

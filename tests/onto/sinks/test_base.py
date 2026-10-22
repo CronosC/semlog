@@ -11,10 +11,12 @@ from datetime import date
 import pandas as pd
 import pytest
 
+from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import OWLProfile
 from semanticlog.core.errors import ConfigError
 from semanticlog.core.vocabulary import (
     DEFAULT_IRI,
+    TBOX_IRI,
     NameCollisionError,
 )
 from semanticlog.onto.builder import OCEDOntoBuilder
@@ -148,10 +150,15 @@ def test_a_base_iri_that_cannot_be_written_is_rejected(iri):
         InMemorySink(iri, OWLProfile.OWL2DL)
 
 
-def test_a_base_iri_without_a_hash_is_given_one(recording_sink):
+def test_a_base_iri_without_a_slash_is_given_one(recording_sink):
     assert recording_sink(iri="https://example.org/upper").iri == (
-        "https://example.org/upper#"
+        "https://example.org/upper/"
     )
+
+
+def test_an_iri_ending_in_a_hash_is_rejected():
+    with pytest.raises(ConfigError, match="iri must end in '/'"):
+        InMemorySink("https://example.org/upper#", OWLProfile.OWL2DL)
 
 
 # --------------------------------------------------------------------------
@@ -320,10 +327,10 @@ def test_the_inverse_of_a_parent_without_one_is_declared_before_use(sink):
 # --------------------------------------------------------------------------
 
 
-def test_the_record_declares_the_annotation_properties_in_the_base_namespace(sink):
+def test_the_record_declares_the_annotation_properties_in_the_tbox_namespace(sink):
     """OWL 2 DL requires a declaration for an annotation property."""
     sink.open_ontology(
-        {f"{DEFAULT_IRI}sourceLog": "log.jsonocel", OWL_VERSION_INFO: "semlog 0.5.0"}
+        {f"{TBOX_IRI}sourceLog": "log.jsonocel", OWL_VERSION_INFO: "semlog 0.5.0"}
     )
 
     assert [call[1] for call in sink.of_kind("declare")] == ["sourceLog"]
@@ -331,17 +338,26 @@ def test_the_record_declares_the_annotation_properties_in_the_base_namespace(sin
 
 
 def test_a_record_key_claims_its_name_as_an_annotation_property(sink):
-    sink.open_ontology({f"{DEFAULT_IRI}sourceLog": "log.jsonocel"})
+    sink.open_ontology({f"{TBOX_IRI}sourceLog": "log.jsonocel"})
 
     with pytest.raises(NameCollisionError, match="as annotation from the build record"):
-        sink.add_class("sourceLog", source="an object type")
+        sink.add_class(vocab.SOURCE_LOG, source="an object type")
+
+
+def test_a_log_class_named_like_a_schema_class_is_a_second_entity(sink):
+    sink.add_class(vocab.EVENT, source="the TBox")
+    sink.add_class("Event", source="an activity")
+
+    declared = sink.of_kind("declare")
+    assert [call[1] for call in declared] == ["Event", "Event"]
+    assert [vocab.is_tbox(call[1]) for call in declared] == [True, False]
 
 
 def test_the_record_after_the_first_axiom_is_rejected(sink):
     sink.add_class("order", source="a build step")
 
     with pytest.raises(ValueError, match="is open"):
-        sink.open_ontology({f"{DEFAULT_IRI}sourceLog": "log.jsonocel"})
+        sink.open_ontology({f"{TBOX_IRI}sourceLog": "log.jsonocel"})
 
 
 def test_a_closed_sink_takes_no_more_axioms(sink):

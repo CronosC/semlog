@@ -27,6 +27,7 @@ from semanticlog.cli.settings_table import (
 from semanticlog.cli.toml import RENAMED_KEYS, load_config_file, toml_value
 from semanticlog.core.enums import OCELExtension
 from semanticlog.core.errors import ConfigError
+from semanticlog.core.vocabulary import default_iri
 from semanticlog.data.declare import DeclareResult
 from semanticlog.data.loading import CLASSICAL_SUFFIXES
 from semanticlog.onto.inputs import BuildInputs
@@ -167,7 +168,8 @@ class RunConfig:
             from `build_inputs`.
         case_concepts: Object types to use as cases, or None to choose them
             from the log.
-        iri: Base IRI of the ontology.
+        iri: Base IRI of the names from the log, or None for the default
+            of each input.
         auto_case_concepts: How many to choose when choosing automatically.
         case_col: Column holding the case id of a flat log.
         act_col: Column holding the activity of a flat log.
@@ -197,7 +199,7 @@ class RunConfig:
     name: str | None
     settings: OntoBuildSettings
     case_concepts: tuple[str, ...] | None
-    iri: str
+    iri: str | None
     auto_case_concepts: int
     case_col: str | None
     act_col: str | None
@@ -221,6 +223,10 @@ class RunConfig:
     def output_stem(self, input_path: Path) -> str:
         """Return the shared name of the artifacts built from one input."""
         return self.name or input_path.stem
+
+    def log_iri(self, input_path: Path) -> str:
+        """Return the base IRI of the names from one input."""
+        return self.iri or default_iri(self.output_stem(input_path))
 
     def ontology_path(self, input_path: Path) -> Path:
         """Return where the ontology for one input goes.

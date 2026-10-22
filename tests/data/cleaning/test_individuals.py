@@ -18,29 +18,41 @@ def _column(oced, column, obj_type="obj"):
     return list(oced.table(EntityKind.OBJECT, obj_type).data[column])
 
 
-def test_a_value_whose_individual_is_a_schema_name_moves(make_store, events):
-    """`has` with value `attribute` is the individual `has_attribute`."""
+def test_a_value_whose_individual_is_a_derived_name_moves(make_store, events):
+    """`df` with value `obj` is the individual `df_obj`, the order property of `obj`."""
+    oced = make_store(events=events("e1", "e2", df=["obj", "ok"]))
+
+    cleaned = clean_oced_data(oced)
+
+    assert list(cleaned.table(EntityKind.EVENT, "act").data["df"]) == [
+        "value_obj",
+        "ok",
+    ]
+    assert cleaned.backmap["df_value_obj"] == "obj"
+
+
+def test_a_value_whose_individual_is_a_schema_name_stays(make_store, events):
+    """`has` with value `attribute` is the log individual `has_attribute`."""
     oced = make_store(events=events("e1", "e2", has=["attribute", "ok"]))
 
     cleaned = clean_oced_data(oced)
 
     assert list(cleaned.table(EntityKind.EVENT, "act").data["has"]) == [
-        "value_attribute",
+        "attribute",
         "ok",
     ]
-    assert cleaned.backmap["has_value_attribute"] == "attribute"
 
 
 def test_a_moved_value_is_numbered_past_a_value_holding_its_new_name(
     make_store, events
 ):
-    oced = make_store(events=events("e1", "e2", has=["attribute", "value_attribute"]))
+    oced = make_store(events=events("e1", "e2", df=["obj", "value_obj"]))
 
     cleaned = clean_oced_data(oced)
 
-    assert sorted(cleaned.table(EntityKind.EVENT, "act").data["has"]) == [
-        "value_attribute",
-        "value_attribute_2",
+    assert sorted(cleaned.table(EntityKind.EVENT, "act").data["df"]) == [
+        "value_obj",
+        "value_obj_2",
     ]
 
 
@@ -75,12 +87,12 @@ def test_an_id_named_after_a_timestamp_individual_moves(make_store):
     assert _ids(cleaned, EntityKind.EVENT, "act") == ["id_20220101T000000_000000"]
 
 
-def test_an_id_moved_off_a_schema_name_skips_an_id_holding_its_new_name(make_store):
-    oced = make_store(objects=pd.DataFrame({"oid": ["Event", "id_Event"]}))
+def test_a_moved_id_skips_an_id_holding_its_new_name(make_store):
+    oced = make_store(objects=pd.DataFrame({"oid": ["obj", "id_obj"]}))
     oced.add_relation(
         RelationKind.E2O,
         "rel",
-        pd.DataFrame({"eid": ["e1"], "oid": ["Event"]}),
+        pd.DataFrame({"eid": ["e1"], "oid": ["obj"]}),
         from_id="eid",
         to_id="oid",
         to_type=["obj"],
@@ -88,8 +100,8 @@ def test_an_id_moved_off_a_schema_name_skips_an_id_holding_its_new_name(make_sto
 
     cleaned = clean_oced_data(oced)
 
-    assert _ids(cleaned) == ["id_Event_2", "id_Event"]
-    assert list(cleaned.get_relation("rel").data["oid"]) == ["id_Event_2"]
+    assert _ids(cleaned) == ["id_obj_2", "id_obj"]
+    assert list(cleaned.get_relation("rel").data["oid"]) == ["id_obj_2"]
 
 
 @pytest.mark.parametrize(("bin_labels", "moved"), [(["low"], True), ((), False)])

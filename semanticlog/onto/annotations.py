@@ -288,7 +288,7 @@ class AnnotationWriter:
         if not self.enabled:
             return
         entry = _entry(template)
-        given = self._document.get(name, {})
+        given = {} if vocab.is_tbox(name) else self._document.get(name, {})
         self.sink.annotate_entity(
             name,
             label=given.get("label") or _fill(entry["label"], template, fields),
@@ -323,7 +323,8 @@ class AnnotationWriter:
         """Annotate the parts of the TBox this build declared."""
         if not self.enabled:
             return
-        for name, ann in tbox_annotations().items():
+        for key, ann in tbox_annotations().items():
+            name = vocab.Term(key)
             if not self.sink.is_declared(name):
                 continue
             self.sink.annotate_entity(

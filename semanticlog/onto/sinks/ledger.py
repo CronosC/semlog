@@ -2,7 +2,8 @@
 
 `NameLedger` raises on a name declared as two entities. Its `first_*` methods
 return False for a schema statement offered a second time, and the sink then
-skips the write.
+skips the write. A TBox `Term` and a log name with the same text are different
+names.
 """
 
 from __future__ import annotations
@@ -23,6 +24,18 @@ _BY_KIND: dict[SinkEntity, str] = {
     SinkEntity.ANNOTATION_PROPERTY: "annotation_properties",
 }
 
+Key = tuple[bool, str]
+
+
+def _key(name: str) -> Key:
+    """Return the ledger key of a name: its namespace and its text."""
+    return (vocab.is_tbox(name), str(name))
+
+
+def _keys(names: Sequence[str]) -> tuple[Key, ...]:
+    return tuple(_key(name) for name in names)
+
+
 _PROPERTY_KINDS = frozenset(
     {
         SinkEntity.OBJECT_PROPERTY,
@@ -40,9 +53,12 @@ class NameLedger:
     """
 
     def __init__(self) -> None:
-        self._declared: dict[str, tuple[SinkEntity, str]] = {}
+        self._declared: dict[Key, tuple[SinkEntity, str, str]] = {}
+        self._log_names: set[str] = set()
         self._written_schema: set[tuple[object, ...]] = set()
-        self._named_inverses: dict[str, str] = dict(vocab.SCHEMA_NAMED_INVERSES)
+        self._named_inverses: dict[Key, str] = {
+            _key(prop): inverse for prop, inverse in vocab.SCHEMA_NAMED_INVERSES.items()
+        }
 
     def declare(self, name: str, kind: SinkEntity, source: str) -> None:
         """Declare a name as one entity.
@@ -69,11 +85,14 @@ class NameLedger:
                 "clean_oced_data(store) before building, or rename it in the "
                 "input."
             )
-        previous = self._declared.get(name)
+        key = _key(name)
+        previous = self._declared.get(key)
         if previous is None:
-            self._declared[name] = (kind, source)
+            self._declared[key] = (kind, source, name)
+            if not key[0]:
+                self._log_names.add(key[1])
             return
-        prev_kind, prev_source = previous
+        prev_kind, prev_source, _ = previous
         if prev_kind == kind and prev_source == source:
             return
         raise NameCollisionError(
@@ -102,7 +121,7 @@ class NameLedger:
         `check_individual` gives the error message.
         """
         return (
-            bool(vocab.SAFE_LOCAL_NAME.fullmatch(name)) and name not in self._declared
+            bool(vocab.SAFE_LOCAL_NAME.fullmatch(name)) and name not in self._log_names
         )
 
     def check_individual(self, name: str, source: str) -> None:
@@ -118,10 +137,10 @@ class NameLedger:
                 property.
         """
         self.check_name(name, source)
-        declared = self._declared.get(name)
+        declared = self._declared.get((False, str(name)))
         if declared is None:
             return
-        kind, declared_by = declared
+        kind, declared_by, _ = declared
         raise NameCollisionError(
             f"{name!r} is emitted both as an individual and as a {kind.value}:\n"
             f"  as {kind.value} from {declared_by}\n"
@@ -164,15 +183,15 @@ class NameLedger:
         if not unsafe.empty:
             self.check_name(unsafe.iloc[0], source)
 
-        if self._declared:
-            clashing = series[series.isin(self._declared)]
+        if self._log_names:
+            clashing = series[series.isin(self._log_names)]
             if not clashing.empty:
                 self.check_individual(str(clashing.iloc[0]), source)
         return series.tolist()
 
     def is_declared(self, name: str) -> bool:
         """Whether a class or property of this name has been declared."""
-        return name in self._declared
+        return _key(name) in self._declared
 
     @property
     def count(self) -> int:
@@ -182,7 +201,7 @@ class NameLedger:
     def by_kind(self) -> dict[str, int]:
         """How many names of each kind have been declared."""
         counts = dict.fromkeys(_BY_KIND.values(), 0)
-        for kind, _ in self._declared.values():
+        for kind, _, _ in self._declared.values():
             counts[_BY_KIND[kind]] += 1
         return counts
 
@@ -197,45 +216,45 @@ class NameLedger:
             order.
         """
         names: dict[str, list[str]] = {}
-        for name, (kind, _) in islice(self._declared.items(), mark, None):
+        for kind, _, name in islice(self._declared.values(), mark, None):
             names.setdefault(kind.value, []).append(name)
         return names
 
     def first_declaration(self, name: str, kind: SinkEntity) -> bool:
         """Return True the first time this declaration is offered, False after."""
-        return self._first(("declare", name, kind))
+        return self._first(("declare", _key(name), kind))
 
     def first_sub_class(self, sub: str, parents: Sequence[str]) -> bool:
         """Return True the first time this subclass axiom is offered, False after."""
-        return self._first(("sub_class", sub, tuple(parents)))
+        return self._first(("sub_class", _key(sub), _keys(parents)))
 
     def first_sub_property(self, sub: str, parent: str, data_prop: bool) -> bool:
         """Return True the first time this subproperty axiom is offered, False after."""
-        return self._first(("sub_property", sub, parent, data_prop))
+        return self._first(("sub_property", _key(sub), _key(parent), data_prop))
 
     def first_domain(
         self, prop: str, expression: Sequence[str], data_prop: bool
     ) -> bool:
         """Return True the first time this domain is offered, False after."""
-        return self._first(("domain", prop, tuple(expression), data_prop))
+        return self._first(("domain", _key(prop), _keys(expression), data_prop))
 
     def first_range(
         self, prop: str, expression: Sequence[str], data_prop: bool
     ) -> bool:
         """Return True the first time this range is offered, False after."""
-        return self._first(("range", prop, tuple(expression), data_prop))
+        return self._first(("range", _key(prop), _keys(expression), data_prop))
 
     def first_inverse(self, prop: str, inverse: str) -> bool:
         """Return True the first time this inverse axiom is offered, False after."""
-        return self._first(("inverse", prop, inverse))
+        return self._first(("inverse", _key(prop), _key(inverse)))
 
     def first_transitive(self, prop: str) -> bool:
         """Return True the first time this transitivity axiom is offered, False after."""
-        return self._first(("transitive", prop))
+        return self._first(("transitive", _key(prop)))
 
     def first_annotation(self, kind: str, name: str, text: str) -> bool:
         """Return True the first time this annotation is offered, False after."""
-        return self._first(("annotate", kind, name, text))
+        return self._first(("annotate", kind, _key(name), text))
 
     def _first(self, statement: tuple[object, ...]) -> bool:
         """Record a schema statement and return True if it is new.
@@ -250,7 +269,8 @@ class NameLedger:
 
     def inverse_name(self, prop: str) -> str:
         """Return the inverse name of a property, from the vocabulary or from this build."""
-        return vocab.inverse(prop, self._named_inverses)
+        named = self._named_inverses.get(_key(prop))
+        return named if named is not None else vocab.inverse(prop)
 
     def claim_inverse(self, prop: str, inverse: str, source: str) -> None:
         """Record that two properties are each other's inverse.
@@ -258,8 +278,8 @@ class NameLedger:
         Raises:
             NameCollisionError: If the name is the inverse of another property.
         """
-        claimed_by = self._named_inverses.get(inverse)
-        if claimed_by is not None and claimed_by != prop:
+        claimed_by = self._named_inverses.get(_key(inverse))
+        if claimed_by is not None and _key(claimed_by) != _key(prop):
             raise NameCollisionError(
                 f"{inverse!r} is the inverse of {claimed_by!r} and cannot also "
                 f"be the inverse of {prop!r}.\n"
@@ -267,5 +287,5 @@ class NameLedger:
                 "Pass a distinct inverse_name, or leave it unset to get "
                 f"{self.inverse_name(prop)!r}."
             )
-        self._named_inverses[prop] = inverse
-        self._named_inverses[inverse] = prop
+        self._named_inverses[_key(prop)] = inverse
+        self._named_inverses[_key(inverse)] = prop

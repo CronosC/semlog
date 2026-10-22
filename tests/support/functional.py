@@ -15,22 +15,29 @@ _NOT_AN_AXIOM = ("Prefix(", "Ontology(", "Annotation(", ")")
 # characters OWL functional syntax reserves.
 _REF = r"(?:[^\s()\\]|\\.)+"
 
-_DECLARATION = re.compile(rf"^Declaration\((\w+)\(:({_REF})\)\)$")
-_CLASS_ASSERTION = re.compile(rf"^ClassAssertion\(:({_REF}) :({_REF})\)$")
+# A name is written under the log prefix `:` or the TBox prefix `oced:`. Both
+# are read as their local name.
+_P = r"(?:oced)?:"
+
+_DECLARATION = re.compile(rf"^Declaration\((\w+)\({_P}({_REF})\)\)$")
+_CLASS_ASSERTION = re.compile(rf"^ClassAssertion\({_P}({_REF}) {_P}({_REF})\)$")
 _OBJECT_ASSERTION = re.compile(
-    rf"^ObjectPropertyAssertion\(:({_REF}) :({_REF}) :({_REF})\)$"
+    rf"^ObjectPropertyAssertion\({_P}({_REF}) {_P}({_REF}) {_P}({_REF})\)$"
 )
 _DATA_ASSERTION = re.compile(
-    rf'^DataPropertyAssertion\(:({_REF}) :({_REF}) "(.*)"\^\^xsd:(\w+)\)$', re.DOTALL
+    rf'^DataPropertyAssertion\({_P}({_REF}) {_P}({_REF}) "(.*)"\^\^xsd:(\w+)\)$',
+    re.DOTALL,
 )
-_SUB_CLASS = re.compile(rf"^SubClassOf\(:({_REF}) (.+)\)$")
-_SUB_PROPERTY = re.compile(rf"^Sub(?:Object|Data)PropertyOf\(:({_REF}) :({_REF})\)$")
-_DOMAIN = re.compile(rf"^(?:Object|Data)PropertyDomain\(:({_REF}) (.+)\)$")
-_RANGE = re.compile(rf"^(?:Object|Data)PropertyRange\(:({_REF}) (.+)\)$")
-_INVERSE = re.compile(rf"^InverseObjectProperties\(:({_REF}) :({_REF})\)$")
-_TRANSITIVE = re.compile(rf"^TransitiveObjectProperty\(:({_REF})\)$")
+_SUB_CLASS = re.compile(rf"^SubClassOf\({_P}({_REF}) (.+)\)$")
+_SUB_PROPERTY = re.compile(
+    rf"^Sub(?:Object|Data)PropertyOf\({_P}({_REF}) {_P}({_REF})\)$"
+)
+_DOMAIN = re.compile(rf"^(?:Object|Data)PropertyDomain\({_P}({_REF}) (.+)\)$")
+_RANGE = re.compile(rf"^(?:Object|Data)PropertyRange\({_P}({_REF}) (.+)\)$")
+_INVERSE = re.compile(rf"^InverseObjectProperties\({_P}({_REF}) {_P}({_REF})\)$")
+_TRANSITIVE = re.compile(rf"^TransitiveObjectProperty\({_P}({_REF})\)$")
 _ENTITY_ANNOTATION = re.compile(
-    rf'^AnnotationAssertion\(rdfs:(label|comment) :({_REF}) "(.*)"\)$', re.DOTALL
+    rf'^AnnotationAssertion\(rdfs:(label|comment) {_P}({_REF}) "(.*)"\)$', re.DOTALL
 )
 
 # The one ontology annotation whose property the sink does not declare.

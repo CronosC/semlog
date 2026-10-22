@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from semanticlog.core.enums import OWLProfile
-from semanticlog.core.vocabulary import DEFAULT_IRI
+from semanticlog.core.vocabulary import DEFAULT_IRI, TBOX_IRI
 
 # The entity types OWL 2 DL requires a declaration for. A named individual is
 # not one of them, and neither sink declares one.
@@ -102,15 +102,16 @@ def undeclared_signature(
         Entity type to the local names of that type that were never declared.
     """
     ontology = load(path)
-    base = iri if iri.endswith("#") else iri + "#"
+    base = iri if iri.endswith("/") else iri + "/"
     found: dict[str, list[str]] = defaultdict(list)
     for entity in ontology.getSignature():
         kind = str(entity.getEntityType().getName())
         name = str(entity.getIRI().toString())
-        if kind not in DECLARED_ENTITY_TYPES or not name.startswith(base):
+        namespace = next((n for n in (TBOX_IRI, base) if name.startswith(n)), None)
+        if kind not in DECLARED_ENTITY_TYPES or namespace is None:
             continue
         if not ontology.isDeclared(entity):
-            found[kind].append(name.removeprefix(base))
+            found[kind].append(name.removeprefix(namespace))
     return {kind: sorted(names) for kind, names in found.items()}
 
 

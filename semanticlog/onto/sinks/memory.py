@@ -71,7 +71,7 @@ class InMemorySink(AxiomSink):
 
     def __init__(self, iri: str, profile: OWLProfile) -> None:
         super().__init__(iri, profile)
-        self.onto = Ontology(IRI.create(iri), load=False)
+        self.onto = Ontology(IRI.create(self.ontology_iri), load=False)
         self._pending_inverses: list[tuple[str, str]] = []
 
     def _add(self, axioms: Any) -> None:
@@ -87,18 +87,18 @@ class InMemorySink(AxiomSink):
                 not handle.
         """
         if kind is SinkEntity.CLASS:
-            return OWLClass(IRI.create(self.iri + name))
+            return OWLClass(IRI.create(self.iri_of(name)))
         if kind is SinkEntity.OBJECT_PROPERTY:
-            return OWLObjectProperty(self.iri + name)
+            return OWLObjectProperty(self.iri_of(name))
         if kind is SinkEntity.DATA_PROPERTY:
-            return OWLDataProperty(self.iri + name)
+            return OWLDataProperty(self.iri_of(name))
         if kind is SinkEntity.ANNOTATION_PROPERTY:
-            return OWLAnnotationProperty(IRI.create(self.iri + name))
+            return OWLAnnotationProperty(IRI.create(self.iri_of(name)))
         raise ValueError(f"{type(self).__name__} has no entity for {kind!r}.")
 
     def _class_expression(self, disjuncts: list[str]) -> Any:
         """Return one class, or their union when there are several."""
-        classes = [OWLClass(IRI.create(self.iri + name)) for name in disjuncts]
+        classes = [OWLClass(IRI.create(self.iri_of(name))) for name in disjuncts]
         return classes[0] if len(classes) == 1 else OWLObjectUnionOf(classes)
 
     def write_declaration(self, name: str, kind: SinkEntity) -> None:
@@ -153,13 +153,15 @@ class InMemorySink(AxiomSink):
         for prop, inverse in self._pending_inverses:
             self._add(
                 OWLInverseObjectPropertiesAxiom(
-                    OWLObjectProperty(self.iri + prop),
-                    OWLObjectProperty(self.iri + inverse),
+                    OWLObjectProperty(self.iri_of(prop)),
+                    OWLObjectProperty(self.iri_of(inverse)),
                 )
             )
 
     def write_transitive(self, prop: str) -> None:
-        self._add(OWLTransitiveObjectPropertyAxiom(OWLObjectProperty(self.iri + prop)))
+        self._add(
+            OWLTransitiveObjectPropertyAxiom(OWLObjectProperty(self.iri_of(prop)))
+        )
 
     def write_class_assertions(
         self, class_name: str, individuals: Iterable[str]
@@ -177,7 +179,7 @@ class InMemorySink(AxiomSink):
         self, prop: str, pairs: Iterable[tuple[str, str]]
     ) -> None:
         iri = self.iri
-        owl_prop = OWLObjectProperty(f"{iri}{prop}")
+        owl_prop = OWLObjectProperty(self.iri_of(prop))
         axioms = [
             OWLObjectPropertyAssertionAxiom(
                 OWLNamedIndividual(f"{iri}{s}"),
@@ -198,7 +200,7 @@ class InMemorySink(AxiomSink):
         `xsd:string`.
         """
         iri = self.iri
-        owl_prop = OWLDataProperty(f"{iri}{prop}")
+        owl_prop = OWLDataProperty(self.iri_of(prop))
         axioms = [
             OWLDataPropertyAssertionAxiom(
                 OWLNamedIndividual(f"{iri}{subject}"),
@@ -223,7 +225,7 @@ class InMemorySink(AxiomSink):
         pairs = list(pairs)
         axioms = [
             OWLAnnotationAssertionAxiom(
-                IRI.create(f"{self.iri}{name}"),
+                IRI.create(self.iri_of(name)),
                 OWLAnnotation(prop, owl_literal(text)),
             )
             for name, text in pairs
@@ -244,7 +246,7 @@ class InMemorySink(AxiomSink):
         for property_iri, value in annotations.items():
             self._add(
                 OWLAnnotationAssertionAxiom(
-                    IRI.create(self.iri.rstrip("#")),
+                    IRI.create(self.ontology_iri),
                     OWLAnnotation(
                         OWLAnnotationProperty(IRI.create(property_iri)),
                         owl_literal(value),

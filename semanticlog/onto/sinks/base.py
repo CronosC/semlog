@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
+from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import OWLProfile, SinkEntity
 from semanticlog.core.errors import ConfigError
 from semanticlog.onto.sinks.ledger import NameLedger
@@ -35,16 +36,20 @@ class AxiomSink(ABC):
     IRI, or that is used for two different entities, raises with a message
     naming both sources.
 
+    A TBox `Term` is written under `TBOX_IRI`, every other name under the log
+    base.
+
     Args:
-        iri: Base IRI. A trailing `#` is added when missing.
+        iri: Log base IRI. A trailing `/` is added when missing.
         profile: Profile of the build.
 
     Attributes:
-        iri: Base IRI of the ontology, ending in `#`.
+        iri: Log base IRI, ending in `/`.
         profile: OWL 2 profile the output stays inside.
 
     Raises:
-        ConfigError: If the base IRI is empty or holds whitespace or `>`.
+        ConfigError: If the base IRI is empty, holds whitespace or `>`, or
+            ends in `#`.
     """
 
     iri: str
@@ -56,7 +61,11 @@ class AxiomSink(ABC):
                 f"Base IRI {iri!r} cannot be written into an ontology. Use a "
                 "non-empty IRI without whitespace or '>'."
             )
-        self.iri = iri if iri.endswith("#") else iri + "#"
+        if iri.endswith("#"):
+            raise ConfigError(
+                f"iri must end in '/', got {iri!r}. Replace the trailing '#' with '/'."
+            )
+        self.iri = iri if iri.endswith("/") else iri + "/"
         self.profile = profile
         self._names = NameLedger()
         self._dropped_unions = 0
@@ -64,6 +73,15 @@ class AxiomSink(ABC):
         self._axiom_count = 0
         self._opened = False
         self._closed = False
+
+    @property
+    def ontology_iri(self) -> str:
+        """IRI of the ontology: the log base without its trailing `/`."""
+        return self.iri.removesuffix("/")
+
+    def iri_of(self, name: str) -> str:
+        """Return the full IRI of a name, under the TBox or the log base."""
+        return f"{vocab.TBOX_IRI if vocab.is_tbox(name) else self.iri}{name}"
 
     def _declare_name(self, name: str, kind: SinkEntity, source: str) -> None:
         self._names.declare(name, kind, source)
@@ -192,7 +210,7 @@ class AxiomSink(ABC):
         """Begin the ontology and write the build record as ontology annotations.
 
         Call this before the first axiom. A sink that takes an axiom first
-        opens itself with no record. Each annotation property in the base
+        opens itself with no record. Each annotation property in the TBox
         namespace is checked, claimed and declared. A property from another
         namespace, such as `owl:versionInfo`, is not.
 
@@ -212,9 +230,9 @@ class AxiomSink(ABC):
             )
         record = dict(annotations or {})
         names = [
-            property_iri[len(self.iri) :]
+            vocab.Term(property_iri.removeprefix(vocab.TBOX_IRI))
             for property_iri in record
-            if property_iri.startswith(self.iri)
+            if property_iri.startswith(vocab.TBOX_IRI)
         ]
         for name in names:
             self._declare_name(name, SinkEntity.ANNOTATION_PROPERTY, "the build record")
