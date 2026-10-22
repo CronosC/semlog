@@ -66,15 +66,19 @@ _TRACE_BOUNDARY = frozenset({"StartEvent_order", "EndEvent_order"})
 _DF = _DF_PROPERTIES | _TRACE_BOUNDARY
 _EF = frozenset({"ef", "ef_order"})
 _INVERSES = frozenset({"inv_concerns", "inv_contains", "observes", "attribute_of"})
-_EQUAL_BINS = frozenset({"price_bin_low", "price_bin_high"})
+_EQUAL_BINS = frozenset({"order.price_bin_low", "order.price_bin_high"})
 _DIST_BINS = frozenset(
-    {"price_bin_very_low", "price_bin_average", "price_bin_very_high"}
+    {"order.price_bin_very_low", "order.price_bin_average", "order.price_bin_very_high"}
 )
 # weight takes four distinct values, too few for either mode to bin.
-_NARROW_BINS = frozenset({"weight_bin_low", "weight_bin_high", "weight_bin_average"})
+_NARROW_BINS = frozenset(
+    {"item.weight_bin_low", "item.weight_bin_high", "item.weight_bin_average"}
+)
 _HISTORY = frozenset({"AttributeChange", "changed_at", "attribute_change_value"})
 _DECLARE = frozenset({"DeclareConstraint", "Response__place_order__ship__"})
-_NUMERIC = frozenset({"price", "amount", "weight", "has_price"})
+_NUMERIC = frozenset(
+    {"order.price", "place_order.amount", "item.weight", "has_order.price"}
+)
 
 
 EXPECTED: dict[str, Shape] = {

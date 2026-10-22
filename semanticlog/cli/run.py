@@ -181,7 +181,6 @@ def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
             cfg.settings.ocel_extensions,
             cfg.settings.bin_labels,
             cfg.loader_columns(),
-            cfg.settings.qualify_shared_attributes,
         )
 
     case_concepts, source = choose_case_concepts(

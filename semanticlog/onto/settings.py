@@ -43,9 +43,6 @@ class OntoBuildSettings:
             different.
         derive_annotations: Emit labels and comments derived from the original
             names in the log.
-        qualify_shared_attributes: Prefix an attribute name that more than one
-            event or object type carries with each type, so the types keep
-            separate attribute classes. Applied by cleaning.
         max_ef_pairs: Ceiling on materialized eventually-follows pairs. Zero
             for no limit.
 
@@ -64,7 +61,6 @@ class OntoBuildSettings:
     bins: int = DEFAULT_BINS
     bin_labels: tuple[str, ...] = tuple(DEFAULT_BIN_LABELS)
     derive_annotations: bool = False
-    qualify_shared_attributes: bool = True
     max_ef_pairs: int = DEFAULT_MAX_EF_PAIRS
 
     _SEQUENCES: ClassVar[tuple[str, ...]] = (

@@ -27,7 +27,7 @@ def _bins(onto, attribute: str) -> dict[str, set[float]]:
         for cls in classes:
             if cls.startswith(prefix):
                 bins.setdefault(cls, set()).add(
-                    float(name.removeprefix(f"{attribute}_"))
+                    float(name.removeprefix(f"{attribute}."))
                 )
     return bins
 
@@ -44,8 +44,8 @@ def onto(request):
 def test_each_type_of_the_log_is_a_subclass_of_its_schema_class(onto):
     assert onto.parents["place_order"] == {vocab.EVENT}
     assert onto.parents["order"] == {vocab.OBJECT}
-    assert onto.parents["order_channel"] == {vocab.OBJECT_ATTRIBUTE}
-    assert onto.parents["place_order_clerk"] == {vocab.EVENT_ATTRIBUTE}
+    assert onto.parents["order.channel"] == {vocab.OBJECT_ATTRIBUTE}
+    assert onto.parents["place_order.clerk"] == {vocab.EVENT_ATTRIBUTE}
 
 
 def test_every_event_and_object_becomes_an_individual_of_its_type(onto):
@@ -79,25 +79,26 @@ def test_two_events_at_one_instant_share_one_time_individual(onto):
 
 
 def test_a_value_individual_is_shared_by_every_entity_of_its_type_carrying_it(onto):
-    web = {s for s, o in _pairs(onto, "has_order_channel") if o == "order_channel_web"}
+    web = {s for s, o in _pairs(onto, "has_order.channel") if o == "order.channel.web"}
 
     assert {"o1", "o4"} <= web
-    assert ("i1", "item_channel_web") in _pairs(onto, "has_item_channel")
+    assert ("i1", "item.channel.web") in _pairs(onto, "has_item.channel")
 
 
 def test_an_attribute_carried_by_two_types_gets_a_property_per_type(onto):
-    assert onto.domains["has_order_channel"] == {"order"}
-    assert onto.domains["has_item_channel"] == {"item"}
+    assert onto.domains["has_order.channel"] == {"order"}
+    assert onto.domains["has_item.channel"] == {"item"}
     assert "has_channel" not in onto.properties
-    assert onto.domains["has_price"] == {"order"}
+    assert onto.domains["has_order.price"] == {"order"}
 
 
 def test_a_missing_value_produces_no_assertion(onto):
     # o12 has no channel and no price.
     owners = {
-        s for p, s, _ in onto.relations if p in ("has_order_channel", "has_price")
+        s for p, s, _ in onto.relations if p in ("has_order.channel", "has_order.price")
     }
 
+    assert "o1" in owners
     assert "o12" not in owners
 
 
@@ -117,7 +118,7 @@ def test_the_first_and_last_event_of_a_case_are_typed(onto):
 def test_a_name_cleaning_rewrote_is_emitted_in_its_cleaned_form(onto):
     assert "place_order" in onto.classes
     assert "place order" not in onto.classes
-    assert "order_channel_by_hand" in onto.individuals
+    assert "order.channel.by_hand" in onto.individuals
 
 
 def test_the_build_records_where_it_came_from(onto):
@@ -132,35 +133,35 @@ def test_the_build_records_where_it_came_from(onto):
 
 
 def test_values_keeps_one_individual_per_distinct_number(onto):
-    prices = {name for name, t in onto.types.items() if "price" in t}
+    prices = {name for name, t in onto.types.items() if "order.price" in t}
     literals = {v for p, _, v, _t in onto.data_values if p == vocab.HAS_DATA_VALUE}
 
     assert len(prices) == 11
-    assert "price_10" in prices
+    assert "order.price.10" in prices
     assert "10.0" in literals
 
 
 def test_equal_bins_split_the_values_by_quantile(built):
-    bins = _bins(built(EQUAL_BINS_ONLY), "price")
+    bins = _bins(built(EQUAL_BINS_ONLY), "order.price")
 
     # Eleven prices into two bins, so six fall below the median and five above.
     assert bins == {
-        "price_bin_low": {3.25, 7.5, 10.0, 12.75, 18.0, 21.5},
-        "price_bin_high": {25.5, 30.0, 33.25, 41.0, 120.0},
+        "order.price_bin_low": {3.25, 7.5, 10.0, 12.75, 18.0, 21.5},
+        "order.price_bin_high": {25.5, 30.0, 33.25, 41.0, 120.0},
     }
 
 
 def test_a_bin_class_sits_under_its_attribute(built):
-    assert built(EQUAL_BINS_ONLY).parents["price_bin_low"] == {"price"}
+    assert built(EQUAL_BINS_ONLY).parents["order.price_bin_low"] == {"order.price"}
 
 
 def test_distribution_bins_follow_the_shape_of_the_column(built):
-    assert _bins(built(DIST_BINS), "price") == {
-        "price_bin_very_low": {3.25},
-        "price_bin_low": {7.5, 10.0, 12.75},
-        "price_bin_average": {18.0, 21.5, 25.5, 30.0},
-        "price_bin_high": {33.25, 41.0},
-        "price_bin_very_high": {120.0},
+    assert _bins(built(DIST_BINS), "order.price") == {
+        "order.price_bin_very_low": {3.25},
+        "order.price_bin_low": {7.5, 10.0, 12.75},
+        "order.price_bin_average": {18.0, 21.5, 25.5, 30.0},
+        "order.price_bin_high": {33.25, 41.0},
+        "order.price_bin_very_high": {120.0},
     }
 
 
@@ -180,29 +181,32 @@ def test_a_binned_value_keeps_its_number_only_with_values(built):
     without = built(EQUAL_BINS_ONLY)
 
     def priced(onto):
-        return {n: t for n, t in onto.types.items() if n.startswith("price_")}
+        return {n: t for n, t in onto.types.items() if n.startswith("order.price.")}
 
+    assert len(priced(with_values)) == 11
     assert priced(with_values) == priced(without)
     assert {
-        s for _, s, _v, _t in with_values.data_values if s.startswith("price_")
+        s for _, s, _v, _t in with_values.data_values if s.startswith("order.price.")
     } == set(priced(with_values))
-    assert not {s for _, s, _v, _t in without.data_values if s.startswith("price_")}
+    assert not {
+        s for _, s, _v, _t in without.data_values if s.startswith("order.price.")
+    }
 
 
 def test_a_changed_number_lands_in_the_bin_of_the_same_number_on_an_object(built):
     onto = built(EQUAL_BINS_ONLY)
-    bins = {c for c in onto.classes if c.startswith("price_bin_")}
+    bins = {c for c in onto.classes if c.startswith("order.price_bin_")}
 
     # o1 and o2 change their price to 12.75 and 41.0, which other orders also carry.
-    assert onto.types["price_12.75"] & bins == {"price_bin_low"}
-    assert onto.types["price_41"] & bins == {"price_bin_high"}
+    assert onto.types["order.price.12.75"] & bins == {"order.price_bin_low"}
+    assert onto.types["order.price.41"] & bins == {"order.price_bin_high"}
 
 
 def test_no_numeric_representation_leaves_the_numbers_out(built):
     onto = built("dl_declare_multi_cc")
 
-    assert "price" not in onto.declared
-    assert "order_channel" in onto.classes
+    assert "order.price" not in onto.declared
+    assert "order.channel" in onto.classes
 
 
 @pytest.mark.parametrize("name", [DIST_BINS, VALUES_AND_EQUAL_BINS])
@@ -210,9 +214,9 @@ def test_a_column_with_too_few_values_to_bin_keeps_its_numbers(built, name):
     # weight has four distinct values, below what either mode needs.
     onto = built(name)
 
-    assert not any(c.startswith("weight_bin_") for c in onto.classes)
-    assert "weight" in onto.classes
-    assert {s for _, s, _v, _t in onto.data_values if s.startswith("weight_")}
+    assert not any(c.startswith("item.weight_bin_") for c in onto.classes)
+    assert "item.weight" in onto.classes
+    assert {s for _, s, _v, _t in onto.data_values if s.startswith("item.weight.")}
 
 
 # --------------------------------------------------------------------------
@@ -268,14 +272,14 @@ def test_the_inverse_of_every_attribute_property_sits_under_attribute_of(built):
     reversed_attributes = {p for p in onto.properties if p.startswith("inv_has_")}
 
     assert reversed_attributes == {
-        "inv_has_amount",
-        "inv_has_item_channel",
-        "inv_has_order_channel",
-        "inv_has_place_order_clerk",
-        "inv_has_ship_clerk",
-        "inv_has_due",
-        "inv_has_price",
-        "inv_has_weight",
+        "inv_has_place_order.amount",
+        "inv_has_item.channel",
+        "inv_has_order.channel",
+        "inv_has_place_order.clerk",
+        "inv_has_ship.clerk",
+        "inv_has_ship.due",
+        "inv_has_order.price",
+        "inv_has_item.weight",
     }
     assert {p: onto.property_parents[p] for p in reversed_attributes} == {
         p: {"attribute_of"} for p in reversed_attributes

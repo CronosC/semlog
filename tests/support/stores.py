@@ -6,9 +6,6 @@ Every test that needs data uses one of these. Which one to reach for:
   one string attribute and one numeric one.
 - `pipeline` when a test should run against a real OCEL 2.0 file. Read from
   `tests/fixtures/pipeline.jsonocel`, described in the README next to it.
-- `awkward_shared` when a test is about attributes several types carry, which
-  `awkward` qualifies per type. It is `awkward` cleaned without
-  `qualify_shared`.
 - `awkward` when a hard case has to be reachable. It is also what the build
   configuration matrix builds from, so every configuration meets a name that
   cleaning rewrote, a missing value, two events at one instant, a numeric
@@ -105,7 +102,7 @@ _ORDERS = [f"o{i}" for i in range(1, 13)]
 _ITEMS = ["i1", "i2", "i3", "i4"]
 
 
-def awkward(qualify_shared: bool = True) -> OCEDStore:
+def awkward() -> OCEDStore:
     """Twelve orders and four items, with every hard case a build has to handle.
 
     - `place order` and the value `by hand` are renamed by cleaning.
@@ -113,8 +110,7 @@ def awkward(qualify_shared: bool = True) -> OCEDStore:
     - `e11` and `e12` carry the same timestamp.
     - `price` spans eleven values, the last well outside the rest.
     - `channel` is carried by both object types and `clerk` by both
-      activities. Each is qualified per type unless `qualify_shared` is off,
-      and then its domain is a union.
+      activities, and each type gets its own attribute.
     - `order` records attribute changes, for the attribute history extension.
     """
     data = OCEDStore(ocel_mode=True)
@@ -235,14 +231,13 @@ def awkward(qualify_shared: bool = True) -> OCEDStore:
             }
         ),
     )
-    return clean_oced_data(data, qualify_shared=qualify_shared)
+    return clean_oced_data(data)
 
 
 BUILDERS = {
     "tiny": tiny,
     "pipeline": pipeline,
     "awkward": awkward,
-    "awkward_shared": lambda: awkward(qualify_shared=False),
 }
 
 # The store the build configuration matrix and the shape table build from.

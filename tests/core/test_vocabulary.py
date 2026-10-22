@@ -38,9 +38,9 @@ def test_a_number_that_is_not_finite_is_rejected():
 @pytest.mark.parametrize(
     ("attribute", "value", "expected"),
     [
-        ("status", "shipped", "status_shipped"),
-        ("amount", 5.0, "amount_5"),
-        ("amount", 2.5, "amount_2.5"),
+        ("status", "shipped", "status.shipped"),
+        ("amount", 5.0, "amount.5"),
+        ("amount", 2.5, "amount.2.5"),
     ],
 )
 def test_a_value_individual_is_named_by_its_attribute_and_value(
@@ -63,7 +63,7 @@ def test_a_missing_value_is_rejected_naming_its_attribute():
 def test_a_timestamp_value_is_named_to_the_microsecond(utc):
     stamp = pd.Series(pd.to_datetime(["2022-01-01 10:30:00"], utc=utc)).iloc[0]
 
-    assert vocab.attribute_value("ts", stamp) == "ts_20220101T103000_000000"
+    assert vocab.attribute_value("ts", stamp) == "ts.20220101T103000_000000"
 
 
 def test_one_instant_under_two_offsets_names_one_timestamp():

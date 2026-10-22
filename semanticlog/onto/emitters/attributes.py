@@ -19,7 +19,6 @@ import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import DataRepresentation
-from semanticlog.core.summary import counted, report_names
 from semanticlog.data.binning import Binning, fit_dist_bins, fit_equal_bins
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind
@@ -30,8 +29,6 @@ from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import AxiomSink
 
 logger = logging.getLogger(__name__)
-
-_MAX_NAMED_OWNERS = 3
 
 
 def is_number_column(series: pd.Series) -> bool:
@@ -107,44 +104,6 @@ def attribute_binnings(
 def attribute_source(attribute: str) -> str:
     """Return how an attribute is described in a name collision message."""
     return f"attribute {attribute!r}"
-
-
-def report_conflated_attributes(owners: dict[str, list[str]]) -> dict[str, list[str]]:
-    """Warn about attribute names shared by more than one entity type.
-
-    One name becomes one class and one set of value individuals, whichever
-    types carry it.
-
-    Args:
-        owners: Attribute name to the types that carry it.
-
-    Returns:
-        The entries with more than one owner.
-    """
-    conflated = {a: types for a, types in owners.items() if len(types) > 1}
-    if not conflated:
-        return conflated
-
-    entities = len({owner for types in conflated.values() for owner in types})
-    logger.warning(
-        "%s share %s. The values of each name are merged in one class. Set "
-        "qualify_shared_attributes to true to keep them apart per type.",
-        counted(entities, "different entity", "different entities"),
-        counted(len(conflated), "attribute name", "attribute names"),
-    )
-    shared = [
-        f"{attribute} ({_owner_summary(types)})"
-        for attribute, types in sorted(conflated.items())
-    ]
-    report_names(logger, "attributes", shared, level=logging.WARNING)
-    return conflated
-
-
-def _owner_summary(types: list[str]) -> str:
-    """Name the types carrying an attribute, or count them when there are many."""
-    if len(types) > _MAX_NAMED_OWNERS:
-        return counted(len(types), "type", "types")
-    return ", ".join(types)
 
 
 class AttributeEmitter(Emitter):

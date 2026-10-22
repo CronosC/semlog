@@ -257,9 +257,9 @@ def attribute_value(attribute: str, value: Any) -> str:
     """Return the individual name for one value of an attribute.
 
     Values are qualified by their attribute, so the same literal under two
-    attributes stays two individuals. The name is `attribute_value` joined by
-    an underscore, so two attributes whose names and values differ only in
-    where the underscore falls name one individual.
+    attributes stays two individuals. The name is the attribute and the value
+    joined by a dot, so two attributes whose names and values differ only in
+    where the dot falls name one individual.
 
     A float with no fraction names the same individual as the integer.
 
@@ -273,14 +273,14 @@ def attribute_value(attribute: str, value: Any) -> str:
             "individual. Remove it from the input or replace it with a value."
         )
     if isinstance(value, pd.Timestamp):
-        return f"{attribute}_{timestamp_id(value)}"
+        return f"{attribute}.{timestamp_id(value)}"
     if isinstance(value, float):
         try:
             text = format_number(value)
         except ValueError as exc:
             raise InputError(f"Attribute {attribute!r}: {exc}") from exc
-        return f"{attribute}_{int(value) if value.is_integer() else text}"
-    return f"{attribute}_{value}"
+        return f"{attribute}.{int(value) if value.is_integer() else text}"
+    return f"{attribute}.{value}"
 
 
 def attribute_change_ids(

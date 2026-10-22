@@ -58,17 +58,19 @@ def test_a_name_that_only_resembles_a_schema_name_is_left_alone(make_store, attr
 def test_an_object_type_keeps_a_name_an_activity_and_an_attribute_also_claim(
     make_store,
 ):
+    """Attribute `x` of `order` is `order.x`, the name of an object type and an activity."""
     oced = make_store(
-        objects=pd.DataFrame({"oid": ["o1"], "order": ["x"]}),
+        objects=pd.DataFrame({"oid": ["o1"], "x": ["v"]}),
         obj_type="order",
-        activity="order",
+        activity="order.x",
     )
+    _with_object_type(oced, "order.x")
 
     cleaned = clean_oced_data(oced)
 
-    assert cleaned.types(EntityKind.OBJECT) == ["order"]
-    assert cleaned.types(EntityKind.EVENT) == ["event_order"]
-    assert _columns(cleaned, "order") == ["oid", "attribute_order"]
+    assert cleaned.types(EntityKind.OBJECT) == ["order", "order.x"]
+    assert cleaned.types(EntityKind.EVENT) == ["event_order.x"]
+    assert _columns(cleaned, "order") == ["oid", "attribute_order.x"]
 
 
 def test_a_relation_named_after_an_object_type_is_prefixed(make_store):
@@ -128,30 +130,27 @@ def test_a_rename_never_discards_a_type_already_in_the_store(make_store):
 def test_the_names_derived_from_a_renamed_type_are_claimed_under_its_new_name(
     make_store,
 ):
-    """`object_order` derives `df_object_order`, which the log holds as an attribute.
+    """`object_o.x` derives `df_object_o.x`, which the log holds as an attribute.
 
-    Its prefixed name derives `has_attribute_df_object_order`, which another attribute holds.
+    Its prefixed name derives `has_attribute_df_object_o.x`, which another attribute holds.
     """
-    oced = make_store(
-        objects=pd.DataFrame(
-            {
-                "oid": ["o1"],
-                "df_object_order": ["a"],
-                "has_df_object_order": ["b"],
-                "has_attribute_df_object_order": ["c"],
-            }
-        ),
-        obj_type="order",
-    )
-    _with_object_type(oced, "df_order")
+    oced = _with_object_type(make_store(obj_type="o.x"), "df_o.x")
+    for obj_type in ("df_object_o", "has_df_object_o", "has_attribute_df_object_o"):
+        oced.add(
+            EntityKind.OBJECT,
+            obj_type,
+            pd.DataFrame({"id": [f"{obj_type}_1"], "x": ["v"]}),
+            id_col="id",
+        )
 
     cleaned = clean_oced_data(oced)
 
-    assert _columns(cleaned, "object_order") == [
-        "oid",
-        "attribute_df_object_order_2",
-        "has_df_object_order",
-        "has_attribute_df_object_order",
+    assert "object_o.x" in cleaned.types(EntityKind.OBJECT)
+    assert _columns(cleaned, "df_object_o") == ["id", "attribute_df_object_o.x_2"]
+    assert _columns(cleaned, "has_df_object_o") == ["id", "has_df_object_o.x"]
+    assert _columns(cleaned, "has_attribute_df_object_o") == [
+        "id",
+        "has_attribute_df_object_o.x",
     ]
 
 
@@ -189,19 +188,21 @@ def test_the_names_do_not_depend_on_the_order_the_store_holds_things_in():
 def test_a_value_of_a_renamed_attribute_is_recorded_under_the_new_column(
     make_store, events
 ):
-    """An attribute named after the object type `obj` is renamed."""
-    oced = make_store(events=events("e1", obj=["by hand"]))
+    """Attribute `obj` of `act` is `act.obj`, the name of an object type, and is renamed."""
+    oced = make_store(obj_type="act.obj", events=events("e1", obj=["by hand"]))
 
     backmap = clean_oced_data(oced).backmap
 
-    assert backmap["attribute_obj_by_hand"] == "by hand"
-    assert "obj_by_hand" not in backmap
+    assert backmap["attribute_act.obj.by_hand"] == "by hand"
+    assert "act.obj.by_hand" not in backmap
 
 
 def test_an_attribute_only_the_history_carries_is_renamed_in_the_change_rows(
     make_store,
 ):
-    oced = make_store(obj_type="order", ocel_mode=True)
+    oced = _with_object_type(
+        make_store(obj_type="order", ocel_mode=True), "order.status"
+    )
     oced.add_object_changes(
         "order",
         pd.DataFrame(
@@ -209,13 +210,13 @@ def test_an_attribute_only_the_history_carries_is_renamed_in_the_change_rows(
                 "ocel:oid": ["o1"],
                 "ocel:type": ["order"],
                 "ocel:timestamp": pd.to_datetime(["2024-01-02"], utc=True),
-                "ocel:field": ["order"],
-                "order": ["done"],
+                "ocel:field": ["status"],
+                "status": ["done"],
             }
         ),
     )
 
     changes = clean_oced_data(oced).get_object_changes("order")
 
-    assert list(changes["ocel:field"]) == ["attribute_order"]
-    assert list(changes["attribute_order"]) == ["done"]
+    assert list(changes["ocel:field"]) == ["attribute_order.status"]
+    assert list(changes["attribute_order.status"]) == ["done"]

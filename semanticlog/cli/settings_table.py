@@ -469,18 +469,6 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         argparse={"action": argparse.BooleanOptionalAction},
     ),
     Setting(
-        "qualify_shared_attributes",
-        settings_default("qualify_shared_attributes"),
-        _as_bool,
-        "settings",
-        help=(
-            "Rename an attribute that more than one event or object type "
-            "carries to <type>_<attribute> in each type, so the types keep "
-            "separate attribute classes, values and bins (default: on)."
-        ),
-        argparse={"action": argparse.BooleanOptionalAction},
-    ),
-    Setting(
         "declare_file",
         None,
         _optional(_as_str),

@@ -1,7 +1,5 @@
 """Cleaning a whole store, and the source names it records."""
 
-import logging
-
 import pandas as pd
 import pytest
 
@@ -56,9 +54,9 @@ def test_every_name_in_the_store_is_made_safe_and_mapped_to_its_source():
         "act_type_": "act type!",
         "obj_type": "obj type",
         "rel_name": "rel name",
-        "total_cost": "total cost",
+        "act_type_.total_cost": "total cost",
         "e_1": "e 1",
-        "total_cost_2023-03-15_12_45": "2023-03-15 12:45",
+        "act_type_.total_cost.2023-03-15_12_45": "2023-03-15 12:45",
     }
     assert cleaned.get_relation("rel_name").data.values.tolist() == [["e_1", "o1"]]
 
@@ -76,26 +74,6 @@ def test_a_cleaned_store_holds_only_safe_names_and_passes_the_integrity_check(
 
     assert [name for name in names if not is_safe_local_name(name)] == []
     assert check_integrity(cleaned) is None
-
-
-def test_two_spellings_of_one_attribute_across_tables_are_read_as_one_with_a_warning(
-    make_store, events, caplog
-):
-    oced = make_store(
-        objects=pd.DataFrame({"oid": ["o1"], "Total_Cost": [1.0]}),
-        obj_type="order",
-        events=events("e1", **{"Total Cost": [2.0]}),
-    )
-
-    with caplog.at_level(logging.WARNING, logger="semanticlog.data.cleaning"):
-        cleaned = clean_oced_data(oced, qualify_shared=False)
-
-    assert (
-        "Attribute 'Total_Cost' is spelled 'Total Cost' in activity 'act', "
-        "'Total_Cost' in object type 'order'. The spellings are read as one attribute."
-    ) in caplog.text
-    assert "Total_Cost" in cleaned.table(EntityKind.EVENT, "act").data.columns
-    assert "Total_Cost" not in cleaned.backmap
 
 
 def test_a_change_table_is_keyed_by_the_cleaned_type_and_keeps_its_ocel_column_names():

@@ -83,7 +83,7 @@ def test_a_build_that_fails_while_emitting_spends_the_builder(tiny_store):
     ("store", "match"),
     [
         (_event_store(activity="place order"), "'place order' from .* clean_oced_data"),
-        (_event_store(status=["in progress"]), "status_in progress"),
+        (_event_store(status=["in progress"]), r"status\.in progress"),
         (_event_store(oid="order/1"), "order/1"),
     ],
     ids=["activity", "attribute value", "entity id"],

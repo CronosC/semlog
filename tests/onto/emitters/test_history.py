@@ -19,11 +19,11 @@ from semanticlog.onto.settings import OntoBuildSettings
 from tests.support.build import emit
 
 CHANGES = {
-    "AttrChange_o1_order_channel_20240102T090000_000000",
-    "AttrChange_o1_order_channel_20240106T090000_000000",
-    "AttrChange_o2_order_channel_20240103T090000_000000",
-    "AttrChange_o1_price_20240104T090000_000000",
-    "AttrChange_o2_price_20240105T090000_000000",
+    "AttrChange_o1_order.channel_20240102T090000_000000",
+    "AttrChange_o1_order.channel_20240106T090000_000000",
+    "AttrChange_o2_order.channel_20240103T090000_000000",
+    "AttrChange_o1_order.price_20240104T090000_000000",
+    "AttrChange_o2_order.price_20240105T090000_000000",
 }
 
 
@@ -38,12 +38,24 @@ def history_settings(**overrides) -> OntoBuildSettings:
     return OntoBuildSettings(**base)
 
 
-def _store_with_changes(oid: str, field: str, values: list, row: dict) -> OCEDStore:
-    """One order and one event, with the given changes of one field, cleaned."""
+def _store_with_changes(
+    oid: str, field: str, values: list, row: dict, other_types: tuple[str, ...] = ()
+) -> OCEDStore:
+    """One order and one event, with the given changes of one field, cleaned.
+
+    Each of `other_types` is an object type with one object and no attributes.
+    """
     data = OCEDStore(ocel_mode=True)
     data.add(
         EntityKind.OBJECT, "order", pd.DataFrame({"oid": [oid], **row}), id_col="oid"
     )
+    for obj_type in other_types:
+        data.add(
+            EntityKind.OBJECT,
+            obj_type,
+            pd.DataFrame({"oid": [f"{obj_type}_1"]}),
+            id_col="oid",
+        )
     data.add(
         EntityKind.EVENT,
         "step",
@@ -85,8 +97,8 @@ def test_every_recorded_change_becomes_a_record_under_its_attribute(history):
     }
 
     assert changes == CHANGES
-    assert history.parents["order_channelChange"] == {"AttributeChange"}
-    assert history.parents["order_channel"] == {vocab.OBJECT_ATTRIBUTE}
+    assert history.parents["order.channelChange"] == {"AttributeChange"}
+    assert history.parents["order.channel"] == {vocab.OBJECT_ATTRIBUTE}
 
 
 def test_a_change_record_hangs_off_the_object_it_happened_to(history):
@@ -97,15 +109,15 @@ def test_a_change_record_hangs_off_the_object_it_happened_to(history):
 
 
 def test_a_change_record_points_at_the_value_it_changed_to(history):
-    channel = {o for p, _, o in history.relations if p == "change_value_order_channel"}
-    price = {o for p, _, o in history.relations if p == "change_value_price"}
+    channel = {o for p, _, o in history.relations if p == "change_value_order.channel"}
+    price = {o for p, _, o in history.relations if p == "change_value_order.price"}
 
     assert channel == {
-        "order_channel_shop",
-        "order_channel_web",
-        "order_channel_by_hand",
+        "order.channel.shop",
+        "order.channel.web",
+        "order.channel.by_hand",
     }
-    assert price == {"price_12.75", "price_41"}
+    assert price == {"order.price.12.75", "order.price.41"}
 
 
 def test_a_change_record_is_stamped_with_a_time_individual(history):
@@ -119,9 +131,9 @@ def test_a_change_record_is_stamped_with_a_time_individual(history):
 
 def test_a_value_shared_with_a_current_value_carries_one_literal(history):
     """o1 changed its price to 12.75, which is also o4's current price."""
-    literals = [s for _, s in history.data_assertions if s == "price_12.75"]
+    literals = [s for _, s in history.data_assertions if s == "order.price.12.75"]
 
-    assert literals == ["price_12.75"]
+    assert literals == ["order.price.12.75"]
 
 
 def test_a_numeric_change_is_left_out_when_no_numbers_are_emitted(
@@ -134,7 +146,7 @@ def test_a_numeric_change_is_left_out_when_no_numbers_are_emitted(
     )
     targets = {p for p, _, _ in onto.relations if p.startswith("change_value_")}
 
-    assert targets == {"change_value_order_channel"}
+    assert targets == {"change_value_order.channel"}
 
 
 def test_a_numeric_change_is_binned_like_a_current_value(awkward_store, tmp_path):
@@ -148,8 +160,8 @@ def test_a_numeric_change_is_binned_like_a_current_value(awkward_store, tmp_path
         data=awkward_store,
     )
 
-    assert onto.types["price_12.75"] == {"price", "price_bin_low"}
-    assert onto.types["price_41"] == {"price", "price_bin_high"}
+    assert onto.types["order.price.12.75"] == {"order.price", "order.price_bin_low"}
+    assert onto.types["order.price.41"] == {"order.price", "order.price_bin_high"}
 
 
 def test_two_changes_of_one_attribute_at_one_instant_stay_two_records(tmp_path, caplog):
@@ -158,23 +170,28 @@ def test_two_changes_of_one_attribute_at_one_instant_stay_two_records(tmp_path, 
     with caplog.at_level(logging.WARNING):
         onto = emit(history_settings(), tmp_path / "repeat.ofn", data=store)
 
-    records = [(s, o) for p, s, o in onto.relations if p == "change_value_status"]
+    records = [(s, o) for p, s, o in onto.relations if p == "change_value_order.status"]
     assert len({s for s, _ in records}) == 2
     assert len(records) == 2
-    assert "more than one change of 'status' at the same instant" in caplog.text
+    assert "more than one change of 'order.status' at the same instant" in caplog.text
 
 
 def test_an_attribute_cleaning_renamed_keeps_its_history_under_the_new_name(
     tmp_path,
 ):
-    """`order` is the object type, so cleaning renames the attribute."""
-    store = _store_with_changes("o1", "order", ["y"], {"order": ["x"]})
+    """`order.status` is an object type, so cleaning renames the attribute."""
+    store = _store_with_changes(
+        "o1", "status", ["y"], {"status": ["x"]}, other_types=("order.status",)
+    )
 
     onto = emit(history_settings(), tmp_path / "renamed.ofn", data=store)
 
-    assert "change_value_order" not in onto.object_properties
-    assert "change_value_attribute_order" in onto.object_properties
-    assert {"attribute_order_x", "attribute_order_y"} <= onto.individuals
+    assert "change_value_order.status" not in onto.object_properties
+    assert "change_value_attribute_order.status" in onto.object_properties
+    assert {
+        "attribute_order.status.x",
+        "attribute_order.status.y",
+    } <= onto.individuals
 
 
 def test_a_change_record_is_labeled_with_the_object_id_the_log_wrote(tmp_path):

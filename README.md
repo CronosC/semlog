@@ -113,7 +113,7 @@ A timestamp without a time zone is read as UTC. `case_col`, `act_col` and `time_
 The ontology has a fixed upper schema of `Event`, `Object`, `Attribute` and `Time`, and the classes and properties taken from the log are placed below it:
 
 - one class per activity and per object type, one individual per event and per object
-- one class per attribute, with a named individual for each distinct value
+- one class per attribute of each type, named `<type>.<attribute>`, with a named individual for each distinct value
 - one individual per distinct timestamp, linked to its events through `observed_at`
 - the relations of the log as sub-properties of `event_object_relation` and `object_object_relation`
 - event order as `df_<case concept>` properties, optionally with eventually-follows and DECLARE constraint membership
@@ -139,7 +139,6 @@ The record of how the file was produced is annotated onto the ontology itself: t
 | `bins`, `bin_labels` | `5`, `very_low` … `very_high` | Bin count and labels for the two binning modes. |
 | `max_ef_pairs` | `50000000` | Ceiling on materialized eventually-follows pairs. Zero for no limit. |
 | `size_limit_mb` | `0` | Skip inputs larger than this many MB. Zero for no limit. |
-| `qualify_shared_attributes` | `true` | Rename an attribute that more than one event or object type carries to `<type>_<attribute>` in each type, such as `item_weight` and `ship_order_weight`. Each type then gets its own attribute class, values and bins. Off merges them into one. |
 | `derive_annotations` | `false` | Emit `rdfs:label` and `rdfs:comment` derived from the original names in the log. |
 | `annotation_document` | none | JSON file mapping entity names to `{label, comment}`. |
 | `declare_file` | none | File written by `semlog mine-declare`. Required for `declare`. |

@@ -58,15 +58,12 @@ def load_and_clean(
     extensions: Sequence[OCELExtension] = (),
     bin_labels: Sequence[str] = DEFAULT_BIN_LABELS,
     columns: Mapping[str, Any] | None = None,
-    qualify_shared: bool = True,
 ) -> OCEDStore:
     """Read one event log and make its names safe to emit.
 
     Args:
         bin_labels: Bin labels the build will use. Cleaning reserves a class
             name for each.
-        qualify_shared: Rename an attribute that more than one type carries
-            to `<type>_<attribute>` in each type.
         columns: Column names for a flat `.csv` or `.xes` log. An OCEL log
             ignores them. An unknown key is rejected for every log.
 
@@ -80,9 +77,7 @@ def load_and_clean(
             something a store cannot, such as a repeated id or a missing id.
     """
     loader = loader_for(str(path), columns, ocel_extensions=extensions)
-    return clean_oced_data(
-        loader.get_oced(), bin_labels=bin_labels, qualify_shared=qualify_shared
-    )
+    return clean_oced_data(loader.get_oced(), bin_labels=bin_labels)
 
 
 __all__ = [

@@ -87,12 +87,6 @@ def awkward_store() -> OCEDStore:
 
 
 @pytest.fixture
-def awkward_shared_store() -> OCEDStore:
-    """The awkward store with attributes several types carry kept under one name."""
-    return stores.build("awkward_shared")
-
-
-@pytest.fixture
 def store() -> Callable[[str], OCEDStore]:
     """Return a factory for a fresh copy of any of the three stores."""
     return stores.build

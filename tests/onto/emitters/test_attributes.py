@@ -6,22 +6,18 @@ import logging
 from datetime import datetime
 
 import pandas as pd
-import pytest
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import DataRepresentation
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.binning import Binning
 from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.oced import OCEDStore, attribute_owners
+from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.emitted import EmittedIndividuals
-from semanticlog.onto.emitters.attributes import (
-    AttributeEmitter,
-    report_conflated_attributes,
-)
+from semanticlog.onto.emitters.attributes import AttributeEmitter
 from semanticlog.onto.reason import Reasoner
 from semanticlog.onto.settings import OntoBuildSettings
 from tests.support.build import emit
@@ -88,63 +84,10 @@ def _literal_subjects(sink) -> set[str]:
 def test_an_attribute_of_one_type_has_that_type_as_its_domain(tiny_store, tmp_path):
     onto = emit(OntoBuildSettings(), tmp_path / "tiny.ofn", data=tiny_store)
 
-    assert onto.domains["has_channel"] == {"step"}
-    assert onto.ranges["has_channel"] == {"channel"}
+    assert onto.domains["has_step.channel"] == {"step"}
+    assert onto.ranges["has_step.channel"] == {"step.channel"}
 
 
-def test_an_attribute_of_two_types_has_one_domain_naming_both(
-    awkward_shared_store, tmp_path
-):
-    onto = emit(
-        OntoBuildSettings(), tmp_path / "awkward.ofn", data=awkward_shared_store
-    )
-    domain_axioms = [
-        line
-        for line in onto.axiom_lines
-        if line.startswith("ObjectPropertyDomain(:has_channel ")
-    ]
-
-    assert onto.domains["has_channel"] == {"order", "item"}
-    assert len(domain_axioms) == 1
-
-
-def test_an_attribute_of_two_types_gets_one_comment_naming_both(
-    awkward_shared_store, tmp_path
-):
-    onto = emit(
-        OntoBuildSettings(derive_annotations=True),
-        tmp_path / "awkward.ofn",
-        data=awkward_shared_store,
-    )
-    comments = [
-        text
-        for name, kind, text in onto.annotations
-        if (name, kind) == ("channel", "comment")
-    ]
-
-    assert comments == ["Values of the 'channel' attribute of item and order objects."]
-
-
-def test_an_attribute_shared_by_several_types_is_reported(awkward_shared_store, caplog):
-    with caplog.at_level(logging.WARNING):
-        conflated = report_conflated_attributes(attribute_owners(awkward_shared_store))
-
-    assert conflated == {"channel": ["item", "order"], "clerk": ["place_order", "ship"]}
-    assert "4 different entities share 2 attribute names" in caplog.text
-    assert "channel (item, order)" in caplog.text
-
-
-def test_the_owners_of_a_widely_shared_attribute_are_counted(caplog):
-    owners = {"commit_message": [f"activity_{i}" for i in range(68)]}
-
-    with caplog.at_level(logging.WARNING):
-        report_conflated_attributes(owners)
-
-    assert "commit_message (68 types)" in caplog.text
-    assert "activity_0" not in caplog.text
-
-
-@pytest.mark.reasoner
 def test_a_build_with_typed_attributes_is_consistent(awkward_store, tmp_path):
     path = tmp_path / "awkward.owl"
     OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings()).build_ontology(
@@ -163,12 +106,18 @@ def test_a_number_too_wide_for_plain_notation_is_named_without_an_exponent(
     tiny_store, tmp_path
 ):
     table = tiny_store.table(EntityKind.EVENT, "step")
-    table.data["price"] = [1.0e20, 2.5, 1.0e-7]
+    table.data["step.price"] = [1.0e20, 2.5, 1.0e-7]
 
     onto = emit(OntoBuildSettings(), tmp_path / "wide.ofn", data=tiny_store)
 
-    assert {"price_100000000000000000000", "price_0.0000001"} <= onto.individuals
-    assert ("has_data_value", "price_100000000000000000000") in onto.data_assertions
+    assert {
+        "step.price.100000000000000000000",
+        "step.price.0.0000001",
+    } <= onto.individuals
+    assert (
+        "has_data_value",
+        "step.price.100000000000000000000",
+    ) in onto.data_assertions
 
 
 def test_attributes_whose_names_share_a_prefix_keep_their_own_values(tmp_path):
@@ -178,18 +127,11 @@ def test_attributes_whose_names_share_a_prefix_keep_their_own_values(tmp_path):
         data=_order_store(a_b=["x"], a=["y"]),
     )
 
-    assert {"a_b_x", "a_y"} <= onto.individuals
+    assert {"order.a_b.x", "order.a.y"} <= onto.individuals
 
 
 def test_a_bin_class_and_a_value_of_the_same_label_are_named_apart(tmp_path):
-    store = _order_store(price=["low", "high"])
-    numbers = [float(n) for n in range(1, 13)]
-    store.add(
-        EntityKind.OBJECT,
-        "priced",
-        pd.DataFrame({"oid": [f"p{n:.0f}" for n in numbers], "price": numbers}),
-        id_col="oid",
-    )
+    store = _order_store(price=[float(n) for n in range(1, 13)])
 
     onto = emit(
         OntoBuildSettings(
@@ -199,14 +141,15 @@ def test_a_bin_class_and_a_value_of_the_same_label_are_named_apart(tmp_path):
                     DataRepresentation.VALUES,
                     DataRepresentation.EQUAL_BINS,
                 ],
+                "bin_labels": ["1", "12"],
             }
         ),
         tmp_path / "bins.ofn",
         data=store,
     )
 
-    assert "price_bin_low" in onto.classes
-    assert "price_low" in onto.individuals
+    assert "order.price_bin_1" in onto.classes
+    assert "order.price.1" in onto.individuals
     assert onto.classes & onto.individuals == set()
 
 
@@ -217,9 +160,9 @@ def test_a_boolean_attribute_keeps_its_values_when_numbers_are_left_out(tmp_path
         data=_order_store(express=[True, False], price=[1.0, 2.0]),
     )
 
-    assert "price" not in onto.declared
-    assert {"express_True", "express_False"} <= onto.individuals
-    assert ("has_data_value", "express_True") in onto.data_assertions
+    assert "order.price" not in onto.declared
+    assert {"order.express.True", "order.express.False"} <= onto.individuals
+    assert ("has_data_value", "order.express.True") in onto.data_assertions
 
 
 def test_a_boolean_attribute_is_not_binned(tmp_path, caplog):
@@ -230,9 +173,9 @@ def test_a_boolean_attribute_is_not_binned(tmp_path, caplog):
             data=_order_store(express=[True, False], price=[1.0, 2.0]),
         )
 
-    assert {"express_True", "express_False"} <= onto.individuals
-    assert {c for c in onto.classes if c.startswith("express_bin_")} == set()
-    assert "'express' has too few distinct values" not in caplog.text
+    assert {"order.express.True", "order.express.False"} <= onto.individuals
+    assert {c for c in onto.classes if c.startswith("order.express_bin_")} == set()
+    assert "'order.express' has too few distinct values" not in caplog.text
 
 
 # --------------------------------------------------------------------------
@@ -252,8 +195,8 @@ def test_a_value_outside_every_bin_is_emitted_without_a_bin(recording_sink, capl
 
     binned = {name for _, name, cls in sink.of_kind("individual") if "_bin_" in cls}
     assert "fall outside all bin boundaries" in caplog.text
-    assert _values(sink) >= {"price_1", "price_7", "price_99"}
-    assert binned == {"price_1", "price_7"}
+    assert _values(sink) >= {"price.1", "price.7", "price.99"}
+    assert binned == {"price.1", "price.7"}
     assert _literal_subjects(sink) == set()
 
 
@@ -274,7 +217,7 @@ def test_a_column_too_narrow_to_bin_is_emitted_unbinned_and_reported_once(
             )
 
     warnings = [r for r in caplog.records if "too few distinct values" in r.message]
-    assert _values(sink) == {"price_4"}
+    assert _values(sink) == {"price.4"}
     assert len(warnings) == 1
 
 
@@ -295,4 +238,4 @@ def test_values_alongside_a_binning_mode_keeps_the_literals(recording_sink):
         rows, "oid", vocab.OBJECT_ATTRIBUTE
     )
 
-    assert _literal_subjects(sink) == {"price_1", "price_7", "price_99"}
+    assert _literal_subjects(sink) == {"price.1", "price.7", "price.99"}

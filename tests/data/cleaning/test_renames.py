@@ -22,7 +22,7 @@ def test_renames_are_listed_by_kind_with_one_name_kept_apart_per_kind():
     assert log.by_kind() == {
         "activity": ["o.1 -> o_1"],
         "id": ["o 1 -> o_1"],
-        "value": ["off white -> colour_off_white"],
+        "value": ["off white -> colour.off_white"],
     }
 
 
@@ -32,7 +32,7 @@ def test_a_value_is_named_under_its_column_and_follows_the_column_when_renamed()
 
     log.rename_value_column("event", "attribute_event")
 
-    assert log.flat() == {"attribute_event_by_hand": "by hand"}
+    assert log.flat() == {"attribute_event.by_hand": "by hand"}
 
 
 def test_a_value_rewritten_again_keeps_its_source_form():
@@ -42,4 +42,4 @@ def test_a_value_rewritten_again_keeps_its_source_form():
     log.rename_value("status", "d_f", "value_d_f")
     log.rename_value("status", "df", "value_df")
 
-    assert log.flat() == {"status_value_d_f": "d f", "status_value_df": "df"}
+    assert log.flat() == {"status.value_d_f": "d f", "status.value_df": "df"}

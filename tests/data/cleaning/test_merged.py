@@ -90,11 +90,11 @@ def test_an_attribute_cleaning_to_the_id_column_name_moves_and_the_id_keeps_it()
     assert table.id == "o_id"
     assert list(table.data.columns) == [
         "o_id",
-        "attribute_o_id",
-        "a_b",
-        "attribute_a_b",
+        "order.attribute_o_id",
+        "order.a_b",
+        "order.attribute_a_b",
     ]
-    assert cleaned.backmap["attribute_a_b"] == "a_b"
+    assert cleaned.backmap["order.attribute_a_b"] == "a_b"
 
 
 def test_two_ids_cleaning_alike_are_kept_apart_across_the_store(make_store, events):
@@ -107,23 +107,34 @@ def test_two_ids_cleaning_alike_are_kept_apart_across_the_store(make_store, even
 
 
 def test_values_of_one_attribute_cleaning_alike_are_kept_apart_across_tables():
-    oced = OCEDStore()
-    for obj_type, value in (("order", "a b"), ("item", "a_b")):
-        oced.add(
-            EntityKind.OBJECT,
-            obj_type,
-            pd.DataFrame({"oid": [obj_type], "channel": [value]}),
-            id_col="oid",
-        )
+    oced = OCEDStore(ocel_mode=True)
+    oced.add(
+        EntityKind.OBJECT,
+        "order",
+        pd.DataFrame({"oid": ["o1"], "status": ["a b"]}),
+        id_col="oid",
+    )
+    oced.add_object_changes(
+        "order",
+        pd.DataFrame(
+            {
+                "ocel:oid": ["o1"],
+                "ocel:type": ["order"],
+                "ocel:timestamp": pd.to_datetime(["2024-01-02"], utc=True),
+                "ocel:field": ["status"],
+                "status": ["a_b"],
+            }
+        ),
+    )
 
-    cleaned = clean_oced_data(oced, qualify_shared=False)
+    cleaned = clean_oced_data(oced)
 
-    assert [
-        cleaned.table(EntityKind.OBJECT, t).data["channel"].iloc[0]
-        for t in ("order", "item")
-    ] == ["a_b", "value_a_b"]
-    assert cleaned.backmap["channel_a_b"] == "a b"
-    assert cleaned.backmap["channel_value_a_b"] == "a_b"
+    assert list(cleaned.table(EntityKind.OBJECT, "order").data["order.status"]) == [
+        "a_b"
+    ]
+    assert list(cleaned.get_object_changes("order")["order.status"]) == ["value_a_b"]
+    assert cleaned.backmap["order.status.a_b"] == "a b"
+    assert cleaned.backmap["order.status.value_a_b"] == "a_b"
 
 
 def test_one_value_under_two_attributes_is_not_a_collision(make_store, events):
@@ -134,4 +145,9 @@ def test_one_value_under_two_attributes_is_not_a_collision(make_store, events):
 
     cleaned = clean_oced_data(oced)
 
-    assert cleaned.backmap == {"channel_a_b": "a b", "clerk_a_b": "a b"}
+    assert cleaned.backmap == {
+        "act.clerk": "clerk",
+        "obj.channel": "channel",
+        "act.clerk.a_b": "a b",
+        "obj.channel.a_b": "a b",
+    }

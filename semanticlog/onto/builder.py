@@ -14,7 +14,7 @@ from typing import Any
 
 from semanticlog.core.enums import SinkEntity
 from semanticlog.core.summary import counted, report_by_kind, report_names
-from semanticlog.data.oced import attribute_owners, attribute_owners_by_kind
+from semanticlog.data.oced import attribute_owners_by_kind
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.annotations import AnnotationWriter
@@ -30,10 +30,7 @@ from semanticlog.onto.emitters import (
     TBoxEmitter,
     TimeEmitter,
 )
-from semanticlog.onto.emitters.attributes import (
-    attribute_binnings,
-    report_conflated_attributes,
-)
+from semanticlog.onto.emitters.attributes import attribute_binnings
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.result import BuildResult
 from semanticlog.onto.settings import OntoBuildSettings
@@ -222,7 +219,6 @@ class OCEDOntoBuilder:
     ) -> Emitters:
         """Create the emitters for one store and its annotation document."""
         owners = attribute_owners_by_kind(data)
-        report_conflated_attributes(attribute_owners(data))
         annotations = AnnotationWriter(self.sink, self.settings, data.backmap, document)
         parts = (self.sink, self.settings, annotations, self.emitted)
         attributes = AttributeEmitter(

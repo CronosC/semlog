@@ -552,14 +552,6 @@ class OCEDStore:
         self._used_ids = unique_ids
 
 
-def attribute_owners(data: ReadableStore) -> dict[str, list[str]]:
-    """Return each attribute with the sorted types whose tables carry a value of it."""
-    return {
-        attribute: sorted({t for types in by_kind.values() for t in types})
-        for attribute, by_kind in attribute_owners_by_kind(data).items()
-    }
-
-
 def attribute_owners_by_kind(
     data: ReadableStore,
 ) -> dict[str, dict[EntityKind, list[str]]]:
