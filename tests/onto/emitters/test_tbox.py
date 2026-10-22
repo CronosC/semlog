@@ -6,6 +6,7 @@ from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import InverseRepresentation, OCELExtension
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.onto.settings import OntoBuildSettings
+from tests.support.build import emit
 from tests.support.tbox import construct_tbox
 
 BASE_CLASSES = {
@@ -82,3 +83,13 @@ def test_every_name_the_upper_schema_emits_is_in_the_tbox_namespace():
     ]
 
     assert [e for e in entities if not e.iri.str.startswith(vocab.TBOX_IRI)] == []
+
+
+def test_the_top_classes_are_pairwise_disjoint(tiny_store, tmp_path):
+    settings = OntoBuildSettings(ocel_extensions=[OCELExtension.ATTRIBUTE_HISTORY])
+    onto = emit(settings, tmp_path / "tiny.ofn", data=tiny_store)
+
+    assert {
+        frozenset({"Object", "Event", "Attribute", "Time"}),
+        frozenset({"EventAttribute", "ObjectAttribute"}),
+    } <= onto.disjoint

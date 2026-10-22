@@ -35,6 +35,7 @@ class Emitted:
         inverses: Axiomatic inverse pairs, each sorted, since RDF/XML records
             the axiom from both sides and functional syntax from one.
         transitive: Properties asserted transitive.
+        disjoint: Sets of classes stated pairwise disjoint.
         annotations: Entity annotations, as (name, label or comment, text).
         ontology_annotations: The provenance record, keyed by annotation name.
         axiom_lines: Every axiom line, for the syntaxes that have lines.
@@ -55,6 +56,7 @@ class Emitted:
     data_values: set[tuple[str, str, str, str]] = field(default_factory=set)
     inverses: set[tuple[str, str]] = field(default_factory=set)
     transitive: set[str] = field(default_factory=set)
+    disjoint: set[frozenset[str]] = field(default_factory=set)
     annotations: set[tuple[str, str, str]] = field(default_factory=set)
     ontology_annotations: dict[str, str] = field(default_factory=dict)
     axiom_lines: list[str] = field(default_factory=list)

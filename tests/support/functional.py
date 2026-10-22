@@ -36,6 +36,7 @@ _DOMAIN = re.compile(rf"^(?:Object|Data)PropertyDomain\({_P}({_REF}) (.+)\)$")
 _RANGE = re.compile(rf"^(?:Object|Data)PropertyRange\({_P}({_REF}) (.+)\)$")
 _INVERSE = re.compile(rf"^InverseObjectProperties\({_P}({_REF}) {_P}({_REF})\)$")
 _TRANSITIVE = re.compile(rf"^TransitiveObjectProperty\({_P}({_REF})\)$")
+_DISJOINT = re.compile(r"^DisjointClasses\((.+)\)$")
 _ENTITY_ANNOTATION = re.compile(
     rf'^AnnotationAssertion\(rdfs:(label|comment) {_P}({_REF}) "(.*)"\)$', re.DOTALL
 )
@@ -163,6 +164,8 @@ def _read_axiom(line: str, emitted: Emitted) -> None:
         emitted.inverses.add(inverse_pair(_unescape(prop), _unescape(inverse)))
     elif m := _TRANSITIVE.match(line):
         emitted.transitive.add(_unescape(m.group(1)))
+    elif m := _DISJOINT.match(line):
+        emitted.disjoint.add(frozenset(_names(m.group(1))))
     elif m := _ENTITY_ANNOTATION.match(line):
         kind, name, text = m.groups()
         emitted.annotations.add((_unescape(name), kind, _unescape(text)))

@@ -49,6 +49,13 @@ class HistoryEmitter(Emitter):
         super().__init__(sink, settings, annotations, emitted)
         self.attributes = attributes
         self.times = times
+        self._change_classes: dict[str, None] = {}
+
+    def emit_disjointness(self) -> None:
+        """State that the change classes of different attributes share no record."""
+        self.sink.add_disjoint_classes(
+            self._change_classes, source="the attribute change classes"
+        )
 
     def emit(self, data: ReadableStore) -> None:
         """Emit a change record for every recorded attribute change.
@@ -123,8 +130,9 @@ class HistoryEmitter(Emitter):
             The change class and the property reaching the new value.
         """
         source = attribute_source(attr_name)
-        self.sink.add_class(attr_name, vocab.OBJECT_ATTRIBUTE, source=source)
+        self.attributes.add_attribute_class(attr_name, vocab.OBJECT_ATTRIBUTE)
         attr_change_cls = vocab.attribute_change_class(attr_name)
+        self._change_classes[attr_change_cls] = None
         change_source = f"the attribute history of {source}"
         self.sink.add_class(
             attr_change_cls, vocab.ATTRIBUTE_CHANGE, source=change_source

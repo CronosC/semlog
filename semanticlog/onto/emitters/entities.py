@@ -48,6 +48,7 @@ class EntityEmitter(Emitter):
 
         for view in views:
             self.sink.add_class(view.name, parent, source=view.origin)
+        self.sink.add_disjoint_classes([view.name for view in views])
         for view in views:
             self.annotations.entity_class(view.name, kind)
         for view in views:
@@ -59,3 +60,7 @@ class EntityEmitter(Emitter):
                 str(view.id_column),
                 attribute_parent,
             )
+
+    def emit_attribute_disjointness(self) -> None:
+        """State that the attribute classes the build declared share no value."""
+        self.attributes.emit_disjointness()

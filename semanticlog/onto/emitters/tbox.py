@@ -75,6 +75,14 @@ class TBoxEmitter(Emitter):
         if attribute_history:
             self._emit_attribute_history_schema()
 
+        top = [vocab.OBJECT, vocab.EVENT, vocab.ATTRIBUTE, vocab.TIME]
+        if attribute_history:
+            top.append(vocab.ATTRIBUTE_CHANGE)
+        self.sink.add_disjoint_classes(top, source="the TBox")
+        self.sink.add_disjoint_classes(
+            [vocab.EVENT_ATTRIBUTE, vocab.OBJECT_ATTRIBUTE], source="the TBox"
+        )
+
         self.annotations.tbox()
 
     def _emit_attribute_history_schema(self) -> None:

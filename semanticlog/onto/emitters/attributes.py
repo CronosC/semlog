@@ -136,6 +136,19 @@ class AttributeEmitter(Emitter):
         self._binnings = binnings
         self._warned_unbinnable: set[str] = set()
         self._annotated: set[str] = set()
+        self._classes: dict[str, None] = {}
+        self._bin_classes: dict[str, dict[str, None]] = defaultdict(dict)
+
+    def add_attribute_class(self, attr: str, parent: str) -> None:
+        """Declare an attribute class below its parent and record it."""
+        self.sink.add_class(attr, parent, source=attribute_source(attr))
+        self._classes[attr] = None
+
+    def emit_disjointness(self) -> None:
+        """State that the attribute classes, and the bins of each, share no value."""
+        self.sink.add_disjoint_classes(self._classes, source="the attribute classes")
+        for attr, bins in self._bin_classes.items():
+            self.sink.add_disjoint_classes(bins, source=f"the bins of {attr!r}")
 
     def emit_columns(
         self,
@@ -168,7 +181,7 @@ class AttributeEmitter(Emitter):
 
             prop = vocab.has_attribute_property(attr)
             source = attribute_source(attr)
-            self.sink.add_class(attr, attribute_parent, source=source)
+            self.add_attribute_class(attr, attribute_parent)
             by_kind = self._owners.get(attr, {})
             owners = sorted({t for types in by_kind.values() for t in types})
             self.sink.add_property(
@@ -277,6 +290,7 @@ class AttributeEmitter(Emitter):
             self.sink.add_class(
                 bin_cls, attr, source=f"a bin of {attribute_source(attr)}"
             )
+            self._bin_classes[attr][bin_cls] = None
             if bin_cls not in self._annotated:
                 self._annotated.add(bin_cls)
                 self.annotations.bin_class(

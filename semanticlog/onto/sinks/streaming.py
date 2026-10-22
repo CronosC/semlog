@@ -144,6 +144,9 @@ class StreamingSink(AxiomSink):
     def write_transitive(self, prop: str) -> None:
         self._axiom(f"TransitiveObjectProperty({self._ref(prop)})")
 
+    def write_disjoint_classes(self, classes: list[str]) -> None:
+        self._axiom(f"DisjointClasses({' '.join(self._ref(c) for c in classes)})")
+
     def write_class_assertions(
         self, class_name: str, individuals: Iterable[str]
     ) -> None:

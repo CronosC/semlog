@@ -51,6 +51,9 @@ class RecordingSink(AxiomSink):
     def write_transitive(self, prop):
         self._record("transitive", prop)
 
+    def write_disjoint_classes(self, classes):
+        self._record("disjoint", list(classes))
+
     def write_class_assertions(self, class_expression, individuals):
         for individual in individuals:
             self._record("individual", str(individual), class_expression)

@@ -114,6 +114,14 @@ def read_rdf(path: str | Path, iri: str) -> Emitted:
         if (name := local(subject)) is not None:
             emitted.transitive.add(name)
 
+    for subject, _, obj in graph.triples((None, OWL.disjointWith, None)):
+        emitted.disjoint.add(frozenset({local(subject), local(obj)} - {None}))
+    for node in graph.subjects(RDF.type, OWL.AllDisjointClasses):
+        for members in graph.objects(node, OWL.members):
+            emitted.disjoint.add(
+                frozenset(n for m in graph.items(members) if (n := local(m)))
+            )
+
     for subject, predicate, obj in graph:
         prop = local(predicate)
         if prop is None:

@@ -88,6 +88,19 @@ def test_an_attribute_of_one_type_has_that_type_as_its_domain(tiny_store, tmp_pa
     assert onto.ranges["has_step.channel"] == {"step.channel"}
 
 
+def test_the_attribute_classes_and_the_bins_of_one_attribute_are_disjoint(tmp_path):
+    onto = emit(
+        OntoBuildSettings(**BIN_SETTINGS),
+        tmp_path / "bins.ofn",
+        data=_order_store(
+            price=[float(n) for n in range(1, 13)], channel=["a", "b"] * 6
+        ),
+    )
+
+    assert frozenset({"order.price", "order.channel"}) in onto.disjoint
+    assert frozenset({"order.price_bin_low", "order.price_bin_high"}) in onto.disjoint
+
+
 def test_a_build_with_typed_attributes_is_consistent(awkward_store, tmp_path):
     path = tmp_path / "awkward.owl"
     OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings()).build_ontology(

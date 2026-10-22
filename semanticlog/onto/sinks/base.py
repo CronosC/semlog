@@ -166,6 +166,10 @@ class AxiomSink(ABC):
         """State that an object property is transitive."""
 
     @abstractmethod
+    def write_disjoint_classes(self, classes: list[str]) -> None:
+        """State that no individual belongs to two of the classes."""
+
+    @abstractmethod
     def write_class_assertions(
         self, class_name: str, individuals: Iterable[str]
     ) -> None:
@@ -513,6 +517,24 @@ class AxiomSink(ABC):
         self._check_name(prop, "a transitivity axiom")
         if self._names.first_transitive(prop):
             self.write_transitive(prop)
+
+    def add_disjoint_classes(
+        self, classes: Iterable[str], *, source: str = "a disjointness axiom"
+    ) -> None:
+        """State that the classes share no individual.
+
+        Repeated names count once, and fewer than two classes write nothing.
+
+        Raises:
+            UnsafeLocalNameError: If a name cannot appear in an IRI.
+        """
+        distinct = list(dict.fromkeys(classes))
+        if len(distinct) < 2:
+            return
+        for name in distinct:
+            self._check_name(name, source)
+        if self._names.first_disjoint(distinct):
+            self.write_disjoint_classes(distinct)
 
     def assert_individuals(self, class_name: str, individuals: Iterable[Any]) -> None:
         """Assert that each individual belongs to a class.

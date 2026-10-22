@@ -42,6 +42,7 @@ COMPARED = (
     "annotations",
     "inverses",
     "transitive",
+    "disjoint",
 )
 
 
@@ -243,6 +244,25 @@ def test_a_union_with_a_fallback_writes_the_fallback_under_el(recording_sink):
     assert sink.of_kind("domain") == [("domain", "ships", ["Event"], False)]
     assert sink.of_kind("range") == [("range", "ships", ["Object"], False)]
     assert (sink.dropped_unions, sink.replaced_unions) == (0, 2)
+
+
+def test_a_disjoint_set_is_written_once_on_both_sinks(real_sink, read_back):
+    sink = real_sink()
+    for name in ("a", "b", "c"):
+        sink.add_class(name, source="a test")
+
+    sink.add_disjoint_classes(["a", "b", "c"])
+    sink.add_disjoint_classes(["c", "b", "a"])
+
+    assert read_back(sink).disjoint == {frozenset({"a", "b", "c"})}
+
+
+def test_a_disjoint_set_of_one_class_writes_nothing(sink):
+    sink.add_class("a", source="a test")
+
+    sink.add_disjoint_classes(["a", "a"])
+
+    assert sink.of_kind("disjoint") == []
 
 
 def test_a_union_with_a_fallback_is_kept_under_dl(sink):

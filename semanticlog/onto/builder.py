@@ -118,6 +118,12 @@ def _upper_schema(emitters: Emitters, context: BuildContext) -> None:
     emitters.tbox.emit(attribute_history=context.attribute_history)
 
 
+def _disjoint_attribute_classes(emitters: Emitters) -> None:
+    """Emit the disjointness of the attribute, bin and change classes the build declared."""
+    emitters.entities.emit_attribute_disjointness()
+    emitters.history.emit_disjointness()
+
+
 BUILD_STEPS: tuple[BuildStep, ...] = (
     BuildStep(
         message="Instantiating the upper schema..",
@@ -168,6 +174,10 @@ BUILD_STEPS: tuple[BuildStep, ...] = (
         count=lambda c: len(c.data.get_object_change_types()),
         when=lambda c: c.attribute_history,
         run=lambda e, c: e.history.emit(c.data),
+    ),
+    BuildStep(
+        message="Declaring disjoint attribute classes..",
+        run=lambda e, c: _disjoint_attribute_classes(e),
     ),
 )
 

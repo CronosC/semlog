@@ -248,6 +248,10 @@ class NameLedger:
         """Return True the first time this inverse axiom is offered, False after."""
         return self._first(("inverse", _key(prop), _key(inverse)))
 
+    def first_disjoint(self, classes: Sequence[str]) -> bool:
+        """Return True the first time this set of disjoint classes is offered, False after."""
+        return self._first(("disjoint", frozenset(_keys(classes))))
+
     def first_transitive(self, prop: str) -> bool:
         """Return True the first time this transitivity axiom is offered, False after."""
         return self._first(("transitive", _key(prop)))
