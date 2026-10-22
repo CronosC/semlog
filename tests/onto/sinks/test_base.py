@@ -43,6 +43,8 @@ COMPARED = (
     "inverses",
     "transitive",
     "disjoint",
+    "functional",
+    "inverse_functional",
 )
 
 
@@ -244,6 +246,41 @@ def test_a_union_with_a_fallback_writes_the_fallback_under_el(recording_sink):
     assert sink.of_kind("domain") == [("domain", "ships", ["Event"], False)]
     assert sink.of_kind("range") == [("range", "ships", ["Object"], False)]
     assert (sink.dropped_unions, sink.replaced_unions) == (0, 2)
+
+
+def test_a_functional_object_property_is_dropped_under_el(recording_sink):
+    sink = recording_sink(OWLProfile.OWL2EL)
+    sink.add_property("has_x", source="a test")
+
+    sink.add_functional("has_x")
+    sink.add_inverse_functional("has_x")
+
+    assert sink.of_kind("functional") == []
+    assert sink.of_kind("inverse_functional") == []
+    assert sink.dropped_characteristics == 2
+
+
+def test_a_functional_data_property_is_kept_under_el(recording_sink):
+    sink = recording_sink(OWLProfile.OWL2EL)
+    sink.add_property("value", data_prop=True, source="a test")
+
+    sink.add_functional("value", data_prop=True)
+
+    assert sink.of_kind("functional") == [("functional", "value", True)]
+    assert sink.dropped_characteristics == 0
+
+
+def test_a_functional_property_is_written_once_on_both_sinks(real_sink, read_back):
+    sink = real_sink()
+    sink.add_property("has_x", source="a test")
+    sink.add_property("of_x", source="a test")
+
+    for _ in range(2):
+        sink.add_functional("has_x")
+        sink.add_inverse_functional("of_x")
+
+    emitted = read_back(sink)
+    assert (emitted.functional, emitted.inverse_functional) == ({"has_x"}, {"of_x"})
 
 
 def test_a_disjoint_set_is_written_once_on_both_sinks(real_sink, read_back):

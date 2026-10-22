@@ -37,6 +37,8 @@ _RANGE = re.compile(rf"^(?:Object|Data)PropertyRange\({_P}({_REF}) (.+)\)$")
 _INVERSE = re.compile(rf"^InverseObjectProperties\({_P}({_REF}) {_P}({_REF})\)$")
 _TRANSITIVE = re.compile(rf"^TransitiveObjectProperty\({_P}({_REF})\)$")
 _DISJOINT = re.compile(r"^DisjointClasses\((.+)\)$")
+_FUNCTIONAL = re.compile(rf"^Functional(?:Object|Data)Property\({_P}({_REF})\)$")
+_INVERSE_FUNCTIONAL = re.compile(rf"^InverseFunctionalObjectProperty\({_P}({_REF})\)$")
 _ENTITY_ANNOTATION = re.compile(
     rf'^AnnotationAssertion\(rdfs:(label|comment) {_P}({_REF}) "(.*)"\)$', re.DOTALL
 )
@@ -166,6 +168,10 @@ def _read_axiom(line: str, emitted: Emitted) -> None:
         emitted.transitive.add(_unescape(m.group(1)))
     elif m := _DISJOINT.match(line):
         emitted.disjoint.add(frozenset(_names(m.group(1))))
+    elif m := _FUNCTIONAL.match(line):
+        emitted.functional.add(_unescape(m.group(1)))
+    elif m := _INVERSE_FUNCTIONAL.match(line):
+        emitted.inverse_functional.add(_unescape(m.group(1)))
     elif m := _ENTITY_ANNOTATION.match(line):
         kind, name, text = m.groups()
         emitted.annotations.add((_unescape(name), kind, _unescape(text)))

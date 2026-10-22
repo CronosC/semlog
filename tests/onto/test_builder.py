@@ -189,11 +189,32 @@ def test_the_unions_el_drops_are_reported_once_for_the_build(awkward_store, capl
     with caplog.at_level(logging.INFO, logger="semanticlog.onto.builder"):
         builder.build_ontology(awkward_store)
 
-    omitted = [r.message for r in caplog.records if "omitted" in r.message]
+    omitted = [
+        r.message
+        for r in caplog.records
+        if "omitted" in r.message and "union" in r.message
+    ]
     dropped = builder.sink.dropped_unions
     assert omitted == [
         f"  omitted {dropped} axioms with a union of classes, which OWL 2 EL does "
         "not allow"
+    ]
+
+
+def test_the_property_axioms_el_drops_are_reported_once_for_the_build(
+    awkward_store, caplog
+):
+    builder = OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings(profile=OWLProfile.OWL2EL))
+
+    with caplog.at_level(logging.INFO, logger="semanticlog.onto.builder"):
+        builder.build_ontology(awkward_store)
+
+    omitted = [r.message for r in caplog.records if "functional" in r.message]
+    dropped = builder.sink.dropped_characteristics
+    assert dropped > 0
+    assert omitted == [
+        f"  omitted {dropped} axioms declaring an object property functional or "
+        "inverse functional, which OWL 2 EL does not allow"
     ]
 
 

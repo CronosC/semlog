@@ -35,6 +35,30 @@ class Emitter:
         self.annotations = annotations
         self.emitted = emitted
 
+    def _states_inverse_twins(self) -> bool:
+        """Whether an inverse property needs its characteristic stated, having no inverse axiom."""
+        return self.settings.has_inverses and not self.settings.axiomatic_inverses
+
+    def declare_functional(self, prop: str) -> None:
+        """Declare an object property functional, and its inverse inverse functional.
+
+        The inverse gets its axiom only when no inverse axiom lets a reasoner
+        derive it.
+        """
+        self.sink.add_functional(prop)
+        if self._states_inverse_twins():
+            self.sink.add_inverse_functional(self.sink.inverse_name(prop))
+
+    def declare_inverse_functional(self, prop: str) -> None:
+        """Declare an object property inverse functional, and its inverse functional.
+
+        The inverse gets its axiom only when no inverse axiom lets a reasoner
+        derive it.
+        """
+        self.sink.add_inverse_functional(prop)
+        if self._states_inverse_twins():
+            self.sink.add_functional(self.sink.inverse_name(prop))
+
     def assert_relations(
         self,
         prop: str,

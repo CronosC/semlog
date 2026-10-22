@@ -193,6 +193,7 @@ class AttributeEmitter(Emitter):
                 axiomatic_inverse=self.settings.axiomatic_inverses,
                 source=source,
             )
+            self.declare_functional(prop)
             if attr not in self._annotated:
                 self._annotated.add(attr)
                 self.annotations.attribute(attr, prop, by_kind)

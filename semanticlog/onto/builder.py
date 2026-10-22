@@ -279,6 +279,13 @@ class OCEDOntoBuilder:
                 "  omitted %s with a union of classes, which OWL 2 EL does not allow",
                 counted(dropped, "axiom", "axioms"),
             )
+        characteristics = self.sink.dropped_characteristics
+        if characteristics:
+            logger.info(
+                "  omitted %s declaring an object property functional or inverse "
+                "functional, which OWL 2 EL does not allow",
+                counted(characteristics, "axiom", "axioms"),
+            )
         replaced = self.sink.replaced_unions
         if replaced:
             logger.info(

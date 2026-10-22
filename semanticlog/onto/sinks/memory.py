@@ -23,6 +23,9 @@ from owlapy.owl_axiom import (
     OWLDataPropertyRangeAxiom,
     OWLDeclarationAxiom,
     OWLDisjointClassesAxiom,
+    OWLFunctionalDataPropertyAxiom,
+    OWLFunctionalObjectPropertyAxiom,
+    OWLInverseFunctionalObjectPropertyAxiom,
     OWLInverseObjectPropertiesAxiom,
     OWLObjectPropertyAssertionAxiom,
     OWLObjectPropertyDomainAxiom,
@@ -162,6 +165,23 @@ class InMemorySink(AxiomSink):
     def write_transitive(self, prop: str) -> None:
         self._add(
             OWLTransitiveObjectPropertyAxiom(OWLObjectProperty(self.iri_of(prop)))
+        )
+
+    def write_functional(self, prop: str, data_prop: bool) -> None:
+        if data_prop:
+            self._add(
+                OWLFunctionalDataPropertyAxiom(OWLDataProperty(self.iri_of(prop)))
+            )
+        else:
+            self._add(
+                OWLFunctionalObjectPropertyAxiom(OWLObjectProperty(self.iri_of(prop)))
+            )
+
+    def write_inverse_functional(self, prop: str) -> None:
+        self._add(
+            OWLInverseFunctionalObjectPropertyAxiom(
+                OWLObjectProperty(self.iri_of(prop))
+            )
         )
 
     def write_disjoint_classes(self, classes: list[str]) -> None:

@@ -72,6 +72,9 @@ class TBoxEmitter(Emitter):
             source="the TBox",
         )
 
+        self.declare_functional(vocab.OBSERVED_AT)
+        self.sink.add_functional(vocab.HAS_DATA_VALUE, data_prop=True)
+
         if attribute_history:
             self._emit_attribute_history_schema()
 
@@ -114,3 +117,5 @@ class TBoxEmitter(Emitter):
             axiomatic_inverse=axiomatic,
             source="the TBox",
         )
+        self.declare_inverse_functional(vocab.HAS_ATTRIBUTE_CHANGE)
+        self.declare_functional(vocab.CHANGED_AT)

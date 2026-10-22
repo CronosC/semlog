@@ -146,6 +146,7 @@ class HistoryEmitter(Emitter):
             axiomatic_inverse=self.settings.axiomatic_inverses,
             source=change_source,
         )
+        self.declare_functional(change_prop)
         self.annotations.attribute_change_schema(
             attr_name, attr_change_cls, change_prop
         )

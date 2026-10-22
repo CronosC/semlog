@@ -70,6 +70,7 @@ class AxiomSink(ABC):
         self._names = NameLedger()
         self._dropped_unions = 0
         self._replaced_unions = 0
+        self._dropped_characteristics = 0
         self._axiom_count = 0
         self._opened = False
         self._closed = False
@@ -113,6 +114,11 @@ class AxiomSink(ABC):
     def dropped_unions(self) -> int:
         """How many axioms were dropped under OWL 2 EL for holding a union."""
         return self._dropped_unions
+
+    @property
+    def dropped_characteristics(self) -> int:
+        """How many functional or inverse functional object property axioms OWL 2 EL dropped."""
+        return self._dropped_characteristics
 
     @property
     def replaced_unions(self) -> int:
@@ -168,6 +174,14 @@ class AxiomSink(ABC):
     @abstractmethod
     def write_disjoint_classes(self, classes: list[str]) -> None:
         """State that no individual belongs to two of the classes."""
+
+    @abstractmethod
+    def write_functional(self, prop: str, data_prop: bool) -> None:
+        """State that a property relates each subject to at most one value."""
+
+    @abstractmethod
+    def write_inverse_functional(self, prop: str) -> None:
+        """State that an object property relates each target to at most one subject."""
 
     @abstractmethod
     def write_class_assertions(
@@ -517,6 +531,34 @@ class AxiomSink(ABC):
         self._check_name(prop, "a transitivity axiom")
         if self._names.first_transitive(prop):
             self.write_transitive(prop)
+
+    def add_functional(self, prop: str, *, data_prop: bool = False) -> None:
+        """Declare a property functional.
+
+        Under OWL 2 EL an object property is left as it is, and the dropped
+        axiom is counted.
+        """
+        self._check_name(prop, "a functional property axiom")
+        if not self._names.first_functional(prop, data_prop):
+            return
+        if not data_prop and self.profile == OWLProfile.OWL2EL:
+            self._dropped_characteristics += 1
+            return
+        self.write_functional(prop, data_prop)
+
+    def add_inverse_functional(self, prop: str) -> None:
+        """Declare an object property inverse functional.
+
+        Under OWL 2 EL the property is left as it is, and the dropped axiom is
+        counted.
+        """
+        self._check_name(prop, "an inverse functional property axiom")
+        if not self._names.first_inverse_functional(prop):
+            return
+        if self.profile == OWLProfile.OWL2EL:
+            self._dropped_characteristics += 1
+            return
+        self.write_inverse_functional(prop)
 
     def add_disjoint_classes(
         self, classes: Iterable[str], *, source: str = "a disjointness axiom"

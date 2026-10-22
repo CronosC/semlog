@@ -144,6 +144,13 @@ class StreamingSink(AxiomSink):
     def write_transitive(self, prop: str) -> None:
         self._axiom(f"TransitiveObjectProperty({self._ref(prop)})")
 
+    def write_functional(self, prop: str, data_prop: bool) -> None:
+        keyword = "FunctionalDataProperty" if data_prop else "FunctionalObjectProperty"
+        self._axiom(f"{keyword}({self._ref(prop)})")
+
+    def write_inverse_functional(self, prop: str) -> None:
+        self._axiom(f"InverseFunctionalObjectProperty({self._ref(prop)})")
+
     def write_disjoint_classes(self, classes: list[str]) -> None:
         self._axiom(f"DisjointClasses({' '.join(self._ref(c) for c in classes)})")
 

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import InverseRepresentation, OCELExtension
 from semanticlog.core.vocabulary import DEFAULT_IRI
+from semanticlog.onto.reason import Reasoner
 from semanticlog.onto.settings import OntoBuildSettings
 from tests.support.build import emit
 from tests.support.tbox import construct_tbox
@@ -93,3 +96,41 @@ def test_the_top_classes_are_pairwise_disjoint(tiny_store, tmp_path):
         frozenset({"Object", "Event", "Attribute", "Time"}),
         frozenset({"EventAttribute", "ObjectAttribute"}),
     } <= onto.disjoint
+
+
+def test_the_time_and_attribute_properties_are_functional_under_dl(
+    tiny_store, tmp_path
+):
+    onto = emit(OntoBuildSettings(), tmp_path / "tiny.ofn", data=tiny_store)
+
+    assert {"observed_at", "has_data_value", "has_step.channel"} <= onto.functional
+
+
+def test_an_implicit_inverse_of_a_functional_property_is_inverse_functional(
+    tiny_store, tmp_path
+):
+    implicit = OntoBuildSettings(
+        inverse_representations=[InverseRepresentation.IMPLICIT]
+    )
+    axiomatic = OntoBuildSettings(
+        inverse_representations=[InverseRepresentation.AXIOMATIC]
+    )
+
+    with_twins = emit(implicit, tmp_path / "implicit.ofn", data=tiny_store)
+    without = emit(axiomatic, tmp_path / "axiomatic.ofn", data=tiny_store)
+
+    assert "observes" in with_twins.inverse_functional
+    assert without.inverse_functional == set()
+
+
+@pytest.mark.reasoner
+def test_an_event_observed_at_two_times_is_inconsistent(tiny_store, tmp_path):
+    path = tmp_path / "tiny.ofn"
+    onto = emit(OntoBuildSettings(), path, data=tiny_store)
+    times = {s: o for p, s, o in onto.relations if p == "observed_at"}
+
+    text = path.read_text(encoding="utf-8").rstrip()
+    extra = f"ObjectPropertyAssertion(oced:observed_at :e1 :{times['e2']})"
+    path.write_text(f"{text[:-1]}{extra}\n)\n", encoding="utf-8")
+
+    assert Reasoner(str(path)).check() is False

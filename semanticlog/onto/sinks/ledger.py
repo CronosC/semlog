@@ -248,6 +248,14 @@ class NameLedger:
         """Return True the first time this inverse axiom is offered, False after."""
         return self._first(("inverse", _key(prop), _key(inverse)))
 
+    def first_functional(self, prop: str, data_prop: bool) -> bool:
+        """Return True the first time this functional property axiom is offered, False after."""
+        return self._first(("functional", _key(prop), data_prop))
+
+    def first_inverse_functional(self, prop: str) -> bool:
+        """Return True the first time this inverse functional axiom is offered, False after."""
+        return self._first(("inverse_functional", _key(prop)))
+
     def first_disjoint(self, classes: Sequence[str]) -> bool:
         """Return True the first time this set of disjoint classes is offered, False after."""
         return self._first(("disjoint", frozenset(_keys(classes))))

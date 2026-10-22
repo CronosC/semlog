@@ -51,6 +51,12 @@ class RecordingSink(AxiomSink):
     def write_transitive(self, prop):
         self._record("transitive", prop)
 
+    def write_functional(self, prop, data_prop):
+        self._record("functional", prop, data_prop)
+
+    def write_inverse_functional(self, prop):
+        self._record("inverse_functional", prop)
+
     def write_disjoint_classes(self, classes):
         self._record("disjoint", list(classes))
 
