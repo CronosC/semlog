@@ -126,7 +126,7 @@ def test_a_change_record_is_stamped_with_a_time_individual(history):
 
     assert stamped == CHANGES
     assert {t for t in times if "Time" in history.types[t]} == times
-    assert {(vocab.HAS_DATA_VALUE, t) for t in times} <= history.data_assertions
+    assert {(vocab.TIMESTAMP, t) for t in times} <= history.data_assertions
 
 
 def test_a_value_shared_with_a_current_value_carries_one_literal(history):

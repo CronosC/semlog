@@ -397,6 +397,12 @@ class AnnotationWriter:
         self.write("attribute.class", attr, **fields)
         self.write("attribute.property", prop, **fields)
 
+    def attribute_value_property(
+        self, attr: str, prop: str, owners: Mapping[EntityKind, Sequence[str]]
+    ) -> None:
+        """Annotate the data property carrying the literal of a value of `attr`."""
+        self.write("attribute.value", prop, **self._attribute_fields(attr, owners))
+
     def bin_class(
         self,
         bin_cls: str,

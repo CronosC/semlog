@@ -6,9 +6,10 @@ import logging
 from datetime import datetime
 
 import pandas as pd
+import pytest
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import DataRepresentation
+from semanticlog.core.enums import DataRepresentation, OWLProfile
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.binning import Binning
 from semanticlog.data.cleaning import clean_oced_data
@@ -17,10 +18,11 @@ from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.emitted import EmittedIndividuals
-from semanticlog.onto.emitters.attributes import AttributeEmitter
+from semanticlog.onto.emitters.attributes import AttributeEmitter, attribute_datatypes
 from semanticlog.onto.reason import Reasoner
 from semanticlog.onto.settings import OntoBuildSettings
 from tests.support.build import emit
+from tests.support.functional import read_functional
 
 BIN_SETTINGS = dict(
     data_representations=[DataRepresentation.EQUAL_BINS],
@@ -128,7 +130,7 @@ def test_a_number_too_wide_for_plain_notation_is_named_without_an_exponent(
         "step.price.0.0000001",
     } <= onto.individuals
     assert (
-        "has_data_value",
+        "step.price_value",
         "step.price.100000000000000000000",
     ) in onto.data_assertions
 
@@ -175,7 +177,7 @@ def test_a_boolean_attribute_keeps_its_values_when_numbers_are_left_out(tmp_path
 
     assert "order.price" not in onto.declared
     assert {"order.express.True", "order.express.False"} <= onto.individuals
-    assert ("has_data_value", "order.express.True") in onto.data_assertions
+    assert ("order.express_value", "order.express.True") in onto.data_assertions
 
 
 def test_a_boolean_attribute_is_not_binned(tmp_path, caplog):
@@ -252,3 +254,132 @@ def test_values_alongside_a_binning_mode_keeps_the_literals(recording_sink):
     )
 
     assert _literal_subjects(sink) == {"price.1", "price.7", "price.99"}
+
+
+# --------------------------------------------------------------------------
+# Literals and bin definitions
+# --------------------------------------------------------------------------
+
+VALUES_AND_BINS = dict(
+    data_representations=[DataRepresentation.VALUES, DataRepresentation.EQUAL_BINS],
+    bins=2,
+    bin_labels=["low", "high"],
+)
+TWELVE_PRICES = [float(n) for n in range(1, 13)]
+
+
+def test_a_text_value_carries_a_string_literal(tmp_path):
+    onto = emit(
+        OntoBuildSettings(),
+        tmp_path / "text.ofn",
+        data=_order_store(channel=["web", "shop"]),
+    )
+
+    assert (
+        "order.channel_value",
+        "order.channel.web",
+        "web",
+        "string",
+    ) in onto.data_values
+
+
+def test_an_attribute_value_property_is_below_has_data_value(tmp_path):
+    onto = emit(
+        OntoBuildSettings(), tmp_path / "price.ofn", data=_order_store(price=[1.5])
+    )
+
+    assert onto.property_parents["order.price_value"] == {vocab.HAS_DATA_VALUE}
+    assert "order.price_value" in onto.functional
+
+
+@pytest.mark.parametrize(
+    ("values", "datatype"),
+    [
+        ([1.5, 2.0], "decimal"),
+        ([1, 2], "integer"),
+        (["web", "shop"], "string"),
+        ([True, False], "boolean"),
+    ],
+)
+def test_an_attribute_value_property_has_the_column_datatype_as_range(
+    tmp_path, values, datatype
+):
+    onto = emit(
+        OntoBuildSettings(), tmp_path / "range.ofn", data=_order_store(x=values)
+    )
+
+    assert onto.ranges["order.x_value"] == {datatype}
+
+
+def test_mixed_datatypes_give_no_range(caplog):
+    store = _order_store(x=["web", 2])
+
+    with caplog.at_level(logging.WARNING):
+        datatypes = attribute_datatypes(store, OntoBuildSettings())
+
+    assert "order.x" not in datatypes
+    assert "'order.x' holds values of more than one datatype" in caplog.text
+
+
+def test_a_bin_is_defined_by_its_edges_under_dl(recording_sink):
+    sink = recording_sink(OWLProfile.OWL2DL)
+    OCEDOntoBuilder(
+        DEFAULT_IRI, OntoBuildSettings(**VALUES_AND_BINS), sink=sink
+    ).build_ontology(_order_store(price=TWELVE_PRICES))
+
+    definitions = {call[1]: call[2:] for call in sink.of_kind("bin_definition")}
+    assert definitions == {
+        "order.price_bin_low": ("order.price", "order.price_value", None, 6.5),
+        "order.price_bin_high": ("order.price", "order.price_value", 6.5, None),
+    }
+
+
+def test_a_bin_has_no_definition_under_el(recording_sink):
+    sink = recording_sink(OWLProfile.OWL2EL)
+    OCEDOntoBuilder(
+        DEFAULT_IRI,
+        OntoBuildSettings(profile=OWLProfile.OWL2EL, **VALUES_AND_BINS),
+        sink=sink,
+    ).build_ontology(_order_store(price=TWELVE_PRICES))
+
+    assert sink.of_kind("bin_definition") == []
+    assert {c[1] for c in sink.of_kind("declare") if "_bin_" in c[1]} == {
+        "order.price_bin_low",
+        "order.price_bin_high",
+    }
+
+
+def test_a_bin_without_values_has_no_definition(recording_sink):
+    sink = recording_sink(OWLProfile.OWL2DL)
+    settings = OntoBuildSettings(
+        **{**VALUES_AND_BINS, "data_representations": [DataRepresentation.EQUAL_BINS]}
+    )
+    OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
+        _order_store(price=TWELVE_PRICES)
+    )
+
+    assert sink.of_kind("bin_definition") == []
+
+
+@pytest.mark.reasoner
+def test_a_reasoner_places_an_unasserted_value_in_its_bin(tmp_path):
+    path = tmp_path / "bins.ofn"
+    emit(
+        OntoBuildSettings(**VALUES_AND_BINS),
+        path,
+        data=_order_store(price=TWELVE_PRICES),
+    )
+    extra = (
+        "ClassAssertion(:order.price :probe)\n"
+        'DataPropertyAssertion(:order.price_value :probe "9.5"^^xsd:decimal)\n'
+    )
+    text = path.read_text(encoding="utf-8").rstrip()
+    path.write_text(f"{text[:-1]}{extra})\n", encoding="utf-8")
+
+    reasoner = Reasoner(str(path))
+    reasoner.materialize(overwrite_old=False, property_assertions=False)
+    reasoner.save(str(tmp_path / "materialized.ofn"))
+
+    types = read_functional(tmp_path / "materialized.ofn").types["probe"]
+    assert "order.price_bin_high" in types
+    assert "order.price_bin_low" not in types

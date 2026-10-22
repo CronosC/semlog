@@ -42,7 +42,7 @@ class TimeEmitter(Emitter):
         self.annotations.time_individuals(
             fresh["time_str"], timestamp_labels(fresh["time"])
         )
-        self.assert_data(vocab.HAS_DATA_VALUE, fresh, "time_str", "time")
+        self.assert_data(vocab.TIMESTAMP, fresh, "time_str", "time")
 
     def emit(self, data: ReadableStore) -> None:
         """Emit the timestamp of every event and link each event to it."""

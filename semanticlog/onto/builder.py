@@ -30,7 +30,10 @@ from semanticlog.onto.emitters import (
     TBoxEmitter,
     TimeEmitter,
 )
-from semanticlog.onto.emitters.attributes import attribute_binnings
+from semanticlog.onto.emitters.attributes import (
+    attribute_binnings,
+    attribute_datatypes,
+)
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.result import BuildResult
 from semanticlog.onto.settings import OntoBuildSettings
@@ -232,7 +235,10 @@ class OCEDOntoBuilder:
         annotations = AnnotationWriter(self.sink, self.settings, data.backmap, document)
         parts = (self.sink, self.settings, annotations, self.emitted)
         attributes = AttributeEmitter(
-            *parts, owners, attribute_binnings(data, self.settings)
+            *parts,
+            owners,
+            attribute_binnings(data, self.settings),
+            attribute_datatypes(data, self.settings),
         )
         times = TimeEmitter(*parts)
         return Emitters(

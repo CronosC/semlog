@@ -20,7 +20,7 @@ def test_a_value_takes_the_xsd_datatype_of_its_type():
         "dateTime": datetime(2024, 1, 2, 9, 30),
         "date": date(2024, 1, 2),
         "integer": np.int64(3),
-        "double": 2.5,
+        "decimal": 2.5,
         "string": "web",
     }
 
@@ -41,7 +41,8 @@ def test_an_infinite_number_is_rejected(value):
         resolve_literal(value, DL)
 
 
-def test_under_el_a_float_is_a_decimal_written_without_an_exponent():
-    literal = resolve_literal(1.0e20, EL)
+@pytest.mark.parametrize("profile", [DL, EL])
+def test_a_float_is_a_decimal_written_without_an_exponent(profile):
+    literal = resolve_literal(1.0e20, profile)
 
     assert (literal.datatype, literal.text) == ("decimal", "100000000000000000000")

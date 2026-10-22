@@ -12,13 +12,14 @@ attribute class.
 from __future__ import annotations
 
 import logging
+import math
 from collections import defaultdict
 from collections.abc import Mapping
 
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import DataRepresentation
+from semanticlog.core.enums import DataRepresentation, OWLProfile
 from semanticlog.data.binning import Binning, fit_dist_bins, fit_equal_bins
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind
@@ -27,6 +28,14 @@ from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters.base import Emitter
 from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import AxiomSink
+from semanticlog.onto.sinks.literals import (
+    BOOLEAN,
+    DATE_TIME,
+    DECIMAL,
+    INTEGER,
+    STRING,
+    profile_datatype,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +66,67 @@ def _numeric_columns(data: ReadableStore) -> dict[str, list[pd.Series]]:
             if not values.empty:
                 columns[column].append(values)
     return columns
+
+
+def _column_datatype(series: pd.Series) -> str | None:
+    """Return the XSD datatype every value of a column is written under, or None.
+
+    None stands for a column whose values take more than one datatype, or one
+    with no datatype a data property range may name.
+    """
+    if pd.api.types.is_bool_dtype(series):
+        return BOOLEAN
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return DATE_TIME
+    if pd.api.types.is_integer_dtype(series):
+        return INTEGER
+    if pd.api.types.is_float_dtype(series):
+        return DECIMAL
+    return _INFERRED_DATATYPES.get(pd.api.types.infer_dtype(series, skipna=True))
+
+
+_INFERRED_DATATYPES: dict[str, str] = {
+    "string": STRING,
+    "boolean": BOOLEAN,
+    "integer": INTEGER,
+    "floating": DECIMAL,
+    "decimal": DECIMAL,
+    "datetime": DATE_TIME,
+    "datetime64": DATE_TIME,
+}
+
+
+def attribute_datatypes(
+    data: ReadableStore, settings: OntoBuildSettings
+) -> dict[str, str]:
+    """Return the datatype of the literals of each attribute, for its value property range.
+
+    An attribute whose columns take more than one datatype is left out and
+    logged.
+
+    Args:
+        data: Store to read.
+        settings: Settings, for the profile the literals are written under.
+
+    Returns:
+        Attribute name to the local name of its XSD datatype.
+    """
+    found: dict[str, set[str | None]] = defaultdict(set)
+    for view in data.tables():
+        for column in view.filled_attributes:
+            found[column].add(_column_datatype(view.frame[column].dropna()))
+    datatypes: dict[str, str] = {}
+    for attribute, kinds in found.items():
+        if len(kinds) == 1 and None not in kinds:
+            (kind,) = kinds
+            datatypes[attribute] = profile_datatype(str(kind), settings.profile)
+        else:
+            logger.warning(
+                "Attribute '%s' holds values of more than one datatype. Its value "
+                "property gets no range.",
+                attribute,
+            )
+    return datatypes
 
 
 def attribute_binnings(
@@ -120,6 +190,8 @@ class AttributeEmitter(Emitter):
         owners: Attribute name to the types carrying it, per kind. Domain of
             each `has_` property.
         binnings: The cut of each attribute the build bins.
+        datatypes: The datatype of each attribute's literals. An attribute
+            without one gets a value property with no range.
     """
 
     def __init__(
@@ -130,10 +202,12 @@ class AttributeEmitter(Emitter):
         emitted: EmittedIndividuals,
         owners: Mapping[str, Mapping[EntityKind, list[str]]],
         binnings: Mapping[str, Binning],
+        datatypes: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__(sink, settings, annotations, emitted)
         self._owners = owners
         self._binnings = binnings
+        self._datatypes = datatypes or {}
         self._warned_unbinnable: set[str] = set()
         self._annotated: set[str] = set()
         self._classes: dict[str, None] = {}
@@ -143,6 +217,29 @@ class AttributeEmitter(Emitter):
         """Declare an attribute class below its parent and record it."""
         self.sink.add_class(attr, parent, source=attribute_source(attr))
         self._classes[attr] = None
+
+    def declare_value_property(self, attr: str) -> str:
+        """Declare the data property that carries the literal of a value of `attr`.
+
+        Returns:
+            The property name.
+        """
+        prop = vocab.value_property(attr)
+        self.sink.add_property(
+            prop,
+            domain_class=attr,
+            range_class=self._datatypes.get(attr),
+            superprop=vocab.HAS_DATA_VALUE,
+            data_prop=True,
+            source=attribute_source(attr),
+        )
+        self.sink.add_functional(prop, data_prop=True)
+        if prop not in self._annotated:
+            self._annotated.add(prop)
+            self.annotations.attribute_value_property(
+                attr, prop, self._owners.get(attr, {})
+            )
+        return prop
 
     def emit_disjointness(self) -> None:
         """State that the attribute classes, and the bins of each, share no value."""
@@ -222,7 +319,7 @@ class AttributeEmitter(Emitter):
                 df_attr, key_col, attr, prop, self.settings.data_representations
             )
         else:
-            self.emit_values(df_attr, key_col, attr, prop, False)
+            self.emit_values(df_attr, key_col, attr, prop, True)
 
     def _emit_numeric(
         self,
@@ -292,6 +389,15 @@ class AttributeEmitter(Emitter):
                 bin_cls, attr, source=f"a bin of {attribute_source(attr)}"
             )
             self._bin_classes[attr][bin_cls] = None
+            if self._defines_bins():
+                lower, upper = binning.bounds(str(bin_label))
+                self.sink.add_bin_definition(
+                    bin_cls,
+                    attr,
+                    self.declare_value_property(attr),
+                    None if math.isinf(lower) else lower,
+                    None if math.isinf(upper) else upper,
+                )
             if bin_cls not in self._annotated:
                 self._annotated.add(bin_cls)
                 self.annotations.bin_class(
@@ -348,8 +454,7 @@ class AttributeEmitter(Emitter):
             attr: Attribute the values belong to.
             prop: Property linking an owner to a value.
             also_assert_data_value: Also write the literal on the value
-                individual. True for numbers, booleans and timestamps, False
-                for text and for binned numbers without `VALUES`.
+                individual. False only for binned numbers without `VALUES`.
         """
         tmp = df.copy()
 
@@ -384,4 +489,12 @@ class AttributeEmitter(Emitter):
         if not fresh:
             return
         rows = tmp[tmp["attr_ind"].isin(fresh)].drop_duplicates("attr_ind")
-        self.assert_data(vocab.HAS_DATA_VALUE, rows, "attr_ind", attr)
+        prop = self.declare_value_property(attr)
+        self.assert_data(prop, rows, "attr_ind", attr)
+
+    def _defines_bins(self) -> bool:
+        """Whether bins get a definition by value range: under OWL 2 DL, with literals."""
+        return (
+            self.settings.profile != OWLProfile.OWL2EL
+            and DataRepresentation.VALUES in self.settings.data_representations
+        )

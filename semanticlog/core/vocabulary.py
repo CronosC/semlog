@@ -86,6 +86,7 @@ OBJECT_OBJECT_RELATION = Term("object_object_relation")
 HAS_ATTRIBUTE = Term("has_attribute")
 ATTRIBUTE_OF = Term("attribute_of")
 HAS_DATA_VALUE = Term("has_data_value")
+TIMESTAMP = Term("timestamp")
 HAS_ATTRIBUTE_CHANGE = Term("has_attribute_change")
 ATTRIBUTE_CHANGE_VALUE = Term("attribute_change_value")
 CHANGED_AT = Term("changed_at")
@@ -121,7 +122,10 @@ _INVERTIBLE_PROPERTIES: frozenset[str] = frozenset(
     }
 )
 
-SCHEMA_PROPERTIES: frozenset[str] = _INVERTIBLE_PROPERTIES | {HAS_DATA_VALUE}
+SCHEMA_PROPERTIES: frozenset[str] = _INVERTIBLE_PROPERTIES | {
+    HAS_DATA_VALUE,
+    TIMESTAMP,
+}
 
 
 INVERSE_PREFIX = "inv_"
@@ -215,6 +219,11 @@ def has_attribute_property(attribute: str) -> str:
 def change_value_property(attribute: str) -> str:
     """Return the property name linking a change record to the new value."""
     return f"change_value_{attribute}"
+
+
+def value_property(attribute: str) -> str:
+    """Return the data property name linking a value of an attribute to its literal."""
+    return f"{attribute}_value"
 
 
 def attribute_change_class(attribute: str) -> str:
@@ -313,6 +322,7 @@ ATTRIBUTE_CLASSES: tuple[Callable[[str], str], ...] = (attribute_change_class,)
 ATTRIBUTE_PROPERTIES: tuple[Callable[[str], str], ...] = (
     has_attribute_property,
     change_value_property,
+    value_property,
 )
 BIN_CLASSES: tuple[Callable[[str, Any], str], ...] = (bin_class,)
 

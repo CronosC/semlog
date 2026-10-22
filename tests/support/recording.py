@@ -51,6 +51,13 @@ class RecordingSink(AxiomSink):
     def write_transitive(self, prop):
         self._record("transitive", prop)
 
+    def write_bin_definition(
+        self, bin_class, attribute_class, value_prop, lower, upper
+    ):
+        self._record(
+            "bin_definition", bin_class, attribute_class, value_prop, lower, upper
+        )
+
     def write_functional(self, prop, data_prop):
         self._record("functional", prop, data_prop)
 

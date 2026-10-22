@@ -11,7 +11,14 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from owlapy.class_expression import OWLClass, OWLObjectUnionOf
+from owlapy.class_expression import (
+    OWLClass,
+    OWLDataSomeValuesFrom,
+    OWLDatatypeRestriction,
+    OWLFacetRestriction,
+    OWLObjectIntersectionOf,
+    OWLObjectUnionOf,
+)
 from owlapy.iri import IRI
 from owlapy.owl_axiom import (
     OWLAnnotation,
@@ -23,6 +30,7 @@ from owlapy.owl_axiom import (
     OWLDataPropertyRangeAxiom,
     OWLDeclarationAxiom,
     OWLDisjointClassesAxiom,
+    OWLEquivalentClassesAxiom,
     OWLFunctionalDataPropertyAxiom,
     OWLFunctionalObjectPropertyAxiom,
     OWLInverseFunctionalObjectPropertyAxiom,
@@ -37,13 +45,14 @@ from owlapy.owl_axiom import (
 )
 from owlapy.owl_datatype import OWLDatatype
 from owlapy.owl_individual import OWLNamedIndividual
-from owlapy.owl_literal import OWLLiteral
+from owlapy.owl_literal import DoubleOWLDatatype, OWLLiteral
 from owlapy.owl_ontology import Ontology
 from owlapy.owl_property import OWLDataProperty, OWLObjectProperty
+from owlapy.vocab import OWLFacet
 
 from semanticlog.core.enums import OWLProfile, SinkEntity
 from semanticlog.onto.sinks.base import PARTIAL_SUFFIX, AxiomSink
-from semanticlog.onto.sinks.literals import RDFS, XSD, Literal
+from semanticlog.onto.sinks.literals import DECIMAL, RDFS, XSD, Literal
 
 _RDFS_LABEL = OWLAnnotationProperty(IRI(RDFS, "label"))
 _RDFS_COMMENT = OWLAnnotationProperty(IRI(RDFS, "comment"))
@@ -136,10 +145,19 @@ class InMemorySink(AxiomSink):
         )
 
     def write_data_range(self, prop: str, datatype: str) -> None:
+        """Write the range, giving `xsd:decimal` as `xsd:double`.
+
+        owlapy has no mapping for `xsd:decimal`. It maps `xsd:double` to Python
+        floats, which owlready2 writes as `xsd:decimal`.
+        """
+        owl_datatype = (
+            DoubleOWLDatatype
+            if datatype == DECIMAL
+            else OWLDatatype(IRI(XSD, datatype))
+        )
         self._add(
             OWLDataPropertyRangeAxiom(
-                self._entity(prop, SinkEntity.DATA_PROPERTY),
-                OWLDatatype(IRI(XSD, datatype)),
+                self._entity(prop, SinkEntity.DATA_PROPERTY), owl_datatype
             )
         )
 
@@ -165,6 +183,44 @@ class InMemorySink(AxiomSink):
     def write_transitive(self, prop: str) -> None:
         self._add(
             OWLTransitiveObjectPropertyAxiom(OWLObjectProperty(self.iri_of(prop)))
+        )
+
+    def write_bin_definition(
+        self,
+        bin_class: str,
+        attribute_class: str,
+        value_prop: str,
+        lower: float | None,
+        upper: float | None,
+    ) -> None:
+        """Write the definition over `xsd:decimal`.
+
+        owlapy maps a restriction on `xsd:double` to Python floats, which
+        owlready2 writes as `xsd:decimal`. It has no mapping for `xsd:decimal`
+        itself.
+        """
+        facets = []
+        if lower is not None:
+            facets.append(
+                OWLFacetRestriction(OWLFacet.MIN_EXCLUSIVE, owl_literal(lower))
+            )
+        if upper is not None:
+            facets.append(
+                OWLFacetRestriction(OWLFacet.MAX_INCLUSIVE, owl_literal(upper))
+            )
+        in_range = OWLDataSomeValuesFrom(
+            OWLDataProperty(self.iri_of(value_prop)),
+            OWLDatatypeRestriction(DoubleOWLDatatype, facets),
+        )
+        self._add(
+            OWLEquivalentClassesAxiom(
+                [
+                    self._entity(bin_class, SinkEntity.CLASS),
+                    OWLObjectIntersectionOf(
+                        [self._entity(attribute_class, SinkEntity.CLASS), in_range]
+                    ),
+                ]
+            )
         )
 
     def write_functional(self, prop: str, data_prop: bool) -> None:

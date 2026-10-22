@@ -52,6 +52,10 @@
     "inverse_label": "is {original} of",
     "inverse_comment": "Inverse of has {original}. Relates a '{original}' value to the {owners} carrying it."
   },
+  "attribute.value": {
+    "label": "{original} value",
+    "comment": "Relates a '{original}' value of {owners} to its literal."
+  },
   "attribute.bin_lowest": {
     "label": "{original} ({types}): {bin}",
     "comment": "Values of the '{original}' attribute of {owners} that are at most {high}."

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.onto.emitters.base import Emitter
+from semanticlog.onto.sinks.literals import DATE_TIME
 
 
 class TBoxEmitter(Emitter):
@@ -72,8 +73,18 @@ class TBoxEmitter(Emitter):
             source="the TBox",
         )
 
+        self.sink.add_property(
+            vocab.TIMESTAMP,
+            domain_class=vocab.TIME,
+            range_class=DATE_TIME,
+            superprop=vocab.HAS_DATA_VALUE,
+            data_prop=True,
+            source="the TBox",
+        )
+
         self.declare_functional(vocab.OBSERVED_AT)
         self.sink.add_functional(vocab.HAS_DATA_VALUE, data_prop=True)
+        self.sink.add_functional(vocab.TIMESTAMP, data_prop=True)
 
         if attribute_history:
             self._emit_attribute_history_schema()

@@ -134,7 +134,7 @@ def test_the_build_records_where_it_came_from(onto):
 
 def test_values_keeps_one_individual_per_distinct_number(onto):
     prices = {name for name, t in onto.types.items() if "order.price" in t}
-    literals = {v for p, _, v, _t in onto.data_values if p == vocab.HAS_DATA_VALUE}
+    literals = {v for p, _, v, _t in onto.data_values if p == "order.price_value"}
 
     assert len(prices) == 11
     assert "order.price.10" in prices

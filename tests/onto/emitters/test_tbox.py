@@ -42,7 +42,7 @@ def test_the_schema_declares_the_base_classes_and_properties():
     assert _schema() == {
         "classes": BASE_CLASSES,
         "object": BASE_OBJECT_PROPERTIES,
-        "data": {vocab.HAS_DATA_VALUE},
+        "data": {vocab.HAS_DATA_VALUE, vocab.TIMESTAMP},
     }
 
 

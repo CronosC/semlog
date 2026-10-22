@@ -53,7 +53,11 @@
   },
   "has_data_value": {
     "label": "has data value",
-    "comment": "Relates an attribute value or a time point to its literal."
+    "comment": "Relates an attribute value or a time point to its literal. Each attribute and the time points have a subproperty of their own."
+  },
+  "timestamp": {
+    "label": "timestamp",
+    "comment": "Relates a time point to its date and time."
   },
   "inv_event_object_relation": {
     "label": "is object involved in",

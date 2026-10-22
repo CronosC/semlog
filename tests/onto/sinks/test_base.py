@@ -7,6 +7,7 @@ over `InMemorySink` and `StreamingSink`.
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -45,6 +46,7 @@ COMPARED = (
     "disjoint",
     "functional",
     "inverse_functional",
+    "defined",
 )
 
 
@@ -129,15 +131,16 @@ def test_under_el_a_boolean_and_a_date_are_written_as_strings(real_sink, read_ba
     }
 
 
-def test_the_sinks_write_a_float_under_different_datatypes(tmp_path):
-    """owlapy writes every float as `xsd:decimal`, whatever the literal declares."""
+def test_both_sinks_write_a_float_as_a_decimal(tmp_path):
     streamed = tmp_path / "streamed.ofn"
     in_memory = tmp_path / "memory.owl"
     emit(CONFIGURATIONS["dl_df"](), streamed, STREAMING)
     emit(CONFIGURATIONS["dl_df"](), in_memory, IN_MEMORY)
 
+    streamed_text = streamed.read_text(encoding="utf-8")
     written = in_memory.read_text(encoding="utf-8")
-    assert "^^xsd:double" in streamed.read_text(encoding="utf-8")
+    assert "^^xsd:decimal" in streamed_text
+    assert "^^xsd:double" not in streamed_text
     assert "XMLSchema#decimal" in written
     assert "XMLSchema#double" not in written
 
@@ -246,6 +249,28 @@ def test_a_union_with_a_fallback_writes_the_fallback_under_el(recording_sink):
     assert sink.of_kind("domain") == [("domain", "ships", ["Event"], False)]
     assert sink.of_kind("range") == [("range", "ships", ["Object"], False)]
     assert (sink.dropped_unions, sink.replaced_unions) == (0, 2)
+
+
+def test_an_infinite_bin_edge_omits_its_facet(real_sink, tmp_path):
+    sink = real_sink()
+    sink.add_class("price", source="a test")
+    sink.add_class("price_bin_low", "price", source="a test")
+    sink.add_property("price_value", data_prop=True, source="a test")
+
+    sink.add_bin_definition("price_bin_low", "price", "price_value", None, 6.5)
+    sink.close()
+
+    if isinstance(sink, StreamingSink):
+        text = Path(sink.path).read_text(encoding="utf-8")
+        assert "minExclusive" not in text
+        assert 'xsd:maxInclusive "6.5"^^xsd:decimal' in text
+
+
+def test_a_bin_definition_under_el_is_rejected(recording_sink):
+    sink = recording_sink(OWLProfile.OWL2EL)
+
+    with pytest.raises(ValueError, match="cannot be defined under OWL 2 EL"):
+        sink.add_bin_definition("b", "a", "a_value", 1.0, None)
 
 
 def test_a_functional_object_property_is_dropped_under_el(recording_sink):

@@ -85,18 +85,18 @@ EXPECTED: dict[str, Shape] = {
     "dl_df": Shape(
         classes=20,
         object_properties=17,
-        data_properties=1,
+        data_properties=10,
         individuals=96,
-        axioms=405,
+        axioms=462,
         must_contain=_DF | _NUMERIC,
         must_not_contain=_EF | _INVERSES | _EQUAL_BINS | _HISTORY | _DECLARE,
     ),
     "dl_inverses": Shape(
         classes=20,
         object_properties=34,
-        data_properties=1,
+        data_properties=10,
         individuals=96,
-        axioms=774,
+        axioms=849,
         must_contain=_DF | _INVERSES,
         must_not_contain=_EF | _EQUAL_BINS | _HISTORY | _DECLARE,
         inverse_pairs=17,
@@ -104,9 +104,9 @@ EXPECTED: dict[str, Shape] = {
     "el_ef_explicit_bins": Shape(
         classes=24,
         object_properties=34,
-        data_properties=1,
+        data_properties=10,
         individuals=96,
-        axioms=823,
+        axioms=898,
         must_contain=_EF | _TRACE_BOUNDARY | _INVERSES | _EQUAL_BINS | _NUMERIC,
         must_not_contain=_DF_PROPERTIES | _HISTORY | _DECLARE | _NARROW_BINS,
         # EL has no InverseObjectProperties axiom, so the pairs are only asserted.
@@ -115,9 +115,9 @@ EXPECTED: dict[str, Shape] = {
     "dl_ef_dist_bins_history": Shape(
         classes=31,
         object_properties=24,
-        data_properties=1,
+        data_properties=10,
         individuals=101,
-        axioms=524,
+        axioms=589,
         must_contain=_DF | _EF | _DIST_BINS | _HISTORY | _NUMERIC,
         must_not_contain=_INVERSES | _DECLARE | _NARROW_BINS,
         # EF left to a reasoner is a transitivity axiom.
@@ -126,18 +126,18 @@ EXPECTED: dict[str, Shape] = {
     "el_history_bins_only": Shape(
         classes=27,
         object_properties=22,
-        data_properties=1,
+        data_properties=7,
         individuals=101,
-        axioms=642,
+        axioms=696,
         must_contain=_DF | _HISTORY | _EQUAL_BINS,
         must_not_contain=_EF | _INVERSES | _DECLARE | _NARROW_BINS | _DIST_BINS,
     ),
     "dl_declare_multi_cc": Shape(
         classes=22,
         object_properties=30,
-        data_properties=1,
+        data_properties=7,
         individuals=69,
-        axioms=627,
+        axioms=681,
         must_contain=_DF
         | _DECLARE
         | frozenset(
@@ -148,9 +148,9 @@ EXPECTED: dict[str, Shape] = {
     "dl_no_case_concept": Shape(
         classes=21,
         object_properties=40,
-        data_properties=1,
+        data_properties=10,
         individuals=101,
-        axioms=462,
+        axioms=519,
         must_contain=_HISTORY | _INVERSES | _NUMERIC,
         must_not_contain=_DF | _EF | _EQUAL_BINS | _DECLARE,
         inverse_pairs=20,

@@ -176,6 +176,17 @@ class AxiomSink(ABC):
         """State that no individual belongs to two of the classes."""
 
     @abstractmethod
+    def write_bin_definition(
+        self,
+        bin_class: str,
+        attribute_class: str,
+        value_prop: str,
+        lower: float | None,
+        upper: float | None,
+    ) -> None:
+        """Define a bin class as the values of an attribute whose literal lies in a range."""
+
+    @abstractmethod
     def write_functional(self, prop: str, data_prop: bool) -> None:
         """State that a property relates each subject to at most one value."""
 
@@ -531,6 +542,39 @@ class AxiomSink(ABC):
         self._check_name(prop, "a transitivity axiom")
         if self._names.first_transitive(prop):
             self.write_transitive(prop)
+
+    def add_bin_definition(
+        self,
+        bin_class: str,
+        attribute_class: str,
+        value_prop: str,
+        lower: float | None,
+        upper: float | None,
+    ) -> None:
+        """Define a bin class by the range of literals its values hold.
+
+        The bin holds the members of `attribute_class` whose `value_prop`
+        literal is above `lower` and at most `upper`. A None bound leaves that
+        side open. The definition is written once per bin.
+
+        Raises:
+            UnsafeLocalNameError: If a name cannot appear in an IRI.
+            ValueError: If both bounds are None, or the profile is OWL 2 EL,
+                which has no datatype restrictions.
+        """
+        if lower is None and upper is None:
+            raise ValueError(f"Bin {bin_class!r} needs at least one finite bound.")
+        if self.profile == OWLProfile.OWL2EL:
+            raise ValueError(
+                f"Bin {bin_class!r} cannot be defined under OWL 2 EL, which has "
+                "no datatype restrictions."
+            )
+        for name in (bin_class, attribute_class, value_prop):
+            self._check_name(name, "a bin definition")
+        if self._names.first_bin_definition(bin_class):
+            self.write_bin_definition(
+                bin_class, attribute_class, value_prop, lower, upper
+            )
 
     def add_functional(self, prop: str, *, data_prop: bool = False) -> None:
         """Declare a property functional.

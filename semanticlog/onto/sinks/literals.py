@@ -1,8 +1,9 @@
 """Datatype resolution for literal values.
 
-A pandas cell becomes a typed literal. Under OWL 2 EL, whose datatype map has
-no `xsd:double`, `xsd:boolean` or `xsd:date`, those three are substituted.
-Both sinks call `resolve_literal` and render the result.
+A pandas cell becomes a typed literal. A float is an `xsd:decimal` in every
+profile, the type owlapy writes for it. Under OWL 2 EL, whose datatype map has
+no `xsd:boolean` or `xsd:date`, those two are written as strings. Both sinks
+call `resolve_literal` and render the result.
 """
 
 from __future__ import annotations
@@ -30,14 +31,22 @@ DOUBLE = "double"
 INTEGER = "integer"
 STRING = "string"
 
-OWL_DATATYPES: frozenset[str] = frozenset({INTEGER, DOUBLE, BOOLEAN, DATE_TIME})
+OWL_DATATYPES: frozenset[str] = frozenset(
+    {INTEGER, DECIMAL, DOUBLE, BOOLEAN, DATE_TIME, STRING}
+)
 """The datatypes a data property may be declared to range over."""
 
 _EL_SUBSTITUTES: dict[str, str] = {
     BOOLEAN: STRING,
     DATE: STRING,
-    DOUBLE: DECIMAL,
 }
+
+
+def profile_datatype(datatype: str, profile: OWLProfile) -> str:
+    """Return the datatype a literal of `datatype` is written under in a profile."""
+    if profile == OWLProfile.OWL2EL:
+        return _EL_SUBSTITUTES.get(datatype, datatype)
+    return datatype
 
 
 def normalize_value(value: Any) -> Any:
@@ -101,7 +110,9 @@ def _plain_datatype(value: Any) -> tuple[str, str]:
     if isinstance(value, int):
         return INTEGER, str(value)
     if isinstance(value, float):
-        return DOUBLE, str(value)
+        # `xsd:decimal` takes no exponent, so the float is formatted without
+        # one. The value stays a float, which owlapy writes as a decimal.
+        return DECIMAL, format_number(value)
     return STRING, str(value)
 
 
@@ -110,8 +121,8 @@ def resolve_literal(value: Any, profile: OWLProfile) -> Literal | None:
 
     Args:
         value: A cell from a table.
-        profile: Profile of the build. Under EL, boolean, date and double are
-            substituted.
+        profile: Profile of the build. Under EL, a boolean or a date is
+            written as a string.
 
     Returns:
         The value with its datatype, or None if there was no value.
@@ -127,8 +138,4 @@ def resolve_literal(value: Any, profile: OWLProfile) -> Literal | None:
     substitute = _EL_SUBSTITUTES.get(datatype)
     if substitute is None:
         return Literal(value, datatype, text)
-    if substitute == DECIMAL:
-        # `xsd:decimal` takes no exponent, so the float is formatted without
-        # one. The value stays a float, which both backends write as a decimal.
-        return Literal(value, substitute, format_number(value))
     return Literal(text, substitute, text)

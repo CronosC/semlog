@@ -37,6 +37,7 @@ class Emitted:
         transitive: Properties asserted transitive.
         disjoint: Sets of classes stated pairwise disjoint.
         functional: Properties declared functional.
+        defined: Classes stated equivalent to a class expression.
         inverse_functional: Object properties declared inverse functional.
         annotations: Entity annotations, as (name, label or comment, text).
         ontology_annotations: The provenance record, keyed by annotation name.
@@ -60,6 +61,7 @@ class Emitted:
     transitive: set[str] = field(default_factory=set)
     disjoint: set[frozenset[str]] = field(default_factory=set)
     functional: set[str] = field(default_factory=set)
+    defined: set[str] = field(default_factory=set)
     inverse_functional: set[str] = field(default_factory=set)
     annotations: set[tuple[str, str, str]] = field(default_factory=set)
     ontology_annotations: dict[str, str] = field(default_factory=dict)

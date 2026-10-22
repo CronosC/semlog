@@ -7,15 +7,10 @@ from pathlib import Path
 from semanticlog.core.vocabulary import TBOX_IRI
 from tests.support.emitted import Emitted, inverse_pair
 
-# owlapy writes every float as xsd:decimal whatever the literal declares. The
-# two are read as one.
-_EQUIVALENT_DATATYPES = {"decimal": "double"}
-
 
 def _rdf_datatype(datatype: object) -> str:
-    """Return the local name of a literal's datatype, as the two sinks compare."""
-    name = str(datatype).rpartition("#")[2] if datatype is not None else "string"
-    return _EQUIVALENT_DATATYPES.get(name, name)
+    """Return the local name of a literal's datatype."""
+    return str(datatype).rpartition("#")[2] if datatype is not None else "string"
 
 
 def read_rdf(path: str | Path, iri: str) -> Emitted:
@@ -121,6 +116,10 @@ def read_rdf(path: str | Path, iri: str) -> Emitted:
         for subject in graph.subjects(RDF.type, kind):
             if (name := local(subject)) is not None:
                 target.add(name)
+
+    for subject in graph.subjects(OWL.equivalentClass, None):
+        if (name := local(subject)) is not None:
+            emitted.defined.add(name)
 
     for subject, _, obj in graph.triples((None, OWL.disjointWith, None)):
         emitted.disjoint.add(frozenset({local(subject), local(obj)} - {None}))

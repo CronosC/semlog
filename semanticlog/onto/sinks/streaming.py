@@ -17,6 +17,7 @@ from typing import TextIO
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import OWLProfile, SinkEntity
+from semanticlog.core.vocabulary import format_number
 from semanticlog.onto.sinks.base import PARTIAL_SUFFIX, AxiomSink
 from semanticlog.onto.sinks.literals import RDFS, XSD, Literal
 
@@ -143,6 +144,28 @@ class StreamingSink(AxiomSink):
 
     def write_transitive(self, prop: str) -> None:
         self._axiom(f"TransitiveObjectProperty({self._ref(prop)})")
+
+    def write_bin_definition(
+        self,
+        bin_class: str,
+        attribute_class: str,
+        value_prop: str,
+        lower: float | None,
+        upper: float | None,
+    ) -> None:
+        facets = []
+        if lower is not None:
+            facets.append(f'xsd:minExclusive "{format_number(lower)}"^^xsd:decimal')
+        if upper is not None:
+            facets.append(f'xsd:maxInclusive "{format_number(upper)}"^^xsd:decimal')
+        in_range = (
+            f"DataSomeValuesFrom({self._ref(value_prop)} "
+            f"DatatypeRestriction(xsd:decimal {' '.join(facets)}))"
+        )
+        self._axiom(
+            f"EquivalentClasses({self._ref(bin_class)} "
+            f"ObjectIntersectionOf({self._ref(attribute_class)} {in_range}))"
+        )
 
     def write_functional(self, prop: str, data_prop: bool) -> None:
         keyword = "FunctionalDataProperty" if data_prop else "FunctionalObjectProperty"

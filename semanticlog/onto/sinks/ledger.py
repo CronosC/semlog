@@ -248,6 +248,10 @@ class NameLedger:
         """Return True the first time this inverse axiom is offered, False after."""
         return self._first(("inverse", _key(prop), _key(inverse)))
 
+    def first_bin_definition(self, bin_class: str) -> bool:
+        """Return True the first time a bin class is defined, False after."""
+        return self._first(("bin_definition", _key(bin_class)))
+
     def first_functional(self, prop: str, data_prop: bool) -> bool:
         """Return True the first time this functional property axiom is offered, False after."""
         return self._first(("functional", _key(prop), data_prop))
