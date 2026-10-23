@@ -130,7 +130,7 @@ The record of how the file was produced is annotated onto the ontology itself: t
 | `name` | the config or input name | Stem of every file the run writes. |
 | `iri` | `https://example.org/oced/<stem>/` | Base IRI of every name from the log, with `<stem>` the artifact stem. A trailing `/` is added when missing. Schema names are under `https://example.org/oced#`. |
 | `profile` | `OWL2DL` | Which OWL 2 profile the output stays inside. `OWL2EL` rejects `ef` and `axiomatic` inverses, drops a domain or range that is a union of classes, and writes a float as `xsd:decimal` and a boolean or date as `xsd:string`. |
-| `order_representations` | none | How event order is written: `df`, `ef`, `ef_explicit`, `declare`. Several can be combined. `ef` declares eventually-follows transitive over `df` and leaves the pairs to a reasoner, so it needs `df` beside it and `OWL2DL`. `ef_explicit` asserts every pair itself. |
+| `order_representations` | none | How event order is written: `df`, `ef`, `ef_explicit`, `declare`. Several can be combined. `ef` declares eventually-follows transitive over `df` and leaves the pairs to a reasoner, so it needs `df` beside it and `OWL2DL`. `ef_explicit` asserts every pair itself. Events of one trace with the same timestamp are ordered by event id. |
 | `case_concepts` | the 3 most common object types | Object types whose instances act as cases, spelled as the source log spells them. `df`, `ef` and `ef_explicit` need at least one. `declare` takes its traces from the mined file. |
 | `auto_case_concepts` | `3` | How many object types are chosen when `case_concepts` is not set. |
 | `data_representations` | `values` | How numeric attributes appear: `values` keeps the number, `equal_bins` buckets by frequency, `dist_bins` buckets by distance from the typical value, in standard deviations after a power transform, so the outer bins hold the unusual values. Each attribute is cut once, over every value it takes anywhere in the log. A column with too few distinct values to bin keeps its numbers. Under `OWL2DL` with `values`, each bin class is also defined by its value range, so a reasoner places a value in its bin. |
@@ -175,7 +175,6 @@ result = build_log(data, settings, BuildInputs(case_concepts), "examples/out/pip
 - HermiT is the default reasoner and rejects a timestamp with microseconds. Set `reasoner_backend = "Pellet"` for such a log.
 - ELK answers class queries only. It does not entail disjointness, inverses, data properties or property assertions.
 - `--no-streaming` builds in memory and is about a hundred times slower on a large log.
-- A streamed build writes a float as `xsd:double`. `--no-streaming` writes it as `xsd:decimal`, because owlapy writes every float that way.
 
 ## DECLARE support
 
