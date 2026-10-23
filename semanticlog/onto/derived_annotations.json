@@ -18,9 +18,9 @@
   },
   "order.ef": {
     "label": "eventually followed by",
-    "comment": "Relates an event to itself and to every later event in a case trace. Superproperty of the eventually-follows property of every case concept.",
+    "comment": "Relates an event to every later event in a case trace. Superproperty of the eventually-follows property of every case concept.",
     "inverse_label": "eventually preceded by",
-    "inverse_comment": "Inverse of eventually followed by. Relates an event to itself and to every earlier event in a case trace."
+    "inverse_comment": "Inverse of eventually followed by. Relates an event to every earlier event in a case trace."
   },
   "order.df_case": {
     "label": "directly followed by ({case})",
@@ -30,17 +30,17 @@
   },
   "order.ef_case": {
     "label": "eventually followed by ({case})",
-    "comment": "Relates an event to itself and to every later event in the same '{case}' trace.",
+    "comment": "Relates an event to every later event in the same '{case}' trace.",
     "inverse_label": "eventually preceded by ({case})",
-    "inverse_comment": "Inverse of eventually followed by ({case}). Relates an event to itself and to every earlier event in the same '{case}' trace."
+    "inverse_comment": "Inverse of eventually followed by ({case}). Relates an event to every earlier event in the same '{case}' trace."
   },
   "order.start": {
     "label": "Start event ({case})",
-    "comment": "Events with no predecessor in their '{case}' trace."
+    "comment": "Events that open at least one '{case}' trace."
   },
   "order.end": {
     "label": "End event ({case})",
-    "comment": "Events with no successor in their '{case}' trace."
+    "comment": "Events that close at least one '{case}' trace."
   },
   "attribute.class": {
     "label": "{original} ({types})",

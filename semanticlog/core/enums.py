@@ -129,7 +129,10 @@ class EventOrderRepresentation(BuildEnum):
         DF: Directly-follows assertions between adjacent events.
         EF: Eventually-follows as a transitive property, leaving the pairs
             for a reasoner to derive. It derives them over directly-follows,
-            so it needs `DF` alongside it. OWL2DL only.
+            so it needs `DF` alongside it. OWL2DL only. An event in two
+            traces of one case concept joins their directly-follows chains,
+            so the reasoner also derives pairs across those traces. The
+            build warns when that happens.
         EF_EXPLICIT: Eventually-follows with every pair asserted. Works in
             both profiles and is quadratic in trace length.
         DECLARE: Each trace is typed as a member of every mined DECLARE

@@ -42,14 +42,7 @@ EF_EXPLICIT = EventOrderRepresentation.EF_EXPLICIT
 EVENTS = ("e1", "e2", "e3")
 
 # The three events of the tiny store are one trace.
-CLOSURE = {
-    ("e1", "e1"),
-    ("e1", "e2"),
-    ("e1", "e3"),
-    ("e2", "e2"),
-    ("e2", "e3"),
-    ("e3", "e3"),
-}
+CLOSURE = {("e1", "e2"), ("e1", "e3"), ("e2", "e3")}
 
 # The matrix store flattened on `order`: twelve traces, the first six of two
 # events and the rest of one.
@@ -67,12 +60,12 @@ def _directly_follows(traces) -> set[tuple[str, str]]:
 
 
 def _closure(traces) -> set[tuple[str, str]]:
-    """Return the reflexive transitive closure within each trace."""
+    """Return the strict transitive closure within each trace."""
     return {
         (trace[i], trace[j])
         for trace in traces
         for i in range(len(trace))
-        for j in range(i, len(trace))
+        for j in range(i + 1, len(trace))
     }
 
 
@@ -88,6 +81,40 @@ def _settings(order, **overrides) -> Configuration:
 
 def _pairs(onto, prop: str) -> set[tuple[str, str]]:
     return {(s, o) for p, s, o in onto.relations if p == prop}
+
+
+def _shared_event_store() -> OCEDStore:
+    """Two orders. `b1` is in both traces, `c1` and `s1` only in the first, `s2` only in the second."""
+    data = OCEDStore()
+    data.add(
+        EntityKind.EVENT,
+        "step",
+        pd.DataFrame(
+            {
+                "eid": ["c1", "b1", "s1", "s2"],
+                "ts": [datetime(2024, 1, d) for d in (1, 2, 3, 4)],
+            }
+        ),
+        id_col="eid",
+        time_col="ts",
+    )
+    data.add(
+        EntityKind.OBJECT, "order", pd.DataFrame({"oid": ["o1", "o2"]}), id_col="oid"
+    )
+    data.add_relation(
+        RelationKind.E2O,
+        "concerns",
+        pd.DataFrame(
+            {
+                "eid": ["c1", "b1", "b1", "s1", "s2"],
+                "oid": ["o1", "o1", "o2", "o1", "o2"],
+            }
+        ),
+        from_id="eid",
+        to_id="oid",
+        to_type=["order"],
+    )
+    return clean_oced_data(data)
 
 
 def _one_order(events: pd.DataFrame) -> OCEDStore:
@@ -123,12 +150,25 @@ def test_ef_explicit_asserts_the_closure_within_each_trace(tmp_path):
     assert _pairs(onto, "ef_order") == _closure(MATRIX_ORDER_TRACES)
 
 
-def test_ef_asserts_one_self_pair_per_event_and_a_transitivity_axiom(tmp_path):
+def test_ef_asserts_no_pair_and_a_transitivity_axiom(tmp_path):
     onto = emit(_settings([DF, EF]), tmp_path / "many.ofn")
-    events = {event for trace in MATRIX_ORDER_TRACES for event in trace}
 
-    assert _pairs(onto, "ef_order") == {(e, e) for e in events}
+    assert _pairs(onto, "ef_order") == set()
     assert onto.transitive == {"ef_order"}
+
+
+def test_ef_explicit_over_a_shared_event_asserts_each_pair_once(tmp_path):
+    path = tmp_path / "shared.ofn"
+    emit(_settings([DF, EF_EXPLICIT]), path, data=_shared_event_store())
+    lines = [line for line in path.read_text().splitlines() if ":ef_order " in line]
+
+    assert len(lines) == len(set(lines))
+    assert _pairs(read_functional(path), "ef_order") == {
+        ("c1", "b1"),
+        ("c1", "s1"),
+        ("b1", "s1"),
+        ("b1", "s2"),
+    }
 
 
 def test_each_case_concept_orders_its_own_events(tmp_path):
@@ -190,6 +230,25 @@ def test_events_at_one_instant_are_ordered_by_event_id(tmp_path):
     onto = emit(_settings([DF]), tmp_path / "tie.ofn", data=_one_order(events))
 
     assert _pairs(onto, "df_order") == {("a", "b"), ("b", "c")}
+
+
+def test_ef_over_a_shared_event_logs_a_warning(tmp_path, caplog):
+    with caplog.at_level("WARNING"):
+        emit(_settings([DF, EF]), tmp_path / "shared.ofn", data=_shared_event_store())
+
+    assert "1 event(s) are in more than one 'order' trace" in caplog.text
+    assert "ef_order derives eventually-follows across those traces" in caplog.text
+
+
+def test_ef_explicit_over_a_shared_event_logs_nothing(tmp_path, caplog):
+    with caplog.at_level("WARNING"):
+        emit(
+            _settings([DF, EF_EXPLICIT]),
+            tmp_path / "shared.ofn",
+            data=_shared_event_store(),
+        )
+
+    assert "more than one 'order' trace" not in caplog.text
 
 
 def test_an_event_in_no_relation_is_in_no_trace(tiny_store, tmp_path):
@@ -255,7 +314,7 @@ def test_ef_with_implicit_inverses_makes_the_inverse_transitive_too(
 
     assert onto.transitive == {"ef_order", "inv_ef_order"}
     assert "inv_ef_order" in onto.property_parents["inv_df_order"]
-    assert _pairs(onto, "inv_ef_order") == {(e, e) for e in EVENTS}
+    assert _pairs(onto, "inv_ef_order") == set()
 
 
 def test_ef_with_an_inverse_axiom_leaves_the_inverse_to_the_reasoner(
@@ -278,9 +337,9 @@ def test_ef_with_an_inverse_axiom_leaves_the_inverse_to_the_reasoner(
 
 
 def test_ef_explicit_over_max_ef_pairs_is_rejected(tiny_store):
-    config = _settings([EF_EXPLICIT], max_ef_pairs=3)
+    config = _settings([EF_EXPLICIT], max_ef_pairs=2)
 
-    with pytest.raises(ConfigError, match="6 pairs .* over max_ef_pairs=3"):
+    with pytest.raises(ConfigError, match="3 pairs .* over max_ef_pairs=2"):
         OCEDOntoBuilder(DEFAULT_IRI, config.settings).build_ontology(
             tiny_store, config.inputs
         )
@@ -288,6 +347,7 @@ def test_ef_explicit_over_max_ef_pairs_is_rejected(tiny_store):
 
 @pytest.mark.reasoner
 def test_a_reasoner_derives_from_ef_the_pairs_ef_explicit_asserts(tmp_path):
+    """Holds because no event of the matrix store is in two order traces."""
     axiomatic = tmp_path / "axiomatic.ofn"
     explicit = tmp_path / "explicit.ofn"
     emit(CONFIGURATIONS["dl_df_ef"](), axiomatic, STREAMING)

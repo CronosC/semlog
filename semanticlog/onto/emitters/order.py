@@ -112,6 +112,16 @@ class OrderEmitter(Emitter):
         )
 
         events["event_id"] = events.index
+        shared = events.index[events.index.duplicated()].nunique()
+        if shared and self.settings.emits_ef_axiomatic:
+            logger.warning(
+                "%s event(s) are in more than one '%s' trace. ef_%s derives "
+                "eventually-follows across those traces. Use ef_explicit for "
+                "pairs within one trace.",
+                shared,
+                case_concept,
+                case_concept,
+            )
         grouped = events.groupby("case:concept:name")
         events["next_event_id"] = grouped["event_id"].shift(-1)
 
@@ -165,18 +175,15 @@ class OrderEmitter(Emitter):
             self._axiomatize_eventually_follows(df_rel, ef_rel, events)
 
         if self.settings.emits_ef_explicit:
-            self._materialize_eventually_follows(
-                ef_rel, events, skip_self=self.settings.emits_ef_axiomatic
-            )
+            self._materialize_eventually_follows(ef_rel, events)
 
     def _axiomatize_eventually_follows(
         self, df_rel: str, ef_rel: str, events: pd.DataFrame
     ) -> None:
         """Declare eventually-follows transitive with directly-follows below it.
 
-        The reflexive pairs are asserted. OWL 2 DL allows no self-restriction
-        on a transitive property. With implicit inverses and no inverse
-        axiom, the inverse properties get the same two axioms.
+        With implicit inverses and no inverse axiom, the inverse properties
+        get the same two axioms.
         """
         self.sink.add_sub_property(df_rel, ef_rel)
         self.sink.add_transitive(ef_rel)
@@ -186,14 +193,10 @@ class OrderEmitter(Emitter):
             )
             self.sink.add_transitive(self.sink.inverse_name(ef_rel))
 
-        self_pairs = pd.DataFrame({"event_id": events["event_id"].unique()})
-        self_pairs["event_id_self"] = self_pairs["event_id"]
-        self.assert_relations(ef_rel, self_pairs, "event_id", "event_id_self")
-
     def _materialize_eventually_follows(
-        self, ef_rel: str, events: pd.DataFrame, skip_self: bool = False
+        self, ef_rel: str, events: pd.DataFrame
     ) -> None:
-        """Assert every eventually-follows pair, including each event with itself.
+        """Assert every pair of an event and a later event of its trace.
 
         Works in every profile. The number of pairs is quadratic in trace
         length.
@@ -201,26 +204,24 @@ class OrderEmitter(Emitter):
         Args:
             ef_rel: The eventually-follows property of the case concept.
             events: The flat log, with an `event_id` column.
-            skip_self: Leave out the reflexive pairs, when `EF` asserted them.
         """
         groups = list(events.groupby("case:concept:name", sort=False))
-        self._check_ef_budget(ef_rel, groups, skip_self)
+        self._check_ef_budget(ef_rel, groups)
 
         for _, grp in groups:
             ids = grp["event_id"].values
             n = len(ids)
-            if n == 0:
+            if n < 2:
                 continue
-            row_idx, col_idx = np.triu_indices(n, k=1 if skip_self else 0)
+            row_idx, col_idx = np.triu_indices(n, k=1)
             ef_pairs = pd.DataFrame(
                 {"event_id_from": ids[row_idx], "event_id_to": ids[col_idx]}
             )
             self.assert_relations(ef_rel, ef_pairs, "event_id_from", "event_id_to")
 
-    def _check_ef_budget(self, ef_rel: str, groups: list, skip_self: bool) -> None:
+    def _check_ef_budget(self, ef_rel: str, groups: list) -> None:
         """Raise when the pairs across all case concepts exceed `max_ef_pairs`."""
-        offset = -1 if skip_self else 1
-        projected = sum(len(grp) * (len(grp) + offset) // 2 for _, grp in groups)
+        projected = sum(len(grp) * (len(grp) - 1) // 2 for _, grp in groups)
         self._ef_pairs_so_far += projected
         total = self._ef_pairs_so_far
         budget = self.settings.max_ef_pairs

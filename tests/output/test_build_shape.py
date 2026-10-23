@@ -106,7 +106,7 @@ EXPECTED: dict[str, Shape] = {
         object_properties=34,
         data_properties=10,
         individuals=96,
-        axioms=898,
+        axioms=862,
         must_contain=_EF | _TRACE_BOUNDARY | _INVERSES | _EQUAL_BINS | _NUMERIC,
         must_not_contain=_DF_PROPERTIES | _HISTORY | _DECLARE | _NARROW_BINS,
         # EL has no InverseObjectProperties axiom, so the pairs are only asserted.
@@ -117,7 +117,7 @@ EXPECTED: dict[str, Shape] = {
         object_properties=24,
         data_properties=10,
         individuals=101,
-        axioms=589,
+        axioms=571,
         must_contain=_DF | _EF | _DIST_BINS | _HISTORY | _NUMERIC,
         must_not_contain=_INVERSES | _DECLARE | _NARROW_BINS,
         # EF left to a reasoner is a transitivity axiom.
