@@ -11,6 +11,8 @@ from enum import Enum
 
 import pandas as pd
 
+from semanticlog.core.enums import IndividualKind
+
 OCEL_PREFIX = "ocel:"
 
 
@@ -29,6 +31,13 @@ class EntityKind(str, Enum):
     def word(self) -> str:
         """The word for this kind in a message, `activity` or `object type`."""
         return "activity" if self is EntityKind.EVENT else "object type"
+
+    @property
+    def individual(self) -> IndividualKind:
+        """The kind of individual an entity of this kind becomes."""
+        return (
+            IndividualKind.EVENT if self is EntityKind.EVENT else IndividualKind.OBJECT
+        )
 
     @property
     def plural(self) -> str:

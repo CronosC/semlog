@@ -35,6 +35,33 @@ class SinkEntity(str, Enum):
         return cls.DATA_PROPERTY if data_prop else cls.OBJECT_PROPERTY
 
 
+class IndividualKind(str, Enum):
+    """The kind of an individual, which decides the path it is written under.
+
+    Every kind has a path of its own below the log base, so an id or value
+    never shares an IRI with a class, a property or an individual of another
+    kind.
+
+    Attributes:
+        EVENT: An event.
+        OBJECT: An object.
+        VALUE: An attribute value.
+        TIME: A time point.
+        CHANGE: An attribute change record.
+    """
+
+    EVENT = "event"
+    OBJECT = "object"
+    VALUE = "value"
+    TIME = "time"
+    CHANGE = "change"
+
+    @property
+    def path(self) -> str:
+        """The path segment below the log base, ending in `/`."""
+        return f"{self.value}/"
+
+
 class BuildEnum(str, Enum):
     """Base for a setting given as text or as a member.
 

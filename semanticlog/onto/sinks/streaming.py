@@ -16,7 +16,7 @@ from types import TracebackType
 from typing import TextIO
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import OWLProfile, SinkEntity
+from semanticlog.core.enums import IndividualKind, OWLProfile, SinkEntity
 from semanticlog.core.vocabulary import format_number
 from semanticlog.onto.sinks.base import PARTIAL_SUFFIX, AxiomSink
 from semanticlog.onto.sinks.literals import RDFS, XSD, Literal
@@ -70,8 +70,10 @@ class StreamingSink(AxiomSink):
         Functional syntax places ontology annotations inside `Ontology(...)`,
         before the axioms.
         """
+        self._out.write(f"Prefix(:=<{self.iri}>)\n")
+        for kind in IndividualKind:
+            self._out.write(f"Prefix({kind.value}:=<{self.iri}{kind.path}>)\n")
         self._out.write(
-            f"Prefix(:=<{self.iri}>)\n"
             f"Prefix({vocab.TBOX_PREFIX}:=<{vocab.TBOX_IRI}>)\n"
             f"Prefix(owl:=<http://www.w3.org/2002/07/owl#>)\n"
             f"Prefix(rdf:=<http://www.w3.org/1999/02/22-rdf-syntax-ns#>)\n"
@@ -90,14 +92,18 @@ class StreamingSink(AxiomSink):
         self._out.write("\n")
 
     @staticmethod
-    def _ref(name: str) -> str:
-        """Return a name as a prefixed name, under the TBox prefix for a `Term`.
+    def _ref(name: str, kind: IndividualKind | None = None) -> str:
+        """Return a name as a prefixed name.
 
-        Names have matched `vocab.SAFE_LOCAL_NAME`, so nothing is escaped.
+        A `Term` goes under the TBox prefix, an individual under the prefix of
+        its kind, and any other name under the log prefix. Names have matched
+        `vocab.SAFE_LOCAL_NAME`, so nothing is escaped.
         """
         if vocab.is_tbox(name):
             return f"{vocab.TBOX_PREFIX}:{name}"
-        return f":{name}"
+        if kind is None:
+            return f":{name}"
+        return f"{kind.value}:{name}"
 
     def _class_expression(self, disjuncts: list[str]) -> str:
         """Return one class reference, or their union when there are several."""
@@ -178,30 +184,34 @@ class StreamingSink(AxiomSink):
         self._axiom(f"DisjointClasses({' '.join(self._ref(c) for c in classes)})")
 
     def write_class_assertions(
-        self, class_name: str, individuals: Iterable[str]
+        self, class_name: str, individuals: Iterable[str], kind: IndividualKind
     ) -> None:
         ref = self._ref(class_name)
         for individual in individuals:
-            self._axiom(f"ClassAssertion({ref} {self._ref(str(individual))})")
+            self._axiom(f"ClassAssertion({ref} {self._ref(str(individual), kind)})")
 
     def write_object_assertions(
-        self, prop: str, pairs: Iterable[tuple[str, str]]
+        self,
+        prop: str,
+        pairs: Iterable[tuple[str, str]],
+        kinds: tuple[IndividualKind, IndividualKind],
     ) -> None:
         ref = self._ref(prop)
+        subject_kind, target_kind = kinds
         for subject, obj in pairs:
             self._axiom(
-                f"ObjectPropertyAssertion({ref} {self._ref(str(subject))} "
-                f"{self._ref(str(obj))})"
+                f"ObjectPropertyAssertion({ref} {self._ref(str(subject), subject_kind)} "
+                f"{self._ref(str(obj), target_kind)})"
             )
 
     def write_data_assertions(
-        self, prop: str, pairs: Iterable[tuple[str, Literal]]
+        self, prop: str, pairs: Iterable[tuple[str, Literal]], kind: IndividualKind
     ) -> None:
         ref = self._ref(prop)
         for subject, literal in pairs:
             text = f'"{self._escape(literal.text)}"^^xsd:{literal.datatype}'
             self._axiom(
-                f"DataPropertyAssertion({ref} {self._ref(str(subject))} {text})"
+                f"DataPropertyAssertion({ref} {self._ref(str(subject), kind)} {text})"
             )
 
     @staticmethod
@@ -213,12 +223,15 @@ class StreamingSink(AxiomSink):
         return text.replace("\\", "\\\\").replace('"', '\\"')
 
     def write_annotations(
-        self, annotation: str, pairs: Iterable[tuple[str, str]]
+        self,
+        annotation: str,
+        pairs: Iterable[tuple[str, str]],
+        kind: IndividualKind | None = None,
     ) -> None:
         prop = f"rdfs:{annotation}"
         for name, text in pairs:
             self._axiom(
-                f"AnnotationAssertion({prop} {self._ref(name)} "
+                f"AnnotationAssertion({prop} {self._ref(name, kind)} "
                 f'"{self._escape(str(text))}")'
             )
 

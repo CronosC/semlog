@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import OWLProfile
+from semanticlog.core.enums import IndividualKind, OWLProfile
 from semanticlog.core.errors import ConfigError
 from semanticlog.core.vocabulary import (
     DEFAULT_IRI,
@@ -26,6 +26,9 @@ from tests.support import stores
 from tests.support.build import IN_MEMORY, STREAMING, emit
 from tests.support.owlapi import ontology_annotations
 from tests.support.settings import CONFIGURATIONS, NAMES
+
+EVENT = IndividualKind.EVENT
+OBJECT = IndividualKind.OBJECT
 
 OWL_VERSION_INFO = "http://www.w3.org/2002/07/owl#versionInfo"
 
@@ -97,7 +100,7 @@ def test_a_class_with_a_parent_and_two_members_counts_four_axioms(real_sink):
     sink = real_sink()
 
     sink.add_class("order", "Object", source="a test")
-    sink.assert_individuals("order", ["o1", "o2"])
+    sink.assert_individuals("order", ["o1", "o2"], OBJECT)
 
     assert sink.axiom_count == 4
 
@@ -109,8 +112,8 @@ def test_text_with_quotes_backslashes_and_newlines_survives_unchanged(
     sink = real_sink()
     sink.add_class("order", source="a test")
     sink.add_property("has_note", data_prop=True, source="a test")
-    sink.assert_individuals("order", ["o1"])
-    sink.assert_data("has_note", [("o1", text)])
+    sink.assert_individuals("order", ["o1"], OBJECT)
+    sink.assert_data("has_note", [("o1", text)], OBJECT)
     sink.annotate_entity("order", comment=text)
 
     onto = read_back(sink)
@@ -123,8 +126,8 @@ def test_under_el_a_boolean_and_a_date_are_written_as_strings(real_sink, read_ba
     sink = real_sink(OWLProfile.OWL2EL)
     sink.add_class("order", source="a test")
     sink.add_property("has_flag", data_prop=True, source="a test")
-    sink.assert_individuals("order", ["o1", "o2"])
-    sink.assert_data("has_flag", [("o1", True), ("o2", date(2024, 1, 2))])
+    sink.assert_individuals("order", ["o1", "o2"], OBJECT)
+    sink.assert_data("has_flag", [("o1", True), ("o2", date(2024, 1, 2))], OBJECT)
 
     assert read_back(sink).data_values == {
         ("has_flag", "o1", "true", "string"),
@@ -198,8 +201,8 @@ def test_a_repeated_schema_statement_is_written_once(sink):
 
 def test_a_row_level_assertion_is_written_every_time(sink):
     for _ in range(3):
-        sink.assert_relations("df_order", [("e1", "e2")])
-        sink.assert_individuals("place_order", ["e1"])
+        sink.assert_relations("df_order", [("e1", "e2")], (EVENT, EVENT))
+        sink.assert_individuals("place_order", ["e1"], EVENT)
 
     assert len(sink.of_kind("relation")) == 3
     assert len(sink.of_kind("individual")) == 3
@@ -348,7 +351,9 @@ def test_annotating_an_undeclared_entity_is_rejected(sink):
 
 
 def test_a_missing_value_is_not_asserted_as_an_individual(sink):
-    sink.assert_individuals("place_order", ["e1", None, float("nan"), pd.NaT, "e2"])
+    sink.assert_individuals(
+        "place_order", ["e1", None, float("nan"), pd.NaT, "e2"], EVENT
+    )
 
     assert [call[1] for call in sink.of_kind("individual")] == ["e1", "e2"]
 
@@ -358,18 +363,34 @@ def test_a_missing_value_is_not_asserted_as_an_individual(sink):
 # --------------------------------------------------------------------------
 
 
-def test_a_relation_endpoint_named_after_a_declared_class_is_rejected(sink):
+@pytest.mark.parametrize(
+    "kind", list(IndividualKind), ids=[k.value for k in IndividualKind]
+)
+def test_an_individual_is_written_under_its_kind_path(real_sink, read_back, kind):
+    sink = real_sink()
+    sink.add_class("thing", source="a test")
+    sink.assert_individuals("thing", ["x1"], kind)
+
+    onto = read_back(sink)
+
+    assert onto.types["x1"] == {"thing"}
+    if isinstance(sink, StreamingSink):
+        assert f"ClassAssertion(:thing {kind.value}:x1)" in onto.axiom_lines
+
+
+def test_a_class_and_an_event_of_one_name_are_two_entities(real_sink, read_back):
+    sink = real_sink()
     sink.add_class("order", source="an object type")
+    sink.add_class("place_order", source="an activity")
+    sink.assert_individuals("place_order", ["order"], EVENT)
+    sink.assert_relations("concerns", [("order", "order")], (EVENT, OBJECT))
+    sink.annotate_individuals_bulk([("order", "the event")], EVENT)
 
-    with pytest.raises(NameCollisionError, match="both as an individual"):
-        sink.assert_relations("concerns", [("e1", "order")])
+    onto = read_back(sink)
 
-
-def test_a_labeled_individual_is_checked_like_an_asserted_one(sink):
-    sink.add_class("order", source="an object type")
-
-    with pytest.raises(NameCollisionError, match="both as an individual"):
-        sink.annotate_individuals_bulk([("order", "label")])
+    assert "order" in onto.classes
+    assert onto.types["order"] == {"place_order"}
+    assert ("concerns", "order", "order") in onto.relations
 
 
 @pytest.mark.parametrize(

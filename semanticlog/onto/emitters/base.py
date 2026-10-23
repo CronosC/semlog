@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from semanticlog.core.enums import IndividualKind
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters.pairs import clean_pairs, reversed_pairs
@@ -65,6 +66,7 @@ class Emitter:
         df: pd.DataFrame,
         from_key: str,
         to_key: str,
+        kinds: tuple[IndividualKind, IndividualKind],
         inverse_name: str | None = None,
     ) -> None:
         """Assert an object property for every row of a table.
@@ -77,19 +79,25 @@ class Emitter:
             df: Table holding the pairs.
             from_key: Column holding the subject.
             to_key: Column holding the target.
+            kinds: The kind of every subject and the kind of every target.
             inverse_name: Property for the reversed pairs. Defaults to
                 `sink.inverse_name(prop)`.
         """
         if not self.settings.implicit_inverses:
-            self.sink.assert_relations(prop, clean_pairs(df, from_key, to_key))
+            self.sink.assert_relations(prop, clean_pairs(df, from_key, to_key), kinds)
             return
         pairs = list(clean_pairs(df, from_key, to_key))
-        self.sink.assert_relations(prop, pairs)
+        self.sink.assert_relations(prop, pairs, kinds)
         inverse = inverse_name or self.sink.inverse_name(prop)
-        self.sink.assert_relations(inverse, reversed_pairs(pairs))
+        self.sink.assert_relations(inverse, reversed_pairs(pairs), kinds[::-1])
 
     def assert_data(
-        self, prop: str, df: pd.DataFrame, from_key: str, to_key: str
+        self,
+        prop: str,
+        df: pd.DataFrame,
+        from_key: str,
+        to_key: str,
+        kind: IndividualKind,
     ) -> None:
         """Assert a data property for every row of a table.
 
@@ -98,5 +106,6 @@ class Emitter:
             df: Table holding the individuals and their values.
             from_key: Column holding the subject.
             to_key: Column holding the literal value.
+            kind: The kind of every subject.
         """
-        self.sink.assert_data(prop, clean_pairs(df, from_key, to_key))
+        self.sink.assert_data(prop, clean_pairs(df, from_key, to_key), kind)

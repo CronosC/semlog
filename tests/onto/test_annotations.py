@@ -114,7 +114,7 @@ def test_nothing_is_written_without_derive_annotations(writer):
     sink.add_class("place_order", source="a test")
 
     annotations.entity_class("place_order", EntityKind.EVENT)
-    annotations.entity_individuals("place_order", ["e1"])
+    annotations.entity_individuals("place_order", ["e1"], EntityKind.EVENT)
 
     assert sink.of_kind("annotate") == []
 
@@ -138,7 +138,7 @@ def test_an_entity_class_is_labeled_with_the_name_the_log_used(writer):
 def test_an_entity_individual_is_labeled_with_its_type_and_its_original_id(writer):
     annotations, sink = writer(backmap={"place_order": "place order", "e_1": "e 1"})
 
-    annotations.entity_individuals("place_order", ["e_1", None, "e2"])
+    annotations.entity_individuals("place_order", ["e_1", None, "e2"], EntityKind.EVENT)
 
     assert texts(sink) == {
         ("e_1", "label"): "place order (e 1)",

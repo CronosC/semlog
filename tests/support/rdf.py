@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from semanticlog.core.enums import IndividualKind
 from semanticlog.core.vocabulary import TBOX_IRI
 from tests.support.emitted import Emitted, inverse_pair
 
@@ -35,13 +36,14 @@ def read_rdf(path: str | Path, iri: str) -> Emitted:
 
     base = iri if iri.endswith("/") else iri + "/"
     ontology_iri = URIRef(base.removesuffix("/"))
+    namespaces = (TBOX_IRI, *(f"{base}{kind.path}" for kind in IndividualKind), base)
 
     def local(term: object) -> str | None:
-        """Return the local name of a log or TBox term, or None."""
+        """Return the local name of a log, TBox or individual term, or None."""
         if not isinstance(term, URIRef):
             return None
         text = str(term)
-        for namespace in (TBOX_IRI, base):
+        for namespace in namespaces:
             if text.startswith(namespace):
                 return text[len(namespace) :]
         return None

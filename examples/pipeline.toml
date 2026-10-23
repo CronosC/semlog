@@ -10,7 +10,7 @@ order_representations = ["df"]
 # Object type whose instances are the cases. 'semlog inspect' lists them.
 case_concepts = ["order"]
 
-data_representations = ["values"]
+attribute_representations = ["individuals"]
 # axiomatic: declare each inverse property with an InverseObjectProperties axiom.
 inverse_representations = ["axiomatic"]
 # Write rdfs:label and rdfs:comment from the names in the log.

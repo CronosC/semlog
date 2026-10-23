@@ -14,6 +14,7 @@ from types import MappingProxyType
 
 import pandas as pd
 
+from semanticlog.core.enums import IndividualKind
 from semanticlog.core.errors import InputError
 from semanticlog.core.vocabulary import DEFAULT_IRI as _DEFAULT_IRI
 from semanticlog.data.readable import ReadableStore
@@ -64,12 +65,17 @@ class OCEDStore:
         """Look up what a name in the store was called in the source log.
 
         Args:
-            iri_or_local_name: A local name, or a full IRI to strip first.
+            iri_or_local_name: A local name, or a full IRI to strip first. The
+                path of an individual kind below the base is stripped too.
 
         Returns:
             The original name, or None if the name was never changed.
         """
         local_name = iri_or_local_name.removeprefix(base_iri)
+        for kind in IndividualKind:
+            if local_name.startswith(kind.path):
+                local_name = local_name.removeprefix(kind.path)
+                break
         return self._backmap.get(local_name)
 
     @property

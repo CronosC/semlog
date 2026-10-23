@@ -99,26 +99,41 @@ def test_a_change_table_is_keyed_by_the_cleaned_type_and_keeps_its_ocel_column_n
 
 
 def test_a_renamed_id_is_rewritten_in_relations_and_change_rows(make_store):
+    """`a b` cleans to `a_b`, so the id `a_b` moves to `id_a_b`."""
     oced = make_store(
-        objects=pd.DataFrame({"oid": ["order"], "status": ["new"]}),
+        objects=pd.DataFrame({"oid": ["a b", "a_b"], "status": ["new", "new"]}),
         obj_type="order",
         ocel_mode=True,
     )
     oced.add_relation(
         RelationKind.E2O,
         "modifies",
-        pd.DataFrame({"eid": ["e1"], "oid": ["order"]}),
+        pd.DataFrame({"eid": ["e1"], "oid": ["a_b"]}),
         from_id="eid",
         to_id="oid",
         to_type=["order"],
     )
-    oced.add_object_changes("order", _changes("order", "order", status=["shipped"]))
+    oced.add_object_changes("order", _changes("order", "a_b", status=["shipped"]))
 
     cleaned = clean_oced_data(oced)
 
-    assert list(cleaned.ids(EntityKind.OBJECT, "order")) == ["id_order"]
-    assert list(cleaned.get_relation("modifies").data["oid"]) == ["id_order"]
-    assert list(cleaned.get_object_changes("order")["ocel:oid"]) == ["id_order"]
+    assert list(cleaned.ids(EntityKind.OBJECT, "order")) == ["a_b", "id_a_b"]
+    assert list(cleaned.get_relation("modifies").data["oid"]) == ["id_a_b"]
+    assert list(cleaned.get_object_changes("order")["ocel:oid"]) == ["id_a_b"]
+
+
+def test_an_id_equal_to_an_activity_name_is_kept(make_store, events):
+    cleaned = clean_oced_data(make_store(events=events("act", "e2")))
+
+    assert list(cleaned.ids(EntityKind.EVENT, "act")) == ["act", "e2"]
+    assert cleaned.backmap == {}
+
+
+def test_a_value_equal_to_an_object_type_name_is_kept(make_store, events):
+    cleaned = clean_oced_data(make_store(events=events("e1", channel=["obj"])))
+
+    assert list(cleaned.table(EntityKind.EVENT, "act").data["act.channel"]) == ["obj"]
+    assert "act.channel.obj" not in cleaned.backmap
 
 
 def test_a_blank_id_is_rejected_before_cleaning_rewrites_it(make_store):

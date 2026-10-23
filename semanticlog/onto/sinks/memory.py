@@ -50,7 +50,7 @@ from owlapy.owl_ontology import Ontology
 from owlapy.owl_property import OWLDataProperty, OWLObjectProperty
 from owlapy.vocab import OWLFacet
 
-from semanticlog.core.enums import OWLProfile, SinkEntity
+from semanticlog.core.enums import IndividualKind, OWLProfile, SinkEntity
 from semanticlog.onto.sinks.base import PARTIAL_SUFFIX, AxiomSink
 from semanticlog.onto.sinks.literals import DECIMAL, RDFS, XSD, Literal
 
@@ -247,28 +247,33 @@ class InMemorySink(AxiomSink):
             )
         )
 
+    def _individual(self, name: str, kind: IndividualKind) -> OWLNamedIndividual:
+        return OWLNamedIndividual(self.iri_of(name, kind))
+
     def write_class_assertions(
-        self, class_name: str, individuals: Iterable[str]
+        self, class_name: str, individuals: Iterable[str], kind: IndividualKind
     ) -> None:
         owl_class = self._entity(class_name, SinkEntity.CLASS)
-        iri = self.iri
         axioms = [
-            OWLClassAssertionAxiom(OWLNamedIndividual(f"{iri}{individual}"), owl_class)
+            OWLClassAssertionAxiom(self._individual(individual, kind), owl_class)
             for individual in individuals
         ]
         if axioms:
             self._add(axioms)
 
     def write_object_assertions(
-        self, prop: str, pairs: Iterable[tuple[str, str]]
+        self,
+        prop: str,
+        pairs: Iterable[tuple[str, str]],
+        kinds: tuple[IndividualKind, IndividualKind],
     ) -> None:
-        iri = self.iri
         owl_prop = OWLObjectProperty(self.iri_of(prop))
+        subject_kind, target_kind = kinds
         axioms = [
             OWLObjectPropertyAssertionAxiom(
-                OWLNamedIndividual(f"{iri}{s}"),
+                self._individual(s, subject_kind),
                 owl_prop,
-                OWLNamedIndividual(f"{iri}{o}"),
+                self._individual(o, target_kind),
             )
             for s, o in pairs
         ]
@@ -276,18 +281,17 @@ class InMemorySink(AxiomSink):
             self._add(axioms)
 
     def write_data_assertions(
-        self, prop: str, pairs: Iterable[tuple[str, Literal]]
+        self, prop: str, pairs: Iterable[tuple[str, Literal]], kind: IndividualKind
     ) -> None:
         """Assert each literal.
 
         Under EL, a boolean or date arrives as text and owlapy writes it as
         `xsd:string`.
         """
-        iri = self.iri
         owl_prop = OWLDataProperty(self.iri_of(prop))
         axioms = [
             OWLDataPropertyAssertionAxiom(
-                OWLNamedIndividual(f"{iri}{subject}"),
+                self._individual(subject, kind),
                 owl_prop,
                 owl_literal(literal.value),
             )
@@ -297,7 +301,10 @@ class InMemorySink(AxiomSink):
             self._add(axioms)
 
     def write_annotations(
-        self, annotation: str, pairs: Iterable[tuple[str, str]]
+        self,
+        annotation: str,
+        pairs: Iterable[tuple[str, str]],
+        kind: IndividualKind | None = None,
     ) -> None:
         """Annotate entities.
 
@@ -309,7 +316,7 @@ class InMemorySink(AxiomSink):
         pairs = list(pairs)
         axioms = [
             OWLAnnotationAssertionAxiom(
-                IRI.create(self.iri_of(name)),
+                IRI.create(self.iri_of(name, kind)),
                 OWLAnnotation(prop, owl_literal(text)),
             )
             for name, text in pairs

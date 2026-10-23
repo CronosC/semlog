@@ -3,7 +3,8 @@
 `NameLedger` raises on a name declared as two entities. Its `first_*` methods
 return False for a schema statement offered a second time, and the sink then
 skips the write. A TBox `Term` and a log name with the same text are different
-names.
+names. An individual lives under the path of its kind, so it is checked only
+for being a safe local name.
 """
 
 from __future__ import annotations
@@ -54,7 +55,6 @@ class NameLedger:
 
     def __init__(self) -> None:
         self._declared: dict[Key, tuple[SinkEntity, str, str]] = {}
-        self._log_names: set[str] = set()
         self._written_schema: set[tuple[object, ...]] = set()
         self._named_inverses: dict[Key, str] = {
             _key(prop): inverse for prop, inverse in vocab.SCHEMA_NAMED_INVERSES.items()
@@ -89,8 +89,6 @@ class NameLedger:
         previous = self._declared.get(key)
         if previous is None:
             self._declared[key] = (kind, source, name)
-            if not key[0]:
-                self._log_names.add(key[1])
             return
         prev_kind, prev_source, _ = previous
         if prev_kind == kind and prev_source == source:
@@ -116,13 +114,8 @@ class NameLedger:
             )
 
     def accepts_individual(self, name: str) -> bool:
-        """Whether a name is safe and not declared as a class or property.
-
-        `check_individual` gives the error message.
-        """
-        return (
-            bool(vocab.SAFE_LOCAL_NAME.fullmatch(name)) and name not in self._log_names
-        )
+        """Whether a name can be an IRI local name. `check_individual` gives the error."""
+        return bool(vocab.SAFE_LOCAL_NAME.fullmatch(name))
 
     def check_individual(self, name: str, source: str) -> None:
         """Raise if a name cannot be emitted as an individual.
@@ -133,26 +126,14 @@ class NameLedger:
 
         Raises:
             UnsafeLocalNameError: If the name cannot appear in an IRI.
-            NameCollisionError: If the name is declared as a class or a
-                property.
         """
         self.check_name(name, source)
-        declared = self._declared.get((False, str(name)))
-        if declared is None:
-            return
-        kind, declared_by, _ = declared
-        raise NameCollisionError(
-            f"{name!r} is emitted both as an individual and as a {kind.value}:\n"
-            f"  as {kind.value} from {declared_by}\n"
-            f"  as individual from {source}\n\n"
-            "Rename one of them in the input data before building."
-        )
 
     def check_individuals(self, names: Iterable[str], source: str) -> list[str]:
         """Check a batch of individual names and return the ones to emit.
 
         Missing values and duplicates are dropped. Only the first unsafe name
-        and the first collision are reported. Write the returned list.
+        is reported. Write the returned list.
 
         Args:
             names: Candidate individual names.
@@ -163,8 +144,6 @@ class NameLedger:
 
         Raises:
             UnsafeLocalNameError: If a name cannot appear in an IRI.
-            NameCollisionError: If a name is declared as a class or a
-                property.
         """
         series = (
             names
@@ -182,11 +161,6 @@ class NameLedger:
         unsafe = series[~series.str.fullmatch(vocab.SAFE_LOCAL_NAME)]
         if not unsafe.empty:
             self.check_name(unsafe.iloc[0], source)
-
-        if self._log_names:
-            clashing = series[series.isin(self._log_names)]
-            if not clashing.empty:
-                self.check_individual(str(clashing.iloc[0]), source)
         return series.tolist()
 
     def is_declared(self, name: str) -> bool:

@@ -7,6 +7,7 @@ family.
 from __future__ import annotations
 
 from semanticlog.core import vocabulary as vocab
+from semanticlog.core.enums import IndividualKind
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.emitters.base import Emitter
@@ -45,8 +46,10 @@ class RelationEmitter(Emitter):
             if kind is RelationKind.O2O:
                 parent = vocab.OBJECT
                 domain = from_types or [parent]
+                kinds = (IndividualKind.OBJECT, IndividualKind.OBJECT)
             else:
                 parent = vocab.EVENT
+                kinds = (IndividualKind.EVENT, IndividualKind.OBJECT)
                 sources = table.data[table.from_id].dropna().unique()
                 domain = data.types_holding(EntityKind.EVENT, sources) or [parent]
             self.sink.add_property(
@@ -61,4 +64,6 @@ class RelationEmitter(Emitter):
                 source=f"relation {relation!r}",
             )
             self.annotations.relation(relation, from_types, table.to_type)
-            self.assert_relations(relation, table.data, table.from_id, table.to_id)
+            self.assert_relations(
+                relation, table.data, table.from_id, table.to_id, kinds
+            )

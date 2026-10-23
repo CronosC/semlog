@@ -8,7 +8,7 @@ import logging
 import pandas as pd
 import pytest
 
-from semanticlog.core.enums import OCELExtension, OWLProfile
+from semanticlog.core.enums import IndividualKind, OCELExtension, OWLProfile
 from semanticlog.core.summary import counted
 from semanticlog.core.vocabulary import DEFAULT_IRI, TBOX_IRI, UnsafeLocalNameError
 from semanticlog.data.cleaning import clean_oced_data
@@ -222,7 +222,7 @@ def test_the_property_axioms_el_drops_are_reported_once_for_the_build(
 def test_the_declaration_order_check_finds_a_late_declaration(recording_sink):
     sink = recording_sink()
 
-    sink.assert_individuals("some_class", ["late"])
+    sink.assert_individuals("some_class", ["late"], IndividualKind.OBJECT)
     sink.add_class("late", source="a class declared too late")
 
     assert sink.declaration_order_violations() == [("late", "some_class")]

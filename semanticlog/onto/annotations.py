@@ -18,6 +18,7 @@ from typing import Any, Protocol
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
+from semanticlog.core.enums import IndividualKind
 from semanticlog.data.tables import EntityKind
 from semanticlog.onto.settings import OntoBuildSettings
 
@@ -215,8 +216,10 @@ class AnnotationSink(Protocol):
         """Attach a label and a comment to a declared class or property."""
         ...
 
-    def annotate_individuals_bulk(self, pairs: list[tuple[str, str]]) -> None:
-        """Label many individuals at once."""
+    def annotate_individuals_bulk(
+        self, pairs: list[tuple[str, str]], kind: IndividualKind
+    ) -> None:
+        """Label many individuals of one kind at once."""
         ...
 
     def inverse_name(self, prop: str) -> str:
@@ -302,12 +305,15 @@ class AnnotationWriter:
             comment=_fill(entry["inverse_comment"], template, fields),
         )
 
-    def label_series(self, template: str, names: pd.Series, **fields: Any) -> None:
-        """Label many individuals at once, from one template.
+    def label_series(
+        self, template: str, names: pd.Series, kind: IndividualKind, **fields: Any
+    ) -> None:
+        """Label many individuals of one kind at once, from one template.
 
         Args:
             template: Entry to fill. Only its label is used.
             names: Local name of each individual.
+            kind: The kind of the individuals.
             **fields: A string, or a series holding one value per individual.
 
         Raises:
@@ -317,7 +323,7 @@ class AnnotationWriter:
         if not self.enabled:
             return
         labels = _fill_series(_entry(template)["label"], template, fields)
-        self.sink.annotate_individuals_bulk(list(zip(names, labels, strict=True)))
+        self.sink.annotate_individuals_bulk(list(zip(names, labels, strict=True)), kind)
 
     def tbox(self) -> None:
         """Annotate the parts of the TBox this build declared."""
@@ -339,7 +345,9 @@ class AnnotationWriter:
         else:
             self.write("entity.object", name, original=original)
 
-    def entity_individuals(self, entity_type: str, ids: Iterable[Any]) -> None:
+    def entity_individuals(
+        self, entity_type: str, ids: Iterable[Any], kind: EntityKind
+    ) -> None:
         """Label events or objects with their type and their id from the log.
 
         An entity with no id is skipped.
@@ -350,6 +358,7 @@ class AnnotationWriter:
         self.label_series(
             "entity.individual",
             kept,
+            kind.individual,
             type=self.original(entity_type),
             id=kept.map(self.original),
         )
@@ -381,7 +390,9 @@ class AnnotationWriter:
         """Label time individuals with a readable timestamp."""
         if not self.enabled:
             return
-        self.sink.annotate_individuals_bulk(list(zip(ids, labels, strict=True)))
+        self.sink.annotate_individuals_bulk(
+            list(zip(ids, labels, strict=True)), IndividualKind.TIME
+        )
 
     def attribute(
         self, attr: str, prop: str, owners: Mapping[EntityKind, Sequence[str]]
@@ -459,7 +470,8 @@ class AnnotationWriter:
             [
                 (name, self._backmap.get(name, _format_value(value)))
                 for value, name in value_to_name.items()
-            ]
+            ],
+            IndividualKind.VALUE,
         )
 
     def relation(
@@ -517,6 +529,7 @@ class AnnotationWriter:
         self.label_series(
             "change.individual",
             change_ids,
+            IndividualKind.CHANGE,
             attribute=self.original(attr),
             type=self.original(obj_type),
             id=object_ids.astype(str).map(self.original),

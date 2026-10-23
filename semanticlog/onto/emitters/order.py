@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
+from semanticlog.core.enums import IndividualKind
 from semanticlog.core.errors import ConfigError
 from semanticlog.data.cleaning import object_type_renames
 from semanticlog.data.declare import DeclareResult
@@ -28,6 +29,8 @@ from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import AxiomSink
 
 logger = logging.getLogger(__name__)
+
+_EVENT_PAIR = (IndividualKind.EVENT, IndividualKind.EVENT)
 
 
 class OrderEmitter(Emitter):
@@ -136,8 +139,8 @@ class OrderEmitter(Emitter):
         self.sink.add_class(start_cls, vocab.EVENT, source=case_source)
         self.sink.add_class(end_cls, vocab.EVENT, source=case_source)
         self.annotations.trace_boundary_classes(case_concept, start_cls, end_cls)
-        self.sink.assert_individuals(start_cls, start_ids)
-        self.sink.assert_individuals(end_cls, end_ids)
+        self.sink.assert_individuals(start_cls, start_ids, IndividualKind.EVENT)
+        self.sink.assert_individuals(end_cls, end_ids, IndividualKind.EVENT)
 
         df_rel = vocab.df_property(case_concept)
         if include_df:
@@ -154,7 +157,9 @@ class OrderEmitter(Emitter):
                 source=case_source,
             )
             self.annotations.df_property(case_concept, df_rel)
-            self.assert_relations(df_rel, df_pairs, "event_id", "next_event_id")
+            self.assert_relations(
+                df_rel, df_pairs, "event_id", "next_event_id", _EVENT_PAIR
+            )
 
         if not include_ef:
             return
@@ -217,7 +222,9 @@ class OrderEmitter(Emitter):
             ef_pairs = pd.DataFrame(
                 {"event_id_from": ids[row_idx], "event_id_to": ids[col_idx]}
             )
-            self.assert_relations(ef_rel, ef_pairs, "event_id_from", "event_id_to")
+            self.assert_relations(
+                ef_rel, ef_pairs, "event_id_from", "event_id_to", _EVENT_PAIR
+            )
 
     def _check_ef_budget(self, ef_rel: str, groups: list) -> None:
         """Raise when the pairs across all case concepts exceed `max_ef_pairs`."""
@@ -281,7 +288,9 @@ class OrderEmitter(Emitter):
         )
 
         for constraint in constraints:
-            self.sink.assert_individuals(constraint, declare.members(constraint))
+            self.sink.assert_individuals(
+                constraint, declare.members(constraint), IndividualKind.OBJECT
+            )
 
 
 def _case_concept_types(

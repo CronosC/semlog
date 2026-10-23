@@ -11,6 +11,7 @@ from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import (
     AttributeRepresentation,
     EventOrderRepresentation,
+    IndividualKind,
     InverseRepresentation,
     OCELExtension,
     OWLProfile,
@@ -82,6 +83,34 @@ def test_the_matrix_builds_every_value_of_every_setting():
         "ocel_extensions": {*OCELExtension, None},
         "derive_annotations": {True, False},
     }
+
+
+_KIND_PREFIXES = tuple(f"{kind.value}:" for kind in IndividualKind)
+_ASSERTIONS = ("ClassAssertion(", "ObjectPropertyAssertion(", "DataPropertyAssertion(")
+
+
+def _individual_tokens(line: str) -> list[str]:
+    """Return the individual references of one assertion line, before any literal."""
+    found = []
+    for token in line.rstrip(")").split(" ")[1:]:
+        if token.startswith('"'):
+            break
+        found.append(token)
+    return found
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_every_individual_iri_holds_its_kind_path(built, name):
+    onto = built(name)
+    individuals = [
+        token
+        for line in onto.axiom_lines
+        if line.startswith(_ASSERTIONS)
+        for token in _individual_tokens(line)
+    ]
+
+    assert individuals, name
+    assert [t for t in individuals if not t.startswith(_KIND_PREFIXES)] == []
 
 
 def _violations(onto) -> list[str]:

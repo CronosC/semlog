@@ -9,6 +9,7 @@ from __future__ import annotations
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
+from semanticlog.core.enums import IndividualKind
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind
 from semanticlog.onto.annotations import timestamp_labels
@@ -38,11 +39,13 @@ class TimeEmitter(Emitter):
         if fresh.empty:
             return
         written.update(fresh["time_str"])
-        self.sink.assert_individuals(vocab.TIME, fresh["time_str"])
+        self.sink.assert_individuals(vocab.TIME, fresh["time_str"], IndividualKind.TIME)
         self.annotations.time_individuals(
             fresh["time_str"], timestamp_labels(fresh["time"])
         )
-        self.assert_data(vocab.TIMESTAMP, fresh, "time_str", "time")
+        self.assert_data(
+            vocab.TIMESTAMP, fresh, "time_str", "time", IndividualKind.TIME
+        )
 
     def emit(self, data: ReadableStore) -> None:
         """Emit the timestamp of every event and link each event to it."""
@@ -60,5 +63,6 @@ class TimeEmitter(Emitter):
                 df_time,
                 "event",
                 "time_str",
+                (IndividualKind.EVENT, IndividualKind.TIME),
                 inverse_name=vocab.OBSERVES,
             )

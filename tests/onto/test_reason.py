@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from semanticlog.core.enums import OWLProfile
+from semanticlog.core.enums import IndividualKind, OWLProfile
 from semanticlog.core.errors import ConfigError, InputError
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.onto.reason import REASONER_BACKENDS, Reasoner
@@ -26,8 +26,10 @@ def _small_ontology(path: Path) -> None:
     sink.add_class("Human")
     sink.add_class("Man", ["Human"])
     sink.add_property("knows", domain_class=["Human"], range_class="Human")
-    sink.assert_individuals("Man", ["a", "b"])
-    sink.assert_relations("knows", [("a", "b")])
+    sink.assert_individuals("Man", ["a", "b"], IndividualKind.OBJECT)
+    sink.assert_relations(
+        "knows", [("a", "b")], (IndividualKind.OBJECT, IndividualKind.OBJECT)
+    )
     sink.save(str(path))
 
 

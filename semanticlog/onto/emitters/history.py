@@ -14,6 +14,7 @@ import logging
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
+from semanticlog.core.enums import IndividualKind
 from semanticlog.data.readable import ReadableStore
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.emitted import EmittedIndividuals
@@ -96,7 +97,9 @@ class HistoryEmitter(Emitter):
         tmp["attr_change_id"] = vocab.attribute_change_ids(
             tmp["ocel:oid"], attr_name, tmp["ts_str"]
         )
-        self.sink.assert_individuals(attr_change_cls, tmp["attr_change_id"])
+        self.sink.assert_individuals(
+            attr_change_cls, tmp["attr_change_id"], IndividualKind.CHANGE
+        )
         self.annotations.attribute_change_individuals(
             tmp["attr_change_id"],
             attr_name,
@@ -105,16 +108,27 @@ class HistoryEmitter(Emitter):
             tmp["ocel:timestamp"],
         )
         self.assert_relations(
-            vocab.HAS_ATTRIBUTE_CHANGE, tmp, "ocel:oid", "attr_change_id"
+            vocab.HAS_ATTRIBUTE_CHANGE,
+            tmp,
+            "ocel:oid",
+            "attr_change_id",
+            (IndividualKind.OBJECT, IndividualKind.CHANGE),
         )
         self.attributes.emit_column_values(
             tmp[["attr_change_id", attr_name]],
             "attr_change_id",
             attr_name,
             change_prop,
+            IndividualKind.CHANGE,
         )
         self.times.emit_individuals(tmp["ts_str"], tmp["ocel:timestamp"])
-        self.assert_relations(vocab.CHANGED_AT, tmp, "attr_change_id", "ts_str")
+        self.assert_relations(
+            vocab.CHANGED_AT,
+            tmp,
+            "attr_change_id",
+            "ts_str",
+            (IndividualKind.CHANGE, IndividualKind.TIME),
+        )
 
     def _emit_schema(self, attr_name: str) -> tuple[str, str]:
         """Declare the change class of one attribute and what its records carry.

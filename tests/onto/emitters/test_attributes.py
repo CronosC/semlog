@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import AttributeRepresentation, OWLProfile
+from semanticlog.core.enums import AttributeRepresentation, IndividualKind, OWLProfile
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.binning import Binning
 from semanticlog.data.cleaning import clean_oced_data
@@ -190,7 +190,7 @@ def test_a_value_outside_every_bin_is_emitted_without_a_bin(recording_sink, capl
 
     with caplog.at_level(logging.WARNING):
         _price_emitter(sink, settings, LOW_HIGH).emit_columns(
-            rows, "oid", vocab.OBJECT_ATTRIBUTE
+            rows, "oid", vocab.OBJECT_ATTRIBUTE, IndividualKind.OBJECT
         )
 
     binned = {name for _, name, cls in sink.of_kind("individual") if "_bin_" in cls}
@@ -214,6 +214,7 @@ def test_a_column_too_narrow_to_bin_is_emitted_unbinned_and_reported_once(
                 pd.DataFrame({"oid": [oid], "price": [4.0]}),
                 "oid",
                 vocab.OBJECT_ATTRIBUTE,
+                IndividualKind.OBJECT,
             )
 
     warnings = [r for r in caplog.records if "too few distinct values" in r.message]
@@ -227,7 +228,7 @@ def test_a_number_under_individuals_always_carries_its_literal(recording_sink):
     rows = pd.DataFrame({"oid": ["o1", "o2", "o3"], "price": [1.0, 7.0, 99.0]})
 
     _price_emitter(sink, settings, LOW_HIGH).emit_columns(
-        rows, "oid", vocab.OBJECT_ATTRIBUTE
+        rows, "oid", vocab.OBJECT_ATTRIBUTE, IndividualKind.OBJECT
     )
 
     assert _literal_subjects(sink) == {"price.1", "price.7", "price.99"}
@@ -411,8 +412,8 @@ def test_a_reasoner_places_an_unasserted_value_in_its_bin(tmp_path):
         data=_order_store(price=TWELVE_PRICES),
     )
     extra = (
-        "ClassAssertion(:order.price :probe)\n"
-        'DataPropertyAssertion(:has_value_order.price :probe "9.5"^^xsd:decimal)\n'
+        "ClassAssertion(:order.price value:probe)\n"
+        'DataPropertyAssertion(:has_value_order.price value:probe "9.5"^^xsd:decimal)\n'
     )
     text = path.read_text(encoding="utf-8").rstrip()
     path.write_text(f"{text[:-1]}{extra})\n", encoding="utf-8")

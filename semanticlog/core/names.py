@@ -1,8 +1,8 @@
-"""The registry of local names a build emits.
+"""The registry of the schema names a build emits.
 
-Classes, properties and individuals share one namespace. `NameRegistry`
-records the owner of each name and returns a free name to an owner whose name
-is taken. Claiming a name also claims every name the build derives from it.
+Classes and properties share one namespace. `NameRegistry` records the owner
+of each name and returns a free name to an owner whose name is taken. Claiming
+a name also claims every name the build derives from it.
 """
 
 from __future__ import annotations
@@ -32,8 +32,7 @@ def candidates(name: str, prefix: str) -> Iterator[str]:
 class NameRegistry:
     """The owner of each schema name a build will emit.
 
-    Individuals are not registered. A pass over ids or values compares them
-    against `names` in bulk.
+    Individuals are not registered. Each kind has a path of its own.
 
     Args:
         reserved: Names no claimant may take.

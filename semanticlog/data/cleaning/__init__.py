@@ -13,12 +13,9 @@ from collections.abc import Collection
 import pandas as pd
 
 from semanticlog.core.checks import raise_reports
+from semanticlog.core.errors import InputError
 from semanticlog.core.summary import report_by_kind
 from semanticlog.data.cleaning.allocate import allocate_schema_names
-from semanticlog.data.cleaning.individuals import (
-    resolve_individual_names,
-    verify_unique_names,
-)
 from semanticlog.data.cleaning.merged import resolve_merged_names
 from semanticlog.data.cleaning.names import (
     clean_dataframe,
@@ -28,7 +25,7 @@ from semanticlog.data.cleaning.names import (
 )
 from semanticlog.data.cleaning.qualify import qualified_attribute, qualify_attributes
 from semanticlog.data.cleaning.renames import WORDS, RenameKind, RenameLog
-from semanticlog.data.cleaning.rewrite import entity_ids, text_values
+from semanticlog.data.cleaning.rewrite import attribute_names, entity_ids, text_values
 from semanticlog.data.integrity import check_missing_ids
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.readable import ReadableStore
@@ -75,8 +72,8 @@ def clean_oced_data(
 
     Raises:
         InputError: If an event or object has no id, if two pairs of type and
-            attribute give one name, or if two names are the same after every
-            rename has run.
+            attribute give one name, or if two schema names are the same after
+            every rename has run.
     """
     logger.info("Cleaning data")
     raise_reports([check_missing_ids(data)])
@@ -113,7 +110,10 @@ def fix_duplicate_names(
     log: RenameLog | None = None,
     bin_labels: Collection[str] = (),
 ) -> OCEDStore:
-    """Give every name in a clean store one owner, and rename the rest.
+    """Give every schema name in a clean store one owner, and rename the rest.
+
+    Ids and values are not touched. Each kind of individual has a path of its
+    own in the ontology, so they collide with nothing but each other.
 
     Args:
         data: Store to fix, modified in place. Its names must be safe.
@@ -123,15 +123,44 @@ def fix_duplicate_names(
 
     Returns:
         The same store.
-
-    Raises:
-        InputError: If a value that has to move is not text, or if names are
-            shared after the last round of renames.
     """
     log = log if log is not None else RenameLog()
-    registry = allocate_schema_names(data, log, bin_labels)
-    resolve_individual_names(data, log, registry)
+    allocate_schema_names(data, log, bin_labels)
     return data
+
+
+def verify_unique_names(data: OCEDStore) -> None:
+    """Raise if two schema names in the store are the same after every rename has run.
+
+    Raises:
+        InputError: Listing every name claimed more than once.
+    """
+    claims: dict[str, list[str]] = {}
+
+    def claim(name: str, description: str) -> None:
+        claims.setdefault(name, []).append(description)
+
+    for activity in data.types(EntityKind.EVENT):
+        claim(activity, f"activity {activity!r}")
+    for obj_type in data.types(EntityKind.OBJECT):
+        claim(obj_type, f"object type {obj_type!r}")
+    for attribute in sorted(attribute_names(data)):
+        claim(attribute, f"attribute {attribute!r}")
+    for relation in data.get_relation_types():
+        claim(relation, f"relation {relation!r}")
+
+    errors = [
+        f"  {name!r} is claimed {len(owners)} times: {', '.join(sorted(owners))}"
+        for name, owners in claims.items()
+        if len(owners) > 1
+    ]
+    if not errors:
+        return
+    raise InputError(
+        "These names are claimed more than once:\n"
+        + "\n".join(errors)
+        + "\n\nRename the duplicate in the input data."
+    )
 
 
 def _record_id_renames(data: OCEDStore, log: RenameLog) -> None:

@@ -15,9 +15,9 @@ _NOT_AN_AXIOM = ("Prefix(", "Ontology(", "Annotation(", ")")
 # characters OWL functional syntax reserves.
 _REF = r"(?:[^\s()\\]|\\.)+"
 
-# A name is written under the log prefix `:` or the TBox prefix `oced:`. Both
-# are read as their local name.
-_P = r"(?:oced)?:"
+# A name is written under the log prefix `:`, the TBox prefix `oced:` or the
+# prefix of an individual kind. All are read as their local name.
+_P = r"(?:oced|event|object|value|time|change)?:"
 
 _DECLARATION = re.compile(rf"^Declaration\((\w+)\({_P}({_REF})\)\)$")
 _CLASS_ASSERTION = re.compile(rf"^ClassAssertion\({_P}({_REF}) {_P}({_REF})\)$")

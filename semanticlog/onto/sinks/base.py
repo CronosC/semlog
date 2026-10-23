@@ -14,7 +14,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import OWLProfile, SinkEntity
+from semanticlog.core.enums import IndividualKind, OWLProfile, SinkEntity
 from semanticlog.core.errors import ConfigError
 from semanticlog.onto.sinks.ledger import NameLedger
 from semanticlog.onto.sinks.literals import OWL_DATATYPES, Literal, resolve_literal
@@ -36,8 +36,8 @@ class AxiomSink(ABC):
     IRI, or that is used for two different entities, raises with a message
     naming both sources.
 
-    A TBox `Term` is written under `TBOX_IRI`, every other name under the log
-    base.
+    A TBox `Term` is written under `TBOX_IRI`, a class or property under the
+    log base, and an individual under the path of its kind below the log base.
 
     Args:
         iri: Log base IRI. A trailing `/` is added when missing.
@@ -80,9 +80,18 @@ class AxiomSink(ABC):
         """IRI of the ontology: the log base without its trailing `/`."""
         return self.iri.removesuffix("/")
 
-    def iri_of(self, name: str) -> str:
-        """Return the full IRI of a name, under the TBox or the log base."""
-        return f"{vocab.TBOX_IRI if vocab.is_tbox(name) else self.iri}{name}"
+    def iri_of(self, name: str, kind: IndividualKind | None = None) -> str:
+        """Return the full IRI of a name.
+
+        Args:
+            name: A `Term`, a class or property name, or an individual name.
+            kind: The kind of an individual, which places it under its path.
+        """
+        if vocab.is_tbox(name):
+            return f"{vocab.TBOX_IRI}{name}"
+        if kind is None:
+            return f"{self.iri}{name}"
+        return f"{self.iri}{kind.path}{name}"
 
     def _declare_name(self, name: str, kind: SinkEntity, source: str) -> None:
         self._names.declare(name, kind, source)
@@ -196,31 +205,45 @@ class AxiomSink(ABC):
 
     @abstractmethod
     def write_class_assertions(
-        self, class_name: str, individuals: Iterable[str]
+        self, class_name: str, individuals: Iterable[str], kind: IndividualKind
     ) -> None:
-        """Assert that each individual is a member of the class."""
+        """Assert that each individual of one kind is a member of the class."""
 
     @abstractmethod
     def write_object_assertions(
-        self, prop: str, pairs: Iterable[tuple[str, str]]
+        self,
+        prop: str,
+        pairs: Iterable[tuple[str, str]],
+        kinds: tuple[IndividualKind, IndividualKind],
     ) -> None:
-        """Assert the property between each pair of individuals."""
+        """Assert the property between each pair of individuals.
+
+        Args:
+            prop: The property.
+            pairs: Subject and target of each assertion.
+            kinds: The kind of every subject and the kind of every target.
+        """
 
     @abstractmethod
     def write_data_assertions(
-        self, prop: str, pairs: Iterable[tuple[str, Literal]]
+        self, prop: str, pairs: Iterable[tuple[str, Literal]], kind: IndividualKind
     ) -> None:
-        """Assert the property between each individual and its resolved literal."""
+        """Assert the property between each individual of one kind and its literal."""
 
     @abstractmethod
     def write_annotations(
-        self, annotation: str, pairs: Iterable[tuple[str, str]]
+        self,
+        annotation: str,
+        pairs: Iterable[tuple[str, str]],
+        kind: IndividualKind | None = None,
     ) -> None:
         """Annotate entities.
 
         Args:
             annotation: Either `label` or `comment`.
             pairs: Entity name and the text to attach to it.
+            kind: The kind of the individuals annotated, or None for classes
+                and properties.
         """
 
     @abstractmethod
@@ -622,22 +645,28 @@ class AxiomSink(ABC):
         if self._names.first_disjoint(distinct):
             self.write_disjoint_classes(distinct)
 
-    def assert_individuals(self, class_name: str, individuals: Iterable[Any]) -> None:
-        """Assert that each individual belongs to a class.
+    def assert_individuals(
+        self, class_name: str, individuals: Iterable[Any], kind: IndividualKind
+    ) -> None:
+        """Assert that each individual of one kind belongs to a class.
 
         Duplicates and missing values are dropped.
 
         Raises:
             UnsafeLocalNameError: If a name cannot appear in an IRI.
-            NameCollisionError: If a name is declared as a class or property.
         """
         names = self._names.check_individuals(
             individuals, f"an individual of class {class_name!r}"
         )
         if names:
-            self.write_class_assertions(class_name, names)
+            self.write_class_assertions(class_name, names, kind)
 
-    def assert_relations(self, prop: str, pairs: Iterable[tuple[Any, Any]]) -> None:
+    def assert_relations(
+        self,
+        prop: str,
+        pairs: Iterable[tuple[Any, Any]],
+        kinds: tuple[IndividualKind, IndividualKind],
+    ) -> None:
         """Assert an object property between each pair of individuals.
 
         Every name of every pair is checked.
@@ -645,29 +674,30 @@ class AxiomSink(ABC):
         Args:
             prop: Property to assert.
             pairs: Subject and target of each assertion.
+            kinds: The kind of every subject and the kind of every target.
 
         Raises:
             UnsafeLocalNameError: If a name cannot appear in an IRI.
-            NameCollisionError: If a name is declared as a class or property.
         """
-        self.write_object_assertions(prop, self._checked_pairs(prop, pairs))
+        self.write_object_assertions(prop, self._checked_pairs(prop, pairs), kinds)
 
-    def assert_data(self, prop: str, pairs: Iterable[tuple[Any, Any]]) -> None:
-        """Assert a data property between each individual and its value.
+    def assert_data(
+        self, prop: str, pairs: Iterable[tuple[Any, Any]], kind: IndividualKind
+    ) -> None:
+        """Assert a data property between each individual of one kind and its value.
 
         A pair whose value is missing is dropped.
 
         Args:
             prop: Property to assert.
             pairs: Subject and literal value of each assertion.
+            kind: The kind of every subject.
 
         Raises:
             InputError: If a value is infinite.
             UnsafeLocalNameError: If a subject cannot appear in an IRI.
-            NameCollisionError: If a subject is declared as a class or
-                property.
         """
-        self.write_data_assertions(prop, self._checked_subjects(prop, pairs))
+        self.write_data_assertions(prop, self._checked_subjects(prop, pairs), kind)
 
     def _checked_pairs(
         self, prop: str, pairs: Iterable[tuple[Any, Any]]
@@ -720,21 +750,22 @@ class AxiomSink(ABC):
         if comment and self._names.first_annotation("comment", iri_fragment, comment):
             self.write_annotations("comment", [(iri_fragment, comment)])
 
-    def annotate_individuals_bulk(self, pairs: list[tuple[str, str]]) -> None:
-        """Label many individuals at once.
+    def annotate_individuals_bulk(
+        self, pairs: list[tuple[str, str]], kind: IndividualKind
+    ) -> None:
+        """Label many individuals of one kind at once.
 
         Each name is checked as an individual name.
 
         Raises:
             UnsafeLocalNameError: If a name cannot appear in an IRI.
-            NameCollisionError: If a name is declared as a class or property.
         """
         accepts = self._names.accepts_individual
         for name, _ in pairs:
             if not accepts(name):
                 self._names.check_individual(name, "a labeled individual")
         if pairs:
-            self.write_annotations("label", pairs)
+            self.write_annotations("label", pairs, kind)
 
     def inverse_name(self, prop: str) -> str:
         """Return the inverse name of a property, from the vocabulary or from this build."""

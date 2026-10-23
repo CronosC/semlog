@@ -53,12 +53,13 @@ class EntityEmitter(Emitter):
             self.annotations.entity_class(view.name, kind)
         for view in views:
             ids = view.frame[view.id_column]
-            self.sink.assert_individuals(view.name, ids)
-            self.annotations.entity_individuals(view.name, ids)
+            self.sink.assert_individuals(view.name, ids, kind.individual)
+            self.annotations.entity_individuals(view.name, ids, kind)
             self.attributes.emit_columns(
                 view.frame.drop(columns=view.structural),
                 str(view.id_column),
                 attribute_parent,
+                kind.individual,
             )
 
     def emit_attribute_disjointness(self) -> None:

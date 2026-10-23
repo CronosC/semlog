@@ -7,6 +7,7 @@ import time
 
 import pandas as pd
 
+from semanticlog.core.enums import IndividualKind
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.onto.emitters.pairs import clean_pairs
 from semanticlog.onto.settings import OntoBuildSettings
@@ -25,7 +26,7 @@ def individuals(n: int = DEFAULT_INDIVIDUALS) -> None:
     sink.add_class("Thing", source="benchmark")
 
     start = time.perf_counter()
-    sink.assert_individuals("Thing", [f"i{k}" for k in range(n)])
+    sink.assert_individuals("Thing", [f"i{k}" for k in range(n)], IndividualKind.OBJECT)
     elapsed = time.perf_counter() - start
 
     count = sum(1 for _ in sink.onto.individuals_in_signature())
@@ -36,13 +37,19 @@ def relations(n: int = DEFAULT_RELATIONS) -> None:
     sink = _sink()
     sink.add_class("Thing", source="benchmark")
     sink.add_property("rel", "Thing", "Thing", source="benchmark")
-    sink.assert_individuals("Thing", [f"i{k}" for k in range(n + 1)])
+    sink.assert_individuals(
+        "Thing", [f"i{k}" for k in range(n + 1)], IndividualKind.OBJECT
+    )
     pairs = pd.DataFrame(
         {"a": [f"i{k}" for k in range(n)], "b": [f"i{k + 1}" for k in range(n)]}
     )
 
     start = time.perf_counter()
-    sink.assert_relations("rel", clean_pairs(pairs, "a", "b"))
+    sink.assert_relations(
+        "rel",
+        clean_pairs(pairs, "a", "b"),
+        (IndividualKind.OBJECT, IndividualKind.OBJECT),
+    )
     elapsed = time.perf_counter() - start
 
     print(f"assert_relations:   {n:,} in {elapsed:.2f}s")

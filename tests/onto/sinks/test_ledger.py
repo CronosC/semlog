@@ -66,14 +66,11 @@ def test_a_name_declared_again_as_another_entity_names_both_sources(
     assert f"as {kind.value} from {source}" in str(e.value)
 
 
-def test_an_individual_named_after_a_declared_class_is_rejected(ledger):
+def test_an_individual_named_like_a_class_is_accepted(ledger):
     ledger.declare("order", CLASS, "an object type")
 
-    with pytest.raises(NameCollisionError, match="both as an individual") as e:
-        ledger.check_individuals(["o1", "order"], "an individual of class 'order'")
-
-    assert "as class from an object type" in str(e.value)
-    assert "as individual from an individual of class 'order'" in str(e.value)
+    assert ledger.check_individuals(["o1", "order"], "a test") == ["o1", "order"]
+    assert ledger.accepts_individual("order") is True
 
 
 def test_an_unsafe_individual_name_is_rejected(ledger):

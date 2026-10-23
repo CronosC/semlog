@@ -137,7 +137,7 @@ def test_an_event_observed_at_two_times_is_inconsistent(tiny_store, tmp_path):
     times = {s: o for p, s, o in onto.relations if p == "observed_at"}
 
     text = path.read_text(encoding="utf-8").rstrip()
-    extra = f"ObjectPropertyAssertion(oced:observed_at :e1 :{times['e2']})"
+    extra = f"ObjectPropertyAssertion(oced:observed_at event:e1 time:{times['e2']})"
     path.write_text(f"{text[:-1]}{extra}\n)\n", encoding="utf-8")
 
     assert Reasoner(str(path)).check() is False

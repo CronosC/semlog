@@ -203,6 +203,14 @@ def test_an_iri_under_the_base_maps_back_to_its_source_name():
     assert store.get_original("o_2") is None
 
 
+def test_get_original_strips_a_kind_path():
+    store = OCEDStore()
+    store.backmap = {"o__1": "o #1"}
+
+    assert store.get_original(f"{DEFAULT_IRI}object/o__1") == "o #1"
+    assert store.get_original("object/o__1") == "o #1"
+
+
 # --------------------------------------------------------------------------
 # Renaming
 # --------------------------------------------------------------------------

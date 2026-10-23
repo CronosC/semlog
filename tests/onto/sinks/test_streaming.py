@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from semanticlog.core.enums import OWLProfile
+from semanticlog.core.enums import IndividualKind, OWLProfile
 from semanticlog.core.vocabulary import DEFAULT_IRI, EVENT, TBOX_IRI
 from semanticlog.onto.sinks import StreamingSink
 
@@ -28,6 +28,14 @@ def test_a_schema_name_is_written_under_the_tbox_prefix(streaming, path):
     assert f"Prefix(oced:=<{TBOX_IRI}>)" in text
     assert "Declaration(Class(oced:Event))" in text
     assert "SubClassOf(:order oced:Event)" in text
+
+
+def test_the_header_declares_one_prefix_per_kind(streaming, path):
+    streaming.close()
+
+    text = path.read_text(encoding="utf-8")
+    for kind in IndividualKind:
+        assert f"Prefix({kind.value}:=<{DEFAULT_IRI}{kind.value}/>)" in text
 
 
 def test_the_file_appears_only_once_the_ontology_is_complete(streaming, path):

@@ -20,7 +20,7 @@ from collections.abc import Mapping
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import AttributeRepresentation, OWLProfile
+from semanticlog.core.enums import AttributeRepresentation, IndividualKind, OWLProfile
 from semanticlog.data.binning import Binning, fit_dist_bins, fit_equal_bins
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind
@@ -323,6 +323,7 @@ class AttributeEmitter(Emitter):
         df: pd.DataFrame,
         key_col: str,
         attribute_parent: str,
+        owner: IndividualKind,
     ) -> None:
         """Emit every attribute column of one table.
 
@@ -333,6 +334,7 @@ class AttributeEmitter(Emitter):
             key_col: Column holding the entity id.
             attribute_parent: Class the attribute classes go below, either the
                 event or the object attribute class.
+            owner: The kind of individual the entities are.
         """
         for attr in (c for c in df.columns if c != key_col):
             mask = df[attr].notna()
@@ -340,10 +342,15 @@ class AttributeEmitter(Emitter):
                 continue
             df_attr = df.loc[mask, [key_col, attr]]
             prop = self.declare_attribute(attr, attribute_parent)
-            self.emit_column_values(df_attr, key_col, attr, prop)
+            self.emit_column_values(df_attr, key_col, attr, prop, owner)
 
     def emit_column_values(
-        self, df_attr: pd.DataFrame, key_col: str, attr: str, prop: str
+        self,
+        df_attr: pd.DataFrame,
+        key_col: str,
+        attr: str,
+        prop: str,
+        owner: IndividualKind,
     ) -> None:
         """Emit one attribute column, and the bins of a numeric one.
 
@@ -355,12 +362,20 @@ class AttributeEmitter(Emitter):
             attr: Attribute the values belong to.
             prop: Property linking an owner to a value individual, used under
                 `individuals`.
+            owner: The kind of individual the owners are.
         """
-        self.emit_values(df_attr, key_col, attr, prop)
+        self.emit_values(df_attr, key_col, attr, prop, owner)
         if is_number_column(df_attr[attr]):
             self._emit_bins(df_attr, attr)
 
-    def emit_values(self, df: pd.DataFrame, key_col: str, attr: str, prop: str) -> None:
+    def emit_values(
+        self,
+        df: pd.DataFrame,
+        key_col: str,
+        attr: str,
+        prop: str,
+        owner: IndividualKind,
+    ) -> None:
         """Emit the values of one column as the attribute representations say.
 
         Under `individuals`, each fresh value becomes an individual carrying
@@ -372,14 +387,20 @@ class AttributeEmitter(Emitter):
             key_col: Column holding the owner id.
             attr: Attribute the values belong to.
             prop: Property linking an owner to a value individual.
+            owner: The kind of individual the owners are.
         """
         if self.settings.emits_value_individuals:
-            self._emit_individuals(df, key_col, attr, prop)
+            self._emit_individuals(df, key_col, attr, prop, owner)
         if self.settings.emits_entity_literals:
-            self.assert_data(vocab.value_property(attr), df, key_col, attr)
+            self.assert_data(vocab.value_property(attr), df, key_col, attr, owner)
 
     def _emit_individuals(
-        self, df: pd.DataFrame, key_col: str, attr: str, prop: str
+        self,
+        df: pd.DataFrame,
+        key_col: str,
+        attr: str,
+        prop: str,
+        owner: IndividualKind,
     ) -> None:
         """Emit the value individuals of one column and link them to their owners.
 
@@ -398,18 +419,22 @@ class AttributeEmitter(Emitter):
         fresh_names = set(fresh)
         seen.update(fresh)
 
-        self.sink.assert_individuals(attr, fresh)
+        self.sink.assert_individuals(attr, fresh, IndividualKind.VALUE)
 
         if self.annotations.enabled:
             self.annotations.attribute_values(
                 {value: name for value, name in mapping.items() if name in fresh_names}
             )
 
-        self.assert_relations(prop, tmp, key_col, "attr_ind")
+        self.assert_relations(
+            prop, tmp, key_col, "attr_ind", (owner, IndividualKind.VALUE)
+        )
 
         if fresh_names:
             rows = tmp[tmp["attr_ind"].isin(fresh_names)].drop_duplicates("attr_ind")
-            self.assert_data(vocab.value_property(attr), rows, "attr_ind", attr)
+            self.assert_data(
+                vocab.value_property(attr), rows, "attr_ind", attr, IndividualKind.VALUE
+            )
 
     def _emit_bins(self, df_attr: pd.DataFrame, attr: str) -> None:
         """Place the values of a numeric column in their bin classes.
@@ -481,4 +506,4 @@ class AttributeEmitter(Emitter):
                 if (name := vocab.attribute_value(attr, value)) not in placed
             ]
             placed.update(fresh)
-            self.sink.assert_individuals(bin_cls, fresh)
+            self.sink.assert_individuals(bin_cls, fresh, IndividualKind.VALUE)

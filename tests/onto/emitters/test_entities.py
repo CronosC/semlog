@@ -80,6 +80,8 @@ def test_an_object_of_two_object_types_is_inconsistent(tmp_path):
     assert Reasoner(str(path)).check() is True
 
     text = path.read_text(encoding="utf-8").rstrip()
-    path.write_text(text[:-1] + "ClassAssertion(:order :i1)\n)\n", encoding="utf-8")
+    path.write_text(
+        text[:-1] + "ClassAssertion(:order object:i1)\n)\n", encoding="utf-8"
+    )
 
     assert Reasoner(str(path)).check() is False

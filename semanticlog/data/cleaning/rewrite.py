@@ -22,20 +22,13 @@ def attribute_names(data: OCEDStore) -> set[str]:
     return {name for view in data.tables() for name in view.attributes}
 
 
-def entity_id_columns(data: OCEDStore) -> list[tuple[str, pd.Series]]:
-    """Return the distinct ids of each event and object table, as text."""
-    columns = []
-    for view in data.tables(changes=False):
-        if view.id_column is None:
-            continue
-        ids = pd.Series(view.frame[view.id_column].dropna().unique())
-        columns.append((view.origin, ids.astype(str)))
-    return columns
-
-
 def entity_ids(data: OCEDStore) -> pd.Series:
-    """Return every event and object id of the store as one text Series."""
-    columns = [ids for _, ids in entity_id_columns(data)]
+    """Return every distinct event and object id of the store as one text Series."""
+    columns = [
+        pd.Series(view.frame[view.id_column].dropna().unique()).astype(str)
+        for view in data.tables(changes=False)
+        if view.id_column is not None
+    ]
     if not columns:
         return pd.Series(dtype="object")
     return pd.concat(columns, ignore_index=True)

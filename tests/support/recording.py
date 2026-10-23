@@ -67,19 +67,19 @@ class RecordingSink(AxiomSink):
     def write_disjoint_classes(self, classes):
         self._record("disjoint", list(classes))
 
-    def write_class_assertions(self, class_expression, individuals):
+    def write_class_assertions(self, class_expression, individuals, kind):
         for individual in individuals:
             self._record("individual", str(individual), class_expression)
 
-    def write_object_assertions(self, prop, pairs):
+    def write_object_assertions(self, prop, pairs, kinds):
         for subject, obj in pairs:
             self._record("relation", prop, str(subject), str(obj))
 
-    def write_data_assertions(self, prop, pairs):
+    def write_data_assertions(self, prop, pairs, kind):
         for subject, literal in pairs:
             self._record("data", prop, str(subject), literal.value)
 
-    def write_annotations(self, annotation, pairs):
+    def write_annotations(self, annotation, pairs, kind=None):
         for name, text in pairs:
             self._record("annotate", str(name), annotation, text)
 
