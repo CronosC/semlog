@@ -408,6 +408,12 @@ class AnnotationWriter:
         self.write("attribute.class", attr, **fields)
         self.write("attribute.property", prop, **fields)
 
+    def attribute_group(self, group: str, prop: str) -> None:
+        """Annotate the class and property of an attribute name shared across types."""
+        original = self.original(group)
+        self.write("attribute.group", group, original=original)
+        self.write("attribute.group_property", prop, original=original)
+
     def attribute_value_property(
         self, attr: str, prop: str, owners: Mapping[EntityKind, Sequence[str]]
     ) -> None:

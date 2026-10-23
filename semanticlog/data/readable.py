@@ -28,6 +28,10 @@ class ReadableStore(Protocol):
         """Cleaned name to original name, for everything cleaning renamed."""
 
     @property
+    def attribute_groups(self) -> Mapping[str, list[str]]:
+        """Each attribute name of the log to the qualified attributes that came from it."""
+
+    @property
     def ocel_mode(self) -> bool:
         """Whether this store may hold attribute change history."""
 

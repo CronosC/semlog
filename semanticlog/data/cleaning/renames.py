@@ -22,6 +22,7 @@ class RenameKind(str, Enum):
     OBJECT_TYPE = "object_type"
     RELATION = "relation"
     ATTRIBUTE = "attribute"
+    ATTRIBUTE_GROUP = "attribute_group"
     ID = "id"
 
     @property
@@ -35,6 +36,7 @@ WORDS: dict[str, tuple[str, str]] = {
     RenameKind.OBJECT_TYPE.value: ("object type", "object types"),
     RenameKind.RELATION.value: ("relation", "relations"),
     RenameKind.ATTRIBUTE.value: ("attribute", "attributes"),
+    RenameKind.ATTRIBUTE_GROUP.value: ("attribute name", "attribute names"),
     RenameKind.ID.value: ("id", "ids"),
     "value": ("value", "values"),
 }

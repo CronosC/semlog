@@ -127,9 +127,13 @@ def apply_value_renames(
 
 
 def apply_attribute_renames(data: OCEDStore, renames: Mapping[str, str]) -> None:
-    """Rename attribute columns in every table, and in the `ocel:field` of change rows."""
+    """Rename attribute columns in every table, in the `ocel:field` of change rows and in the attribute groups."""
     for view in data.tables():
         frame = view.frame.rename(columns=renames)
         if "ocel:field" in frame.columns:
             frame = remap(frame, ["ocel:field"], renames)
         view.replace(frame)
+    data.attribute_groups = {
+        group: [renames.get(member, member) for member in members]
+        for group, members in data.attribute_groups.items()
+    }

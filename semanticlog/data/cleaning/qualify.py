@@ -3,7 +3,8 @@
 OCEL 2.0 declares each attribute for one event type or one object type.
 `qualify_attributes` renames every attribute to `<type>.<attribute>` in each
 table, change tables included, so every type gets its own attribute class,
-values and bins.
+values and bins. It records which qualified names came from one source name
+as the attribute groups of the store.
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ def qualify_attributes(data: OCEDStore, log: RenameLog) -> None:
 
     A change table counts as its object type. The names in the store must be
     clean.
+
+    Sets `data.attribute_groups` to the qualified names of each source name.
 
     Args:
         data: Store to rewrite.
@@ -64,3 +67,4 @@ def qualify_attributes(data: OCEDStore, log: RenameLog) -> None:
 
     for old, news in new_names.items():
         log.split(RenameKind.ATTRIBUTE, old, sorted(news))
+    data.attribute_groups = {old: sorted(news) for old, news in new_names.items()}

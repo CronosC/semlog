@@ -55,6 +55,15 @@ def test_a_name_that_only_resembles_a_schema_name_is_left_alone(make_store, attr
     assert _columns(fix_duplicate_names(oced)) == ["oid", attribute]
 
 
+def test_a_group_name_taken_by_an_object_type_is_renamed(make_store, events):
+    oced = make_store(obj_type="weight", events=events("e1", weight=[2.5]))
+
+    cleaned = clean_oced_data(oced)
+
+    assert cleaned.attribute_groups == {"attribute_weight": ["act.weight"]}
+    assert cleaned.backmap["attribute_weight"] == "weight"
+
+
 def test_an_object_type_keeps_a_name_an_activity_and_an_attribute_also_claim(
     make_store,
 ):

@@ -9,7 +9,12 @@ import pandas as pd
 import pytest
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import AttributeRepresentation, IndividualKind, OWLProfile
+from semanticlog.core.enums import (
+    AttributeRepresentation,
+    IndividualKind,
+    InverseRepresentation,
+    OWLProfile,
+)
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.binning import Binning
 from semanticlog.data.cleaning import clean_oced_data
@@ -62,6 +67,38 @@ def _order_store(**columns) -> OCEDStore:
         to_type=["order"],
     )
     return clean_oced_data(data)
+
+
+def _two_type_store() -> OCEDStore:
+    """`weight` on the object type `order` and on the activity `step`, cleaned."""
+    data = OCEDStore()
+    data.add(
+        EntityKind.OBJECT,
+        "order",
+        pd.DataFrame({"oid": ["o1"], "weight": [2.5]}),
+        id_col="oid",
+    )
+    data.add(
+        EntityKind.EVENT,
+        "step",
+        pd.DataFrame({"eid": ["e1"], "ts": [datetime(2024, 1, 1)], "weight": [3.0]}),
+        id_col="eid",
+        time_col="ts",
+    )
+    data.add_relation(
+        RelationKind.E2O,
+        "concerns",
+        pd.DataFrame({"eid": ["e1"], "oid": ["o1"]}),
+        from_id="eid",
+        to_id="oid",
+        to_type=["order"],
+    )
+    return clean_oced_data(data)
+
+
+def _shared(tmp_path, **overrides):
+    settings = OntoBuildSettings(shared_attributes=True, **overrides)
+    return emit(settings, tmp_path / "shared.ofn", data=_two_type_store())
 
 
 def _price_emitter(sink, settings: OntoBuildSettings, binning) -> AttributeEmitter:
@@ -176,6 +213,75 @@ def test_a_boolean_attribute_is_not_binned(tmp_path, caplog):
     assert {"order.express.True", "order.express.False"} <= onto.individuals
     assert {c for c in onto.classes if c.startswith("order.express_bin_")} == set()
     assert "'order.express' has too few distinct values" not in caplog.text
+
+
+# --------------------------------------------------------------------------
+# Shared attribute names
+# --------------------------------------------------------------------------
+
+
+def test_shared_attributes_puts_each_type_class_below_the_name_class(tmp_path):
+    onto = _shared(tmp_path)
+
+    assert onto.parents["order.weight"] == {vocab.OBJECT_ATTRIBUTE, "weight"}
+    assert onto.parents["step.weight"] == {vocab.EVENT_ATTRIBUTE, "weight"}
+
+
+def test_shared_attributes_puts_each_type_property_below_the_name_property(
+    tmp_path,
+):
+    onto = _shared(tmp_path)
+
+    assert onto.property_parents["has_order.weight"] == {"has_weight"}
+    assert onto.property_parents["has_step.weight"] == {"has_weight"}
+    assert onto.property_parents["has_weight"] == {vocab.HAS_ATTRIBUTE}
+    assert onto.domains["has_weight"] == {"order", "step"}
+    assert onto.ranges["has_weight"] == {"weight"}
+
+
+def test_a_name_on_an_event_type_and_an_object_type_sits_below_attribute_only(
+    tmp_path,
+):
+    onto = _shared(tmp_path)
+
+    assert onto.parents["weight"] == {vocab.ATTRIBUTE}
+
+
+def test_a_shared_class_is_not_in_the_disjointness_axiom(tmp_path):
+    onto = _shared(tmp_path)
+
+    assert [group for group in onto.disjoint if "weight" in group] == []
+    assert frozenset({"order.weight", "step.weight"}) in onto.disjoint
+
+
+def test_shared_attributes_off_emits_no_name_class(tmp_path):
+    onto = emit(OntoBuildSettings(), tmp_path / "plain.ofn", data=_two_type_store())
+
+    assert "weight" not in onto.declared
+    assert "has_weight" not in onto.declared
+    assert onto.property_parents["has_order.weight"] == {vocab.HAS_ATTRIBUTE}
+
+
+def test_shared_attributes_under_literals_alone_emits_nothing_shared(tmp_path):
+    onto = _shared(tmp_path, attribute_representations=LITERALS)
+
+    assert "weight" not in onto.declared
+    assert "has_weight" not in onto.declared
+
+
+@pytest.mark.reasoner
+def test_a_shared_attribute_build_is_consistent_under_hermit(tmp_path):
+    path = tmp_path / "shared.ofn"
+    emit(
+        OntoBuildSettings(
+            shared_attributes=True,
+            inverse_representations=[InverseRepresentation.AXIOMATIC],
+        ),
+        path,
+        data=_two_type_store(),
+    )
+
+    assert Reasoner(str(path)).check() is True
 
 
 # --------------------------------------------------------------------------

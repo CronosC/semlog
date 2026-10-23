@@ -139,6 +139,7 @@ The record of how the file was produced is annotated onto the ontology itself: t
 | `bins`, `bin_labels` | `5`, `very_low` … `very_high` | Bin count and labels for the two binning modes. |
 | `max_ef_pairs` | `50000000` | Ceiling on materialized eventually-follows pairs. Zero for no limit. |
 | `size_limit_mb` | `0` | Skip inputs larger than this many MB. Zero for no limit. |
+| `shared_attributes` | `false` | Also emit one class and one property per attribute name above the per-type ones, so `has_<name>` reaches the value of every type that carries the name. Needs `individuals`. |
 | `derive_annotations` | `false` | Emit `rdfs:label` and `rdfs:comment` derived from the original names in the log. |
 | `annotation_document` | none | JSON file mapping entity names to `{label, comment}`. |
 | `declare_file` | none | File written by `semlog mine-declare`. Required for `declare`. |

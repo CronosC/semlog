@@ -27,6 +27,9 @@ def test_an_attribute_of_two_types_is_renamed_per_type_keeping_its_source_name(
     )
     assert cleaned.backmap["item.unit_weight"] == "unit weight"
     assert cleaned.backmap["ship_order.unit_weight"] == "unit weight"
+    assert cleaned.attribute_groups == {
+        "unit_weight": ["item.unit_weight", "ship_order.unit_weight"]
+    }
 
 
 def test_an_attribute_of_one_type_is_renamed_under_its_type(make_store, events):

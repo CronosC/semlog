@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import math
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 import pandas as pd
 
@@ -198,6 +198,9 @@ class AttributeEmitter(Emitter):
         attribute_history: Whether the build emits the attribute change
             history. A change record then carries a literal under `literals`,
             so the change class joins the domain of the value property.
+        groups: Each attribute name of the log to the qualified attributes
+            that came from it. Under `shared_attributes` each name becomes a
+            class and a property above its attributes.
     """
 
     def __init__(
@@ -210,12 +213,20 @@ class AttributeEmitter(Emitter):
         binnings: Mapping[str, Binning],
         datatypes: Mapping[str, str] | None = None,
         attribute_history: bool = False,
+        groups: Mapping[str, Sequence[str]] | None = None,
     ) -> None:
         super().__init__(sink, settings, annotations, emitted)
         self._owners = owners
         self._binnings = binnings
         self._datatypes = datatypes or {}
         self._attribute_history = attribute_history
+        self._groups = groups or {}
+        self._group_of = {
+            member: group
+            for group, members in self._groups.items()
+            for member in members
+        }
+        self._declared_groups: set[str] = set()
         self._warned_unbinnable: set[str] = set()
         self._annotated: set[str] = set()
         self._classes: dict[str, None] = {}
@@ -297,11 +308,17 @@ class AttributeEmitter(Emitter):
         if not self.settings.emits_value_individuals:
             return prop
         self.add_attribute_class(attr, parent)
+        superprop: str = vocab.HAS_ATTRIBUTE
+        group = self._group_of.get(attr) if self.settings.shared_attributes else None
+        if group is not None:
+            self._declare_group(group)
+            self.sink.add_class(attr, group, source=attribute_source(attr))
+            superprop = vocab.attribute_group_property(group)
         self.sink.add_property(
             prop,
             domain_class=self._owner_types(attr) or None,
             range_class=attr,
-            superprop=vocab.HAS_ATTRIBUTE,
+            superprop=superprop,
             create_inverse=self.settings.has_inverses,
             axiomatic_inverse=self.settings.axiomatic_inverses,
             source=attribute_source(attr),
@@ -311,6 +328,33 @@ class AttributeEmitter(Emitter):
             self._annotated.add(attr)
             self.annotations.attribute(attr, prop, self._owners.get(attr, {}))
         return prop
+
+    def _declare_group(self, group: str) -> None:
+        """Declare the class and property of an attribute name, once.
+
+        The class sits directly below `Attribute`, because one name can be
+        on an event type and an object type. The property sits below
+        `has_attribute` with the owner types of every member as its domain.
+        """
+        if group in self._declared_groups:
+            return
+        self._declared_groups.add(group)
+        source = f"attribute name {group!r}"
+        self.sink.add_class(group, vocab.ATTRIBUTE, source=source)
+        prop = vocab.attribute_group_property(group)
+        owners = sorted(
+            {t for member in self._groups[group] for t in self._owner_types(member)}
+        )
+        self.sink.add_property(
+            prop,
+            domain_class=owners or None,
+            range_class=group,
+            superprop=vocab.HAS_ATTRIBUTE,
+            create_inverse=self.settings.has_inverses,
+            axiomatic_inverse=self.settings.axiomatic_inverses,
+            source=source,
+        )
+        self.annotations.attribute_group(group, prop)
 
     def emit_disjointness(self) -> None:
         """State that the attribute classes, and the bins of each, share no value."""

@@ -56,6 +56,16 @@
     "label": "{original} value",
     "comment": "Carries the literal of a '{original}' value of {owners}."
   },
+  "attribute.group": {
+    "label": "{original}",
+    "comment": "Values of the '{original}' attribute of any type."
+  },
+  "attribute.group_property": {
+    "label": "has {original}",
+    "comment": "Relates an event or object to its '{original}' value of any type.",
+    "inverse_label": "is {original} of",
+    "inverse_comment": "Inverse of has {original}. Relates a '{original}' value of any type to the event or object carrying it."
+  },
   "attribute.bin_lowest": {
     "label": "{original} ({types}): {bin}",
     "comment": "Values of the '{original}' attribute of {owners} that are at most {high}."

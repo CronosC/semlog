@@ -218,6 +218,11 @@ def has_attribute_property(attribute: str) -> str:
     return f"has_{attribute}"
 
 
+def attribute_group_property(group: str) -> str:
+    """Return the property name linking an entity to a value of an attribute name, whatever its type."""
+    return f"has_{group}"
+
+
 def change_value_property(attribute: str) -> str:
     """Return the property name linking a change record to the new value."""
     return f"change_value_{attribute}"
@@ -327,6 +332,9 @@ ATTRIBUTE_PROPERTIES: tuple[Callable[[str], str], ...] = (
     value_property,
 )
 BIN_CLASSES: tuple[Callable[[str, Any], str], ...] = (bin_class,)
+ATTRIBUTE_GROUP_PROPERTIES: tuple[Callable[[str], str], ...] = (
+    attribute_group_property,
+)
 
 
 def _with_inverses(classes: set[str], properties: set[str]) -> frozenset[str]:
@@ -351,6 +359,11 @@ def derived_from_attribute(
         build(attribute, label) for build in BIN_CLASSES for label in bin_labels
     }
     return _with_inverses(classes, {build(attribute) for build in ATTRIBUTE_PROPERTIES})
+
+
+def derived_from_attribute_group(group: str) -> frozenset[str]:
+    """Return the names, inverse included, a build derives from an attribute name shared across types."""
+    return _with_inverses(set(), {build(group) for build in ATTRIBUTE_GROUP_PROPERTIES})
 
 
 def derived_from_relation(relation: str) -> frozenset[str]:
