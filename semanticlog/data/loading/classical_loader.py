@@ -83,8 +83,8 @@ class ClassicalLoader(Loader):
 
         Ids are prefixed: events with `e` and the row number, cases with `t`,
         and the values of another object column with the column name. Every
-        event relates to its case through `modifies`, and to another object
-        column through `modifies_<column>`. A column named in
+        event relates to its case through `involves`, and to another object
+        column through `involves_<column>`. A column named in
         `object_attribute_cols` becomes an attribute of the first object type,
         the case first, within whose objects it does not vary. The other
         columns stay on the events.
@@ -156,9 +156,9 @@ class ClassicalLoader(Loader):
 
         for object_type in object_types:
             name = (
-                "modifies"
+                "involves"
                 if object_type == columns.case_col
-                else f"modifies_{object_type}"
+                else f"involves_{object_type}"
             )
             oced.add_relation(
                 RelationKind.E2O,

@@ -85,7 +85,7 @@ def test_a_file_that_is_neither_csv_nor_xes_is_rejected():
 
 def test_each_row_is_an_event_of_its_activity_related_to_its_case(csv_path):
     oced = ClassicalLoader(csv_path).get_oced()
-    relation = oced.get_relation("modifies")
+    relation = oced.get_relation("involves")
 
     assert oced.types(EntityKind.EVENT) == ["A", "B", "C"]
     assert list(oced.ids(EntityKind.EVENT, "A")) == ["e0", "e2"]
@@ -180,7 +180,7 @@ def test_an_object_column_becomes_a_type_with_prefixed_ids_and_its_own_relation(
     oced = ClassicalLoader(path, LoaderColumns(object_cols=["resource"])).get_oced()
 
     assert list(oced.ids(EntityKind.OBJECT, "resource")) == ["resource_ann"]
-    assert oced.get_relation("modifies_resource").data.values.tolist() == [
+    assert oced.get_relation("involves_resource").data.values.tolist() == [
         ["e0", "resource_ann"]
     ]
 

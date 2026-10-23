@@ -172,7 +172,7 @@ def test_a_missing_qualifier_takes_the_fallback_name_of_its_family(tmp_path):
 
     oced = PM4PyLoader(path).get_oced()
 
-    assert oced.get_relation_types(RelationKind.E2O) == ["modifies"]
+    assert oced.get_relation_types(RelationKind.E2O) == ["involves"]
     assert oced.get_relation_types(RelationKind.O2O) == ["relates"]
 
 
@@ -205,7 +205,7 @@ def test_a_word_read_as_no_qualifier_is_warned_about_apart_from_an_empty_one(cap
     with caplog.at_level(logging.WARNING):
         normalized = _normalize_qualifiers(rows, "e2o")
 
-    assert list(normalized["ocel:qualifier"]) == ["modifies"] * 3
+    assert list(normalized["ocel:qualifier"]) == ["modifies", "involves", "involves"]
     assert "2 e2o relation(s) had no qualifier" in caplog.text
     assert (
         "1 of those carry the text (NA), which is read as no qualifier" in caplog.text

@@ -48,7 +48,7 @@ _READER_NAMES: dict[str, str] = {
 _MISSING_QUALIFIER_WORDS: list[str] = ["None", "none", "NA", "N/A"]
 _MISSING_QUALIFIER_STRINGS: list[str] = [*_MISSING_QUALIFIER_WORDS, ""]
 _MISSING_QUALIFIERS: list = [None, np.nan, *_MISSING_QUALIFIER_STRINGS]
-_FALLBACK_QUALIFIERS: dict[str, str] = {"e2o": "modifies", "o2o": "relates"}
+_FALLBACK_QUALIFIERS: dict[str, str] = {"e2o": "involves", "o2o": "relates"}
 
 
 def _require_unique(ids: pd.Series, what: str) -> None:
@@ -190,7 +190,7 @@ class PM4PyLoader(Loader):
         Events become one table per activity, objects one table per type, and
         each relation qualifier becomes one named relation. A qualifier used
         by both families is suffixed with `_e2o` and `_o2o`. A relation with
-        no qualifier takes `modifies` or `relates`. The ids of a type whose
+        no qualifier takes `involves` or `relates`. The ids of a type whose
         ids are all numeric are prefixed with the type. An attribute keeps the
         type the log declares for it, and only undeclared ones are inferred.
 
