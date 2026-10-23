@@ -135,7 +135,7 @@ The record of how the file was produced is annotated onto the ontology itself: t
 | `auto_case_concepts` | `3` | How many object types are chosen when `case_concepts` is not set. |
 | `data_representations` | `values` | How numeric attributes appear: `values` keeps the number, `equal_bins` buckets by frequency, `dist_bins` buckets by distance from the typical value, in standard deviations after a power transform, so the outer bins hold the unusual values. Each attribute is cut once, over every value it takes anywhere in the log. A column with too few distinct values to bin keeps its numbers. Under `OWL2DL` with `values`, each bin class is also defined by its value range, so a reasoner places a value in its bin. |
 | `inverse_representations` | none | `axiomatic` writes inverse property axioms (OWL2DL only), `implicit` materializes the inverse assertions. |
-| `ocel_extensions` | none | `attribute_history` also emits the timestamped attribute changes of each object. |
+| `ocel_extensions` | none | `attribute_history` also emits the timestamped attribute changes of each object. With or without it, an object carries the value of each attribute with the greatest timestamp. |
 | `bins`, `bin_labels` | `5`, `very_low` … `very_high` | Bin count and labels for the two binning modes. |
 | `max_ef_pairs` | `50000000` | Ceiling on materialized eventually-follows pairs. Zero for no limit. |
 | `size_limit_mb` | `0` | Skip inputs larger than this many MB. Zero for no limit. |

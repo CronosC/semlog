@@ -194,6 +194,11 @@ class PM4PyLoader(Loader):
         ids are all numeric are prefixed with the type. An attribute keeps the
         type the log declares for it, and only undeclared ones are inferred.
 
+        An object carries the value of each attribute with the greatest
+        timestamp. The value PM4Py lists first for an attribute is read as its
+        initial value. With `ATTRIBUTE_HISTORY` the later values are also
+        recorded as changes.
+
         Returns:
             A store, in OCEL mode when attribute history was requested. A log
             that carries none leaves the store in OCEL mode with no changes
@@ -208,7 +213,7 @@ class PM4PyLoader(Loader):
         logger.info("Loading OCEL data from file %s", self.path)
         read: Callable[[str], OCEL] = getattr(pm, _READER_NAMES[self.file_format])
 
-        frames = _read_frames(self._read(read), load_attr_history)
+        frames = _read_frames(self._read(read))
         _prefix_numeric_ids(frames)
         declared = declared_types(self.path, self.file_format)
         return _fill_store(frames, load_attr_history, declared)
@@ -285,8 +290,7 @@ class _Frames:
         events: One row per event, with its activity.
         e2o: Event-to-object relation rows.
         o2o: Object-to-object relation rows.
-        changes: Attribute change rows, or None when the history was not asked
-            for or the log carries none.
+        changes: Attribute change rows, or None when the log carries none.
     """
 
     objects: pd.DataFrame
@@ -296,13 +300,16 @@ class _Frames:
     changes: pd.DataFrame | None
 
 
-def _read_frames(log: OCEL, load_attr_history: bool) -> _Frames:
+def _read_frames(log: OCEL) -> _Frames:
     """Return copies of the tables of the log with qualifiers filled in.
+
+    The change rows are read whether or not the history is kept, because the
+    latest value of an object attribute is among them.
 
     Raises:
         InputError: If an event or object id repeats.
     """
-    changes = log.object_changes if load_attr_history else None
+    changes = log.object_changes
     frames = _Frames(
         objects=log.objects.copy(),
         events=log.events.copy(),
@@ -355,6 +362,37 @@ def _prefix_numeric_ids(frames: _Frames) -> None:
         )
 
 
+def _latest_values(objects: pd.DataFrame, changes: pd.DataFrame) -> pd.DataFrame:
+    """Return the objects frame with the latest changed value of each attribute.
+
+    For every object and field in the change rows, the value of the row with
+    the greatest timestamp replaces the object's value. A timestamp that does
+    not parse sorts before every one that does. Rows at one timestamp keep
+    their order, and the last wins. A field with no column of its own in the
+    change rows is skipped.
+
+    Returns:
+        A new frame. The input is not modified.
+    """
+    objects = objects.copy()
+    order = pd.to_datetime(changes["ocel:timestamp"], errors="coerce", utc=True)
+    ranked = changes.assign(_order=order).sort_values(
+        "_order", kind="mergesort", na_position="first"
+    )
+    for field, rows in ranked.groupby("ocel:field", sort=False):
+        name = str(field)
+        if name not in rows.columns:
+            continue
+        latest = rows.drop_duplicates("ocel:oid", keep="last").set_index("ocel:oid")[
+            name
+        ]
+        held = objects["ocel:oid"].isin(latest.index)
+        if name not in objects.columns:
+            objects[name] = None
+        objects.loc[held, name] = objects.loc[held, "ocel:oid"].map(latest)
+    return objects
+
+
 def _fill_store(
     frames: _Frames, load_attr_history: bool, declared: DeclaredTypes
 ) -> OCEDStore:
@@ -371,7 +409,11 @@ def _fill_store(
     oced = OCEDStore(ocel_mode=load_attr_history)
     inference = Inference()
 
-    for object_type, frame in frames.objects.groupby("ocel:type"):
+    objects = frames.objects
+    if frames.changes is not None:
+        objects = _latest_values(objects, frames.changes)
+
+    for object_type, frame in objects.groupby("ocel:type"):
         frame = frame.dropna(axis=1, how="all").drop(columns=["ocel:type"])
         oced.add(
             EntityKind.OBJECT,
@@ -433,7 +475,7 @@ def _fill_store(
             to_type=sorted(map(str, frame["ocel:type"].unique())),
         )
 
-    if frames.changes is not None:
+    if load_attr_history and frames.changes is not None:
         for object_type, frame in frames.changes.groupby("ocel:type"):
             frame = cast_declared(
                 frame, declared.get((EntityKind.OBJECT, str(object_type)), {})

@@ -313,7 +313,7 @@ def test_one_id_for_two_events_in_a_sqlite_log_is_rejected(tmp_path, simple_ocel
         PM4PyLoader(str(path)).get_oced()
 
 
-def test_attribute_history_puts_the_first_value_on_the_object_and_later_ones_in_changes(
+def test_attribute_history_puts_the_latest_value_on_the_object_and_later_ones_in_changes(
     history_ocel,
 ):
     oced = PM4PyLoader(history_ocel, ocel_extensions=HISTORY).get_oced()
@@ -322,8 +322,8 @@ def test_attribute_history_puts_the_first_value_on_the_object_and_later_ones_in_
 
     assert oced.ocel_mode is True
     assert dict(zip(orders["ocel:oid"], orders["status"], strict=True)) == {
-        "order_10": "pending",
-        "order_20": "pending",
+        "order_10": "shipped",
+        "order_20": "shipped",
     }
     assert dict(zip(changes["ocel:oid"], changes["status"], strict=True)) == {
         "order_10": "shipped",
@@ -333,6 +333,90 @@ def test_attribute_history_puts_the_first_value_on_the_object_and_later_ones_in_
 
 def test_without_the_history_extension_no_change_is_read(history_ocel):
     assert PM4PyLoader(history_ocel).get_oced().ocel_mode is False
+
+
+def _timed_values_log(tmp_path, values: list[tuple[str, str]]) -> str:
+    """Write one order whose `status` takes `values`, each as (time, value), in that order."""
+    path = str(tmp_path / "timed.jsonocel")
+    document = {
+        "objectTypes": [
+            {"name": "order", "attributes": [{"name": "status", "type": "string"}]}
+        ],
+        "eventTypes": [{"name": "create", "attributes": []}],
+        "objects": [
+            {
+                "id": "o1",
+                "type": "order",
+                "attributes": [
+                    {"name": "status", "time": time, "value": value}
+                    for time, value in values
+                ],
+            }
+        ],
+        "events": [
+            {
+                "id": "e1",
+                "type": "create",
+                "time": "2024-01-01T09:00:00Z",
+                "attributes": [],
+                "relationships": [{"objectId": "o1", "qualifier": "for"}],
+            }
+        ],
+    }
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(document, handle)
+    return path
+
+
+def _status_of_o1(path: str, extensions=()) -> str:
+    orders = (
+        PM4PyLoader(path, ocel_extensions=extensions)
+        .get_oced()
+        .table(EntityKind.OBJECT, "order")
+    )
+    return orders.data.set_index("ocel:oid").loc["o1", "status"]
+
+
+def test_an_object_carries_the_latest_attribute_value(tmp_path):
+    path = _timed_values_log(
+        tmp_path,
+        [("2024-01-01T09:00:00Z", "pending"), ("2024-01-05T09:00:00Z", "shipped")],
+    )
+    assert _status_of_o1(path) == "shipped"
+
+
+def test_the_latest_value_is_chosen_by_timestamp_not_file_order(tmp_path):
+    path = _timed_values_log(
+        tmp_path,
+        [
+            ("2024-01-01T09:00:00Z", "pending"),
+            ("2024-01-09T09:00:00Z", "delivered"),
+            ("2024-01-05T09:00:00Z", "shipped"),
+        ],
+    )
+    assert _status_of_o1(path) == "delivered"
+
+
+def test_the_latest_value_is_the_same_with_and_without_the_history_extension(
+    tmp_path,
+):
+    path = _timed_values_log(
+        tmp_path,
+        [("2024-01-01T09:00:00Z", "pending"), ("2024-01-05T09:00:00Z", "shipped")],
+    )
+    assert _status_of_o1(path) == _status_of_o1(path, HISTORY) == "shipped"
+
+
+def test_a_change_with_an_unparseable_timestamp_loses_to_a_dated_one(tmp_path):
+    path = _timed_values_log(
+        tmp_path,
+        [
+            ("2024-01-01T09:00:00Z", "pending"),
+            ("2024-01-05T09:00:00Z", "shipped"),
+            ("later", "lost"),
+        ],
+    )
+    assert _status_of_o1(path) == "shipped"
 
 
 def test_an_event_id_the_reader_returns_twice_is_rejected(simple_ocel, monkeypatch):
