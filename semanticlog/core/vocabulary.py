@@ -158,6 +158,7 @@ def inverse(prop: str, named: Mapping[str, str] | None = None) -> str:
     return INVERSE_PREFIX + prop
 
 
+BUILD_TOOL = Term("buildTool")
 BUILD_CONFIGURATION = Term("buildConfiguration")
 SOURCE_LOG = Term("sourceLog")
 SOURCE_LOG_SHA256 = Term("sourceLogSha256")
@@ -174,6 +175,7 @@ MATERIALIZE_REQUESTED = Term("materializeRequested")
 
 PROVENANCE_ANNOTATIONS: frozenset[str] = frozenset(
     {
+        BUILD_TOOL,
         BUILD_CONFIGURATION,
         SOURCE_LOG,
         SOURCE_LOG_SHA256,

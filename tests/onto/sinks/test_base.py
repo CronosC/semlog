@@ -21,12 +21,13 @@ from semanticlog.core.vocabulary import (
     NameCollisionError,
 )
 from semanticlog.onto.builder import OCEDOntoBuilder
-from semanticlog.onto.emitters.provenance import OWL_VERSION_INFO
 from semanticlog.onto.sinks import InMemorySink, StreamingSink
 from tests.support import stores
 from tests.support.build import IN_MEMORY, STREAMING, emit
 from tests.support.owlapi import ontology_annotations
 from tests.support.settings import CONFIGURATIONS, NAMES
+
+OWL_VERSION_INFO = "http://www.w3.org/2002/07/owl#versionInfo"
 
 # --------------------------------------------------------------------------
 # The two real sinks agree

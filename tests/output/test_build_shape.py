@@ -87,7 +87,7 @@ EXPECTED: dict[str, Shape] = {
         object_properties=17,
         data_properties=10,
         individuals=96,
-        axioms=462,
+        axioms=463,
         must_contain=_DF | _NUMERIC,
         must_not_contain=_EF | _INVERSES | _EQUAL_BINS | _HISTORY | _DECLARE,
     ),
@@ -96,7 +96,7 @@ EXPECTED: dict[str, Shape] = {
         object_properties=34,
         data_properties=10,
         individuals=96,
-        axioms=849,
+        axioms=850,
         must_contain=_DF | _INVERSES,
         must_not_contain=_EF | _EQUAL_BINS | _HISTORY | _DECLARE,
         inverse_pairs=17,
@@ -106,7 +106,7 @@ EXPECTED: dict[str, Shape] = {
         object_properties=34,
         data_properties=10,
         individuals=96,
-        axioms=862,
+        axioms=863,
         must_contain=_EF | _TRACE_BOUNDARY | _INVERSES | _EQUAL_BINS | _NUMERIC,
         must_not_contain=_DF_PROPERTIES | _HISTORY | _DECLARE | _NARROW_BINS,
         # EL has no InverseObjectProperties axiom, so the pairs are only asserted.
@@ -117,7 +117,7 @@ EXPECTED: dict[str, Shape] = {
         object_properties=24,
         data_properties=10,
         individuals=101,
-        axioms=571,
+        axioms=572,
         must_contain=_DF | _EF | _DIST_BINS | _HISTORY | _NUMERIC,
         must_not_contain=_INVERSES | _DECLARE | _NARROW_BINS,
         # EF left to a reasoner is a transitivity axiom.
@@ -128,7 +128,7 @@ EXPECTED: dict[str, Shape] = {
         object_properties=22,
         data_properties=7,
         individuals=101,
-        axioms=696,
+        axioms=697,
         must_contain=_DF | _HISTORY | _EQUAL_BINS,
         must_not_contain=_EF | _INVERSES | _DECLARE | _NARROW_BINS | _DIST_BINS,
     ),
@@ -137,7 +137,7 @@ EXPECTED: dict[str, Shape] = {
         object_properties=30,
         data_properties=7,
         individuals=69,
-        axioms=681,
+        axioms=682,
         must_contain=_DF
         | _DECLARE
         | frozenset(
@@ -150,7 +150,7 @@ EXPECTED: dict[str, Shape] = {
         object_properties=40,
         data_properties=10,
         individuals=101,
-        axioms=519,
+        axioms=520,
         must_contain=_HISTORY | _INVERSES | _NUMERIC,
         must_not_contain=_DF | _EF | _EQUAL_BINS | _DECLARE,
         inverse_pairs=20,

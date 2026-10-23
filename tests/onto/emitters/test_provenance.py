@@ -31,8 +31,12 @@ def record(tiny_store, tmp_path):
     return build
 
 
-def test_the_semlog_version_is_recorded(record):
-    assert record()["versionInfo"] == f"semlog {__version__}"
+def test_the_record_names_the_tool_and_its_version(record):
+    assert record()["buildTool"] == f"semlog {__version__}"
+
+
+def test_the_record_has_no_version_info(record):
+    assert "versionInfo" not in record()
 
 
 def test_the_resolved_settings_are_recorded_as_json(record):

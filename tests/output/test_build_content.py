@@ -123,7 +123,7 @@ def test_a_name_cleaning_rewrote_is_emitted_in_its_cleaned_form(onto):
 
 def test_the_build_records_where_it_came_from(onto):
     assert onto.ontology_annotations["sourceLog"] == "matrix"
-    assert onto.ontology_annotations["versionInfo"].startswith("semlog ")
+    assert onto.ontology_annotations["buildTool"].startswith("semlog ")
     assert '"profile": "OWL2DL"' in onto.ontology_annotations["buildConfiguration"]
 
 

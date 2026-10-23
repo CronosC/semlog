@@ -44,15 +44,12 @@ _ENTITY_ANNOTATION = re.compile(
     rf'^AnnotationAssertion\(rdfs:(label|comment) {_P}({_REF}) "(.*)"\)$', re.DOTALL
 )
 
-# The one ontology annotation whose property the sink does not declare.
-_VERSION_INFO = "versionInfo"
-
 
 def read_functional(path: str | Path) -> Emitted:
     """Read an ontology in OWL 2 functional syntax, as StreamingSink writes it."""
     text = Path(path).read_text(encoding="utf-8")
     emitted = Emitted()
-    annotation_properties = {_VERSION_INFO}
+    annotation_properties: set[str] = set()
     for line in _axiom_lines(text):
         emitted.axiom_lines.append(line)
         if m := _DECLARATION.match(line):

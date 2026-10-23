@@ -1,6 +1,6 @@
 """The record of how an ontology was produced, written into the ontology.
 
-`ProvenanceEmitter` writes the version, settings and run record as ontology
+`ProvenanceEmitter` writes the tool, settings and run record as ontology
 annotations.
 """
 
@@ -13,8 +13,6 @@ from typing import Any
 from semanticlog.core import vocabulary as vocab
 from semanticlog.onto.emitters.base import Emitter
 from semanticlog.onto.settings import OntoBuildSettings
-
-OWL_VERSION_INFO = "http://www.w3.org/2002/07/owl#versionInfo"
 
 
 def build_configuration(settings: OntoBuildSettings) -> dict:
@@ -33,7 +31,7 @@ def annotation_text(value: Any) -> str:
 
 
 class ProvenanceEmitter(Emitter):
-    """Annotates the ontology with the version, settings and run record."""
+    """Annotates the ontology with the tool, settings and run record."""
 
     def emit(
         self,
@@ -57,7 +55,7 @@ class ProvenanceEmitter(Emitter):
 
         base = vocab.TBOX_IRI
         record = {
-            OWL_VERSION_INFO: f"semlog {__version__}",
+            f"{base}{vocab.BUILD_TOOL}": f"semlog {__version__}",
             f"{base}{vocab.BUILD_CONFIGURATION}": json.dumps(
                 build_configuration(self.settings), sort_keys=True
             ),
