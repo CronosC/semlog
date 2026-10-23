@@ -223,7 +223,7 @@ def change_value_property(attribute: str) -> str:
 
 def value_property(attribute: str) -> str:
     """Return the data property name linking a value of an attribute to its literal."""
-    return f"{attribute}_value"
+    return f"has_value_{attribute}"
 
 
 def attribute_change_class(attribute: str) -> str:

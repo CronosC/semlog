@@ -130,7 +130,7 @@ def test_a_number_too_wide_for_plain_notation_is_named_without_an_exponent(
         "step.price.0.0000001",
     } <= onto.individuals
     assert (
-        "step.price_value",
+        "has_value_step.price",
         "step.price.100000000000000000000",
     ) in onto.data_assertions
 
@@ -177,7 +177,7 @@ def test_a_boolean_attribute_keeps_its_values_when_numbers_are_left_out(tmp_path
 
     assert "order.price" not in onto.declared
     assert {"order.express.True", "order.express.False"} <= onto.individuals
-    assert ("order.express_value", "order.express.True") in onto.data_assertions
+    assert ("has_value_order.express", "order.express.True") in onto.data_assertions
 
 
 def test_a_boolean_attribute_is_not_binned(tmp_path, caplog):
@@ -276,7 +276,7 @@ def test_a_text_value_carries_a_string_literal(tmp_path):
     )
 
     assert (
-        "order.channel_value",
+        "has_value_order.channel",
         "order.channel.web",
         "web",
         "string",
@@ -288,8 +288,27 @@ def test_an_attribute_value_property_is_below_has_data_value(tmp_path):
         OntoBuildSettings(), tmp_path / "price.ofn", data=_order_store(price=[1.5])
     )
 
-    assert onto.property_parents["order.price_value"] == {vocab.HAS_DATA_VALUE}
-    assert "order.price_value" in onto.functional
+    assert onto.property_parents["has_value_order.price"] == {vocab.HAS_DATA_VALUE}
+    assert "has_value_order.price" in onto.functional
+
+
+def test_an_attribute_of_a_type_named_with_a_leading_digit_gets_a_value_property(
+    tmp_path,
+):
+    data = OCEDStore()
+    data.add(
+        EntityKind.EVENT,
+        "1. Beratung",
+        pd.DataFrame({"eid": ["e1"], "ts": [datetime(2024, 1, 1)], "titel": ["t"]}),
+        id_col="eid",
+        time_col="ts",
+    )
+
+    onto = emit(OntoBuildSettings(), tmp_path / "digit.ofn", data=clean_oced_data(data))
+
+    assert ("has_value_1._Beratung.titel", "1._Beratung.titel.t", "t", "string") in (
+        onto.data_values
+    )
 
 
 @pytest.mark.parametrize(
@@ -308,7 +327,7 @@ def test_an_attribute_value_property_has_the_column_datatype_as_range(
         OntoBuildSettings(), tmp_path / "range.ofn", data=_order_store(x=values)
     )
 
-    assert onto.ranges["order.x_value"] == {datatype}
+    assert onto.ranges["has_value_order.x"] == {datatype}
 
 
 def test_mixed_datatypes_give_no_range(caplog):
@@ -329,8 +348,8 @@ def test_a_bin_is_defined_by_its_edges_under_dl(recording_sink):
 
     definitions = {call[1]: call[2:] for call in sink.of_kind("bin_definition")}
     assert definitions == {
-        "order.price_bin_low": ("order.price", "order.price_value", None, 6.5),
-        "order.price_bin_high": ("order.price", "order.price_value", 6.5, None),
+        "order.price_bin_low": ("order.price", "has_value_order.price", None, 6.5),
+        "order.price_bin_high": ("order.price", "has_value_order.price", 6.5, None),
     }
 
 
@@ -371,7 +390,7 @@ def test_a_reasoner_places_an_unasserted_value_in_its_bin(tmp_path):
     )
     extra = (
         "ClassAssertion(:order.price :probe)\n"
-        'DataPropertyAssertion(:order.price_value :probe "9.5"^^xsd:decimal)\n'
+        'DataPropertyAssertion(:has_value_order.price :probe "9.5"^^xsd:decimal)\n'
     )
     text = path.read_text(encoding="utf-8").rstrip()
     path.write_text(f"{text[:-1]}{extra})\n", encoding="utf-8")

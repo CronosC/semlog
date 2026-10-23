@@ -20,7 +20,8 @@ from semanticlog.core.names import candidates
 _UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9_.-]")
 
 # Neither form accepts `.` or `-` as the first character, or `.` as the last.
-_UNSAFE_EDGES = re.compile(r"^[.-]|\.$")
+# An empty name would leave a value individual's name ending in `.`.
+_UNSAFE_EDGES = re.compile(r"^[.-]|\.$|^$")
 
 
 def clean_string(string: str) -> str:

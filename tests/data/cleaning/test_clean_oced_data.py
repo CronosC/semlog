@@ -131,6 +131,17 @@ def test_a_blank_id_is_rejected_before_cleaning_rewrites_it(make_store):
         clean_oced_data(oced)
 
 
+def test_an_empty_text_value_becomes_an_underscore_mapped_to_the_empty_string(
+    make_store,
+):
+    oced = make_store(objects=pd.DataFrame({"oid": ["o1", "o2"], "flag": ["", "X"]}))
+
+    cleaned = clean_oced_data(oced)
+
+    assert list(cleaned.table(EntityKind.OBJECT, "obj").data["obj.flag"]) == ["_", "X"]
+    assert cleaned.backmap["obj.flag._"] == ""
+
+
 def test_only_a_moved_object_type_is_listed_with_its_new_name(make_store):
     """`order` derives `df_order`, which an object type claims first."""
     oced = make_store(obj_type="order", activity="place order")

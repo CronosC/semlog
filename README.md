@@ -113,7 +113,7 @@ A timestamp without a time zone is read as UTC. `case_col`, `act_col` and `time_
 The ontology has a fixed upper schema of `Event`, `Object`, `Attribute` and `Time`, and the classes and properties taken from the log are placed below it:
 
 - one class per activity and per object type, one individual per event and per object
-- one class per attribute of each type, named `<type>.<attribute>`, with a named individual for each distinct value carrying its literal through `<type>.<attribute>_value`
+- one class per attribute of each type, named `<type>.<attribute>`, with a named individual for each distinct value carrying its literal through `has_value_<type>.<attribute>`
 - one individual per distinct timestamp, linked to its events through `observed_at`
 - the relations of the log as sub-properties of `event_object_relation` and `object_object_relation`
 - event order as `df_<case concept>` properties, optionally with eventually-follows and DECLARE constraint membership

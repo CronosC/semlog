@@ -16,7 +16,12 @@ from semanticlog.data.cleaning.names import (
 
 @pytest.mark.parametrize(
     ("source", "expected"),
-    [("Hello World!", "Hello_World_"), (".only.", "_only_"), ("a-b.c", "a-b.c")],
+    [
+        ("Hello World!", "Hello_World_"),
+        (".only.", "_only_"),
+        ("a-b.c", "a-b.c"),
+        ("", "_"),
+    ],
 )
 def test_unsafe_characters_and_edge_punctuation_become_underscores(source, expected):
     assert clean_string(source) == expected
@@ -24,7 +29,7 @@ def test_unsafe_characters_and_edge_punctuation_become_underscores(source, expec
 
 
 def test_a_series_is_cleaned_as_each_of_its_strings_would_be():
-    values = [".hidden", "v2.1.", "-flag", "a b"]
+    values = [".hidden", "v2.1.", "-flag", "a b", ""]
 
     assert list(clean_series(pd.Series(values))) == [clean_string(v) for v in values]
 
