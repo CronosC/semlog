@@ -87,22 +87,26 @@ class OWLProfile(BuildEnum):
     OWL2EL = "OWL2EL"
 
 
-class DataRepresentation(BuildEnum):
-    """How numeric attribute values reach the ontology.
+class AttributeRepresentation(BuildEnum):
+    """How attribute values reach the ontology.
 
-    `VALUES` may be combined with one binning mode. The two binning modes are
-    mutually exclusive. An empty selection omits numeric attributes.
+    `INDIVIDUALS` and `LITERALS` may be combined. A bin mode needs
+    `INDIVIDUALS`, and the two bin modes are mutually exclusive. The selection
+    must not be empty.
 
     Attributes:
-        VALUES: One individual per distinct value, carrying the number itself
-            as a literal.
-        EQUAL_BINS: Equal-frequency bins, each becoming a subclass of the
-            attribute class.
+        INDIVIDUALS: One class per attribute and one individual per distinct
+            value, carrying its literal. The event or object points at the
+            individual.
+        LITERALS: The literal on the event or object itself.
+        EQUAL_BINS: Equal-frequency bins of each numeric attribute, each a
+            subclass of the attribute class.
         DIST_BINS: Bins one standard deviation wide around the median, after
             a power transform makes the column close to normal.
     """
 
-    VALUES = "values"
+    INDIVIDUALS = "individuals"
+    LITERALS = "literals"
     EQUAL_BINS = "equal_bins"
     DIST_BINS = "dist_bins"
 

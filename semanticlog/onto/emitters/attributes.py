@@ -1,9 +1,10 @@
-"""Attributes, as classes whose members are the values they took.
+"""Attributes, as value individuals, as literals on their owners, or both.
 
-An attribute becomes a class, each distinct value of it becomes an individual
-of that class, and the entity carrying the value is linked to that individual
-by a `has_` property. Two entities with the same value point at one
-individual.
+Under `individuals` an attribute becomes a class, each distinct value of it
+becomes an individual of that class carrying its literal, and the entity
+holding the value is linked to that individual by a `has_` property. Two
+entities with the same value point at one individual. Under `literals` the
+entity carries the literal through the attribute's value property.
 
 Numeric attributes can also be reduced to bins, which become subclasses of the
 attribute class.
@@ -19,7 +20,7 @@ from collections.abc import Mapping
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import DataRepresentation, OWLProfile
+from semanticlog.core.enums import AttributeRepresentation, OWLProfile
 from semanticlog.data.binning import Binning, fit_dist_bins, fit_equal_bins
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind
@@ -41,10 +42,10 @@ logger = logging.getLogger(__name__)
 
 
 def is_number_column(series: pd.Series) -> bool:
-    """Whether a column holds numbers that `data_representations` governs.
+    """Whether a column holds numbers a bin mode can cut.
 
     A boolean column is not a number column. It keeps its values and its
-    literals under every data representation and is never binned.
+    literals under every attribute representation and is never binned.
     """
     return pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_bool_dtype(
         series
@@ -147,7 +148,9 @@ def attribute_binnings(
     mode = settings.binning_mode
     if mode is None:
         return {}
-    fit = fit_equal_bins if mode is DataRepresentation.EQUAL_BINS else fit_dist_bins
+    fit = (
+        fit_equal_bins if mode is AttributeRepresentation.EQUAL_BINS else fit_dist_bins
+    )
 
     binnings: dict[str, Binning] = {}
     for attribute, columns in _numeric_columns(data).items():
@@ -192,6 +195,9 @@ class AttributeEmitter(Emitter):
         binnings: The cut of each attribute the build bins.
         datatypes: The datatype of each attribute's literals. An attribute
             without one gets a value property with no range.
+        attribute_history: Whether the build emits the attribute change
+            history. A change record then carries a literal under `literals`,
+            so the change class joins the domain of the value property.
     """
 
     def __init__(
@@ -203,11 +209,13 @@ class AttributeEmitter(Emitter):
         owners: Mapping[str, Mapping[EntityKind, list[str]]],
         binnings: Mapping[str, Binning],
         datatypes: Mapping[str, str] | None = None,
+        attribute_history: bool = False,
     ) -> None:
         super().__init__(sink, settings, annotations, emitted)
         self._owners = owners
         self._binnings = binnings
         self._datatypes = datatypes or {}
+        self._attribute_history = attribute_history
         self._warned_unbinnable: set[str] = set()
         self._annotated: set[str] = set()
         self._classes: dict[str, None] = {}
@@ -218,16 +226,50 @@ class AttributeEmitter(Emitter):
         self.sink.add_class(attr, parent, source=attribute_source(attr))
         self._classes[attr] = None
 
-    def declare_value_property(self, attr: str) -> str:
+    def _owner_types(self, attr: str) -> list[str]:
+        """Return the sorted types carrying a value of `attr`."""
+        by_kind = self._owners.get(attr, {})
+        return sorted({t for types in by_kind.values() for t in types})
+
+    def _value_domain(self, attr: str, parent: str) -> list[str]:
+        """Return the classes whose members carry the literal of `attr`."""
+        domain = []
+        if self.settings.emits_value_individuals:
+            domain.append(attr)
+        if self.settings.emits_entity_literals:
+            domain.extend(self._owner_types(attr))
+            if self._attribute_history and parent == vocab.OBJECT_ATTRIBUTE:
+                domain.append(vocab.attribute_change_class(attr))
+        return domain
+
+    def declare_value_property(self, attr: str, parent: str) -> str:
         """Declare the data property that carries the literal of a value of `attr`.
+
+        Its domain is the attribute class under `individuals`, the owner
+        types under `literals`, and both under both. The change class of an
+        object attribute joins the domain when the build emits the history,
+        and is declared here so the domain can name it.
+
+        Args:
+            attr: The attribute.
+            parent: Class the attribute class goes below, either the event or
+                the object attribute class.
 
         Returns:
             The property name.
         """
         prop = vocab.value_property(attr)
+        domain = self._value_domain(attr, parent)
+        change_cls = vocab.attribute_change_class(attr)
+        if change_cls in domain:
+            self.sink.add_class(
+                change_cls,
+                vocab.ATTRIBUTE_CHANGE,
+                source=f"the attribute history of {attribute_source(attr)}",
+            )
         self.sink.add_property(
             prop,
-            domain_class=attr,
+            domain_class=domain or None,
             range_class=self._datatypes.get(attr),
             superprop=vocab.HAS_DATA_VALUE,
             data_prop=True,
@@ -239,6 +281,35 @@ class AttributeEmitter(Emitter):
             self.annotations.attribute_value_property(
                 attr, prop, self._owners.get(attr, {})
             )
+        return prop
+
+    def declare_attribute(self, attr: str, parent: str) -> str:
+        """Declare what one attribute needs before its values are emitted.
+
+        The value property is declared in every mode. The attribute class and
+        the `has_` property are declared under `individuals` only.
+
+        Returns:
+            The `has_` property name, declared only under `individuals`.
+        """
+        self.declare_value_property(attr, parent)
+        prop = vocab.has_attribute_property(attr)
+        if not self.settings.emits_value_individuals:
+            return prop
+        self.add_attribute_class(attr, parent)
+        self.sink.add_property(
+            prop,
+            domain_class=self._owner_types(attr) or None,
+            range_class=attr,
+            superprop=vocab.HAS_ATTRIBUTE,
+            create_inverse=self.settings.has_inverses,
+            axiomatic_inverse=self.settings.axiomatic_inverses,
+            source=attribute_source(attr),
+        )
+        self.declare_functional(prop)
+        if attr not in self._annotated:
+            self._annotated.add(attr)
+            self.annotations.attribute(attr, prop, self._owners.get(attr, {}))
         return prop
 
     def emit_disjointness(self) -> None:
@@ -255,9 +326,7 @@ class AttributeEmitter(Emitter):
     ) -> None:
         """Emit every attribute column of one table.
 
-        Timestamps, booleans and text become value individuals. Numbers
-        follow `data_representations` and are skipped when it is empty. A
-        column empty in this table is skipped.
+        A column empty in this table is skipped.
 
         Args:
             df: Table holding the entities and their attributes.
@@ -265,196 +334,58 @@ class AttributeEmitter(Emitter):
             attribute_parent: Class the attribute classes go below, either the
                 event or the object attribute class.
         """
-        dr = self.settings.data_representations
         for attr in (c for c in df.columns if c != key_col):
             mask = df[attr].notna()
             if not mask.any():
                 continue
             df_attr = df.loc[mask, [key_col, attr]]
-            s = df_attr[attr]
-
-            if is_number_column(s) and not dr:
-                continue
-
-            prop = vocab.has_attribute_property(attr)
-            source = attribute_source(attr)
-            self.add_attribute_class(attr, attribute_parent)
-            by_kind = self._owners.get(attr, {})
-            owners = sorted({t for types in by_kind.values() for t in types})
-            self.sink.add_property(
-                prop,
-                domain_class=owners or None,
-                range_class=attr,
-                superprop=vocab.HAS_ATTRIBUTE,
-                create_inverse=self.settings.has_inverses,
-                axiomatic_inverse=self.settings.axiomatic_inverses,
-                source=source,
-            )
-            self.declare_functional(prop)
-            if attr not in self._annotated:
-                self._annotated.add(attr)
-                self.annotations.attribute(attr, prop, by_kind)
-
+            prop = self.declare_attribute(attr, attribute_parent)
             self.emit_column_values(df_attr, key_col, attr, prop)
 
     def emit_column_values(
         self, df_attr: pd.DataFrame, key_col: str, attr: str, prop: str
     ) -> None:
-        """Emit one attribute column under the data representation of the build.
+        """Emit one attribute column, and the bins of a numeric one.
 
-        The class and the property must be declared. The attribute history
-        calls this too.
+        The attribute must be declared. The attribute history calls this too.
 
         Args:
             df_attr: Two columns, the owner and the value, with no gaps.
             key_col: Column holding the owner id.
             attr: Attribute the values belong to.
-            prop: Property linking an owner to a value.
+            prop: Property linking an owner to a value individual, used under
+                `individuals`.
         """
-        s = df_attr[attr]
-        if pd.api.types.is_datetime64_any_dtype(s) or pd.api.types.is_bool_dtype(s):
-            self.emit_values(df_attr, key_col, attr, prop, True)
-        elif is_number_column(s):
-            self._emit_numeric(
-                df_attr, key_col, attr, prop, self.settings.data_representations
-            )
-        else:
-            self.emit_values(df_attr, key_col, attr, prop, True)
+        self.emit_values(df_attr, key_col, attr, prop)
+        if is_number_column(df_attr[attr]):
+            self._emit_bins(df_attr, attr)
 
-    def _emit_numeric(
-        self,
-        df_attr: pd.DataFrame,
-        key_col: str,
-        attr: str,
-        prop: str,
-        dr: tuple[DataRepresentation, ...],
-    ) -> None:
-        """Emit a numeric column as raw values, as bins, or as both."""
-        raw_values = DataRepresentation.VALUES in dr
-        if raw_values:
-            self.emit_values(df_attr, key_col, attr, prop, True)
+    def emit_values(self, df: pd.DataFrame, key_col: str, attr: str, prop: str) -> None:
+        """Emit the values of one column as the attribute representations say.
 
-        if self.settings.binning_mode is None:
-            return
-
-        binning = self._binnings.get(attr)
-        if binning is None:
-            self._emit_unbinnable(df_attr, key_col, attr, prop, raw_values)
-            return
-
-        df_binned = df_attr.assign(_bin=binning.apply(df_attr[attr]))
-        in_bin = df_binned[df_binned["_bin"].notna()]
-        out_of_bin = df_binned[df_binned["_bin"].isna()]
-
-        if not raw_values:
-            self.emit_values(in_bin, key_col, attr, prop, False)
-
-        self._emit_bin_classes(in_bin, attr)
-        self._emit_out_of_bin(out_of_bin, key_col, attr, prop, raw_values)
-
-    def _emit_unbinnable(
-        self,
-        df_attr: pd.DataFrame,
-        key_col: str,
-        attr: str,
-        prop: str,
-        raw_values: bool,
-    ) -> None:
-        """Emit the values of a column that has too few of them to bin.
-
-        No bin classes are emitted. The values are individuals, with the
-        literal only when `VALUES` is selected. The warning is written once
-        per attribute.
-        """
-        if attr not in self._warned_unbinnable:
-            self._warned_unbinnable.add(attr)
-            logger.warning(
-                "Attribute '%s' has too few distinct values to bin. Its "
-                "values carry no bin class.",
-                attr,
-            )
-        if not raw_values:
-            self.emit_values(df_attr, key_col, attr, prop, False)
-
-    def _emit_bin_classes(self, in_bin: pd.DataFrame, attr: str) -> None:
-        """Emit one subclass per bin, holding the value individuals in it.
-
-        Values placed in a bin by an earlier table are skipped.
-        """
-        placed = self.emitted.bins_of(attr)
-        binning = self._binnings[attr]
-        for bin_label, bin_group in in_bin.groupby("_bin", observed=True):
-            bin_cls = vocab.bin_class(attr, bin_label)
-            self.sink.add_class(
-                bin_cls, attr, source=f"a bin of {attribute_source(attr)}"
-            )
-            self._bin_classes[attr][bin_cls] = None
-            if self._defines_bins():
-                lower, upper = binning.bounds(str(bin_label))
-                self.sink.add_bin_definition(
-                    bin_cls,
-                    attr,
-                    self.declare_value_property(attr),
-                    None if math.isinf(lower) else lower,
-                    None if math.isinf(upper) else upper,
-                )
-            if bin_cls not in self._annotated:
-                self._annotated.add(bin_cls)
-                self.annotations.bin_class(
-                    bin_cls,
-                    attr,
-                    self._owners.get(attr, {}),
-                    str(bin_label),
-                    binning.bounds(str(bin_label)),
-                )
-            fresh = [
-                name
-                for value in bin_group[attr].unique()
-                if (name := vocab.attribute_value(attr, value)) not in placed
-            ]
-            placed.update(fresh)
-            self.sink.assert_individuals(bin_cls, fresh)
-
-    def _emit_out_of_bin(
-        self,
-        out_of_bin: pd.DataFrame,
-        key_col: str,
-        attr: str,
-        prop: str,
-        raw_values: bool,
-    ) -> None:
-        """Warn about values outside every bin and emit them as individuals.
-
-        The literal is written only when `VALUES` is selected.
-        """
-        if out_of_bin.empty:
-            return
-        logger.warning(
-            "%s value(s) of attribute '%s' fall outside "
-            "all bin boundaries and carry no bin class.",
-            len(out_of_bin),
-            attr,
-        )
-        if not raw_values:
-            self.emit_values(out_of_bin, key_col, attr, prop, False)
-
-    def emit_values(
-        self,
-        df: pd.DataFrame,
-        key_col: str,
-        attr: str,
-        prop: str,
-        also_assert_data_value: bool,
-    ) -> None:
-        """Emit the value individuals of one column and link them to their owners.
+        Under `individuals`, each fresh value becomes an individual carrying
+        its literal, and every owner is linked to its value's individual.
+        Under `literals`, every owner carries the literal itself.
 
         Args:
             df: Table holding the owners and the values.
             key_col: Column holding the owner id.
             attr: Attribute the values belong to.
-            prop: Property linking an owner to a value.
-            also_assert_data_value: Also write the literal on the value
-                individual. False only for binned numbers without `VALUES`.
+            prop: Property linking an owner to a value individual.
+        """
+        if self.settings.emits_value_individuals:
+            self._emit_individuals(df, key_col, attr, prop)
+        if self.settings.emits_entity_literals:
+            self.assert_data(vocab.value_property(attr), df, key_col, attr)
+
+    def _emit_individuals(
+        self, df: pd.DataFrame, key_col: str, attr: str, prop: str
+    ) -> None:
+        """Emit the value individuals of one column and link them to their owners.
+
+        The pass that first emits a value writes its literal. This matters
+        only for an attribute that is numeric in one table and text in
+        another.
         """
         tmp = df.copy()
 
@@ -476,25 +407,78 @@ class AttributeEmitter(Emitter):
 
         self.assert_relations(prop, tmp, key_col, "attr_ind")
 
-        if also_assert_data_value:
-            self._emit_literals(tmp, attr, fresh_names)
+        if fresh_names:
+            rows = tmp[tmp["attr_ind"].isin(fresh_names)].drop_duplicates("attr_ind")
+            self.assert_data(vocab.value_property(attr), rows, "attr_ind", attr)
 
-    def _emit_literals(self, tmp: pd.DataFrame, attr: str, fresh: set[str]) -> None:
-        """Write the literal on each value individual in `fresh`.
+    def _emit_bins(self, df_attr: pd.DataFrame, attr: str) -> None:
+        """Place the values of a numeric column in their bin classes.
 
-        The pass that first emits a value decides whether it gets a literal.
-        This matters only for an attribute that is numeric in one table and
-        text in another.
+        Nothing is emitted without a binning mode. An attribute with too few
+        distinct values to bin is reported once, and values outside every bin
+        are reported per table.
         """
-        if not fresh:
+        if self.settings.binning_mode is None:
             return
-        rows = tmp[tmp["attr_ind"].isin(fresh)].drop_duplicates("attr_ind")
-        prop = self.declare_value_property(attr)
-        self.assert_data(prop, rows, "attr_ind", attr)
+        binning = self._binnings.get(attr)
+        if binning is None:
+            if attr not in self._warned_unbinnable:
+                self._warned_unbinnable.add(attr)
+                logger.warning(
+                    "Attribute '%s' has too few distinct values to bin. Its "
+                    "values carry no bin class.",
+                    attr,
+                )
+            return
 
-    def _defines_bins(self) -> bool:
-        """Whether bins get a definition by value range: under OWL 2 DL, with literals."""
-        return (
-            self.settings.profile != OWLProfile.OWL2EL
-            and DataRepresentation.VALUES in self.settings.data_representations
-        )
+        df_binned = df_attr.assign(_bin=binning.apply(df_attr[attr]))
+        in_bin = df_binned[df_binned["_bin"].notna()]
+        out_of_bin = df_binned[df_binned["_bin"].isna()]
+        self._emit_bin_classes(in_bin, attr)
+        if not out_of_bin.empty:
+            logger.warning(
+                "%s value(s) of attribute '%s' fall outside "
+                "all bin boundaries and carry no bin class.",
+                len(out_of_bin),
+                attr,
+            )
+
+    def _emit_bin_classes(self, in_bin: pd.DataFrame, attr: str) -> None:
+        """Emit one subclass per bin, holding the value individuals in it.
+
+        Values placed in a bin by an earlier table are skipped. Under OWL 2
+        DL each bin is also defined by its value range.
+        """
+        placed = self.emitted.bins_of(attr)
+        binning = self._binnings[attr]
+        for bin_label, bin_group in in_bin.groupby("_bin", observed=True):
+            bin_cls = vocab.bin_class(attr, bin_label)
+            self.sink.add_class(
+                bin_cls, attr, source=f"a bin of {attribute_source(attr)}"
+            )
+            self._bin_classes[attr][bin_cls] = None
+            if self.settings.profile != OWLProfile.OWL2EL:
+                lower, upper = binning.bounds(str(bin_label))
+                self.sink.add_bin_definition(
+                    bin_cls,
+                    attr,
+                    vocab.value_property(attr),
+                    None if math.isinf(lower) else lower,
+                    None if math.isinf(upper) else upper,
+                )
+            if bin_cls not in self._annotated:
+                self._annotated.add(bin_cls)
+                self.annotations.bin_class(
+                    bin_cls,
+                    attr,
+                    self._owners.get(attr, {}),
+                    str(bin_label),
+                    binning.bounds(str(bin_label)),
+                )
+            fresh = [
+                name
+                for value in bin_group[attr].unique()
+                if (name := vocab.attribute_value(attr, value)) not in placed
+            ]
+            placed.update(fresh)
+            self.sink.assert_individuals(bin_cls, fresh)

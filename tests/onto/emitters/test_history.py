@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import DataRepresentation, OCELExtension, OWLProfile
+from semanticlog.core.enums import AttributeRepresentation, OCELExtension, OWLProfile
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, RelationKind
@@ -136,23 +136,43 @@ def test_a_value_shared_with_a_current_value_carries_one_literal(history):
     assert literals == ["order.price.12.75"]
 
 
-def test_a_numeric_change_is_left_out_when_no_numbers_are_emitted(
+def test_literals_puts_the_new_value_on_the_change_record(awkward_store, tmp_path):
+    onto = emit(
+        history_settings(attribute_representations=[AttributeRepresentation.LITERALS]),
+        tmp_path / "literals.ofn",
+        data=awkward_store,
+    )
+    carriers = {s for p, s, _v, _t in onto.data_values if p == "has_value_order.price"}
+
+    assert {
+        "AttrChange_o1_order.price_20240104T090000_000000",
+        "AttrChange_o2_order.price_20240105T090000_000000",
+    } <= carriers
+    assert "change_value_order.price" not in onto.declared
+
+
+def test_the_value_property_domain_includes_the_change_class_under_literals(
     awkward_store, tmp_path
 ):
     onto = emit(
-        history_settings(data_representations=[]),
-        tmp_path / "none.ofn",
+        history_settings(
+            profile=OWLProfile.OWL2DL,
+            attribute_representations=[AttributeRepresentation.LITERALS],
+        ),
+        tmp_path / "domain.ofn",
         data=awkward_store,
     )
-    targets = {p for p, _, _ in onto.relations if p.startswith("change_value_")}
 
-    assert targets == {"change_value_order.channel"}
+    assert onto.domains["has_value_order.price"] == {"order", "order.priceChange"}
 
 
 def test_a_numeric_change_is_binned_like_a_current_value(awkward_store, tmp_path):
     onto = emit(
         history_settings(
-            data_representations=[DataRepresentation.EQUAL_BINS],
+            attribute_representations=[
+                AttributeRepresentation.INDIVIDUALS,
+                AttributeRepresentation.EQUAL_BINS,
+            ],
             bins=2,
             bin_labels=["low", "high"],
         ),

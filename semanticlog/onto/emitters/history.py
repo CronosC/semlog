@@ -17,11 +17,7 @@ from semanticlog.core import vocabulary as vocab
 from semanticlog.data.readable import ReadableStore
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.emitted import EmittedIndividuals
-from semanticlog.onto.emitters.attributes import (
-    AttributeEmitter,
-    attribute_source,
-    is_number_column,
-)
+from semanticlog.onto.emitters.attributes import AttributeEmitter, attribute_source
 from semanticlog.onto.emitters.base import Emitter
 from semanticlog.onto.emitters.time import TimeEmitter
 from semanticlog.onto.settings import OntoBuildSettings
@@ -61,8 +57,9 @@ class HistoryEmitter(Emitter):
         """Emit a change record for every recorded attribute change.
 
         Each record links the object to the new value and to the timestamp of
-        the change. Values go through `AttributeEmitter`, so a number is
-        binned the same way as on the object.
+        the change. Values go through `AttributeEmitter`, so they take the
+        attribute representations of the build and a number is binned the
+        same way as on the object.
         """
         for obj_type in data.get_object_change_types():
             changes_df = data.get_object_changes(obj_type)
@@ -90,10 +87,6 @@ class HistoryEmitter(Emitter):
         tmp = grp[["ocel:oid", "ocel:timestamp", attr_name]].copy()
         tmp = tmp[tmp[attr_name].notna()].copy()
         if tmp.empty:
-            return
-        if is_number_column(tmp[attr_name]) and not (
-            self.settings.data_representations
-        ):
             return
 
         attr_change_cls, change_prop = self._emit_schema(attr_name)
@@ -124,20 +117,28 @@ class HistoryEmitter(Emitter):
         self.assert_relations(vocab.CHANGED_AT, tmp, "attr_change_id", "ts_str")
 
     def _emit_schema(self, attr_name: str) -> tuple[str, str]:
-        """Declare the change class and change property of one attribute.
+        """Declare the change class of one attribute and what its records carry.
+
+        The value property is declared in every mode. The attribute class and
+        the change property, which reaches the value individual, are declared
+        under `individuals` only.
 
         Returns:
             The change class and the property reaching the new value.
         """
         source = attribute_source(attr_name)
-        self.attributes.add_attribute_class(attr_name, vocab.OBJECT_ATTRIBUTE)
         attr_change_cls = vocab.attribute_change_class(attr_name)
         self._change_classes[attr_change_cls] = None
         change_source = f"the attribute history of {source}"
         self.sink.add_class(
             attr_change_cls, vocab.ATTRIBUTE_CHANGE, source=change_source
         )
+        self.attributes.declare_value_property(attr_name, vocab.OBJECT_ATTRIBUTE)
         change_prop = vocab.change_value_property(attr_name)
+        if not self.settings.emits_value_individuals:
+            self.annotations.attribute_change_schema(attr_name, attr_change_cls)
+            return attr_change_cls, change_prop
+        self.attributes.add_attribute_class(attr_name, vocab.OBJECT_ATTRIBUTE)
         self.sink.add_property(
             change_prop,
             superprop=vocab.ATTRIBUTE_CHANGE_VALUE,

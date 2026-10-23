@@ -66,12 +66,7 @@ class TBoxEmitter(Emitter):
             inverse_name=vocab.ATTRIBUTE_OF if has_inverses else None,
             source="the TBox",
         )
-        self.sink.add_property(
-            vocab.HAS_DATA_VALUE,
-            domain_class=[vocab.ATTRIBUTE, vocab.TIME],
-            data_prop=True,
-            source="the TBox",
-        )
+        self.sink.add_property(vocab.HAS_DATA_VALUE, data_prop=True, source="the TBox")
 
         self.sink.add_property(
             vocab.TIMESTAMP,
@@ -83,7 +78,6 @@ class TBoxEmitter(Emitter):
         )
 
         self.declare_functional(vocab.OBSERVED_AT)
-        self.sink.add_functional(vocab.HAS_DATA_VALUE, data_prop=True)
         self.sink.add_functional(vocab.TIMESTAMP, data_prop=True)
 
         if attribute_history:

@@ -15,8 +15,8 @@ from typing import Any, Literal
 
 from semanticlog.core.enums import (
     REASONER_BACKENDS,
+    AttributeRepresentation,
     BuildEnum,
-    DataRepresentation,
     EventOrderRepresentation,
     InverseRepresentation,
     OCELExtension,
@@ -392,19 +392,19 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         argparse={"nargs": "*", "metavar": "COLUMN"},
     ),
     Setting(
-        "data_representations",
-        settings_default("data_representations"),
-        _list_of(_enum_of(DataRepresentation)),
+        "attribute_representations",
+        settings_default("attribute_representations"),
+        _list_of(_enum_of(AttributeRepresentation)),
         "settings",
         help=(
-            "Numeric attribute representations: "
-            f"{enum_choices(DataRepresentation)} (default: values). values "
-            "keeps the number, equal_bins bins by frequency, dist_bins bins by "
-            "distance from the typical value. At most one binning mode. Pass "
-            "no values "
-            "to omit numeric attributes."
+            "Attribute representations: "
+            f"{enum_choices(AttributeRepresentation)} (default: individuals). "
+            "individuals writes one individual per value carrying its literal, "
+            "literals writes the literal on the event or object, a bin mode "
+            "adds bin classes for numbers and needs individuals. At most one "
+            "bin mode."
         ),
-        argparse={"nargs": "*", "metavar": "MODE"},
+        argparse={"nargs": "+", "metavar": "MODE"},
     ),
     Setting(
         "bins",

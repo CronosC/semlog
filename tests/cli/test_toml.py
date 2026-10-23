@@ -36,6 +36,13 @@ def test_a_renamed_key_is_rejected_with_its_current_name(write_config):
         load_config_file(path)
 
 
+def test_data_representations_is_reported_as_renamed(write_config):
+    path = write_config("run.toml", 'data_representations = ["values"]\n')
+
+    with pytest.raises(ConfigError, match="did you mean 'attribute_representations'"):
+        load_config_file(path)
+
+
 def test_extends_is_suggested_for_a_misspelling(write_config):
     path = write_config("run.toml", 'extend = "_base.toml"\n')
 

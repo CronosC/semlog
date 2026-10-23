@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from semanticlog.core.enums import OCELExtension, OWLProfile
+from semanticlog.core.summary import counted
 from semanticlog.core.vocabulary import DEFAULT_IRI, TBOX_IRI, UnsafeLocalNameError
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.oced import OCEDStore
@@ -196,8 +197,8 @@ def test_the_unions_el_drops_are_reported_once_for_the_build(awkward_store, capl
     ]
     dropped = builder.sink.dropped_unions
     assert omitted == [
-        f"  omitted {dropped} axioms with a union of classes, which OWL 2 EL does "
-        "not allow"
+        f"  omitted {counted(dropped, 'axiom', 'axioms')} with a union of classes, "
+        "which OWL 2 EL does not allow"
     ]
 
 

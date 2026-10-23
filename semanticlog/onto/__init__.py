@@ -9,7 +9,7 @@ from importlib import import_module
 from typing import Any
 
 from semanticlog.core.enums import (
-    DataRepresentation,
+    AttributeRepresentation,
     EventOrderRepresentation,
     InverseRepresentation,
     OCELExtension,
@@ -22,7 +22,7 @@ from semanticlog.onto.settings import OntoBuildSettings
 
 __all__ = [
     "DEFAULT_IRI",
-    "DataRepresentation",
+    "AttributeRepresentation",
     "EventOrderRepresentation",
     "InverseRepresentation",
     "OCEDOntoBuilder",

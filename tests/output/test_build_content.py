@@ -14,8 +14,7 @@ SHIPMENTS = [f"s{i}" for i in range(1, 7)]
 ORDERS = [f"o{i}" for i in range(1, 13)]
 ITEMS = ["i1", "i2", "i3", "i4"]
 
-VALUES_AND_EQUAL_BINS = "el_ef_explicit_bins"
-EQUAL_BINS_ONLY = "el_history_bins_only"
+EQUAL_BINS = "el_ef_explicit_bins"
 DIST_BINS = "dl_ef_dist_bins_history"
 
 
@@ -142,7 +141,7 @@ def test_values_keeps_one_individual_per_distinct_number(onto):
 
 
 def test_equal_bins_split_the_values_by_quantile(built):
-    bins = _bins(built(EQUAL_BINS_ONLY), "order.price")
+    bins = _bins(built(EQUAL_BINS), "order.price")
 
     # Eleven prices into two bins, so six fall below the median and five above.
     assert bins == {
@@ -152,7 +151,7 @@ def test_equal_bins_split_the_values_by_quantile(built):
 
 
 def test_a_bin_class_sits_under_its_attribute(built):
-    assert built(EQUAL_BINS_ONLY).parents["order.price_bin_low"] == {"order.price"}
+    assert built(EQUAL_BINS).parents["order.price_bin_low"] == {"order.price"}
 
 
 def test_distribution_bins_follow_the_shape_of_the_column(built):
@@ -166,7 +165,7 @@ def test_distribution_bins_follow_the_shape_of_the_column(built):
 
 
 def test_every_bin_class_carries_one_label_and_one_comment(built):
-    onto = built(VALUES_AND_EQUAL_BINS)
+    onto = built(EQUAL_BINS)
     bin_classes = {c for c in onto.classes if "_bin_" in c}
     annotated = [(n, kind) for n, kind, _ in onto.annotations if n in bin_classes]
 
@@ -176,25 +175,8 @@ def test_every_bin_class_carries_one_label_and_one_comment(built):
     )
 
 
-def test_a_binned_value_keeps_its_number_only_with_values(built):
-    with_values = built(VALUES_AND_EQUAL_BINS)
-    without = built(EQUAL_BINS_ONLY)
-
-    def priced(onto):
-        return {n: t for n, t in onto.types.items() if n.startswith("order.price.")}
-
-    assert len(priced(with_values)) == 11
-    assert priced(with_values) == priced(without)
-    assert {
-        s for _, s, _v, _t in with_values.data_values if s.startswith("order.price.")
-    } == set(priced(with_values))
-    assert not {
-        s for _, s, _v, _t in without.data_values if s.startswith("order.price.")
-    }
-
-
 def test_a_changed_number_lands_in_the_bin_of_the_same_number_on_an_object(built):
-    onto = built(EQUAL_BINS_ONLY)
+    onto = built(DIST_BINS)
     bins = {c for c in onto.classes if c.startswith("order.price_bin_")}
 
     # o1 and o2 change their price to 12.75 and 41.0, which other orders also carry.
@@ -202,14 +184,15 @@ def test_a_changed_number_lands_in_the_bin_of_the_same_number_on_an_object(built
     assert onto.types["order.price.41"] & bins == {"order.price_bin_high"}
 
 
-def test_no_numeric_representation_leaves_the_numbers_out(built):
-    onto = built("dl_declare_multi_cc")
+def test_literals_alone_leaves_out_the_attribute_classes(built):
+    onto = built("el_history_literals")
 
-    assert "order.price" not in onto.declared
-    assert "order.channel" in onto.classes
+    assert "order.channel" not in onto.declared
+    assert "has_order.channel" not in onto.declared
+    assert ("has_value_order.channel", "o1") in onto.data_assertions
 
 
-@pytest.mark.parametrize("name", [DIST_BINS, VALUES_AND_EQUAL_BINS])
+@pytest.mark.parametrize("name", [DIST_BINS, EQUAL_BINS])
 def test_a_column_with_too_few_values_to_bin_keeps_its_numbers(built, name):
     # weight has four distinct values, below what either mode needs.
     onto = built(name)
@@ -291,7 +274,7 @@ def test_axiomatic_inverses_relate_the_two_properties(built):
 
 
 def test_el_gets_the_inverse_assertions_but_not_the_axiom(built):
-    onto = built(VALUES_AND_EQUAL_BINS)
+    onto = built(EQUAL_BINS)
 
     assert ("inv_concerns", "o1", "e1") in onto.relations
     assert onto.inverses == set()

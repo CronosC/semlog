@@ -208,7 +208,7 @@ def test_a_dry_run_plan_resolves_to_the_same_run(ocel, tmp_path):
         profile="OWL2EL",
         case_concepts=["order"],
         name="by-order",
-        data_representations=["equal_bins"],
+        attribute_representations=["individuals", "equal_bins"],
         bins=2,
         bin_labels=["low", "high"],
         save_backmap=True,

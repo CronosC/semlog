@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import DataRepresentation, OWLProfile
+from semanticlog.core.enums import AttributeRepresentation, OWLProfile
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.binning import Binning
 from semanticlog.data.cleaning import clean_oced_data
@@ -24,8 +24,14 @@ from semanticlog.onto.settings import OntoBuildSettings
 from tests.support.build import emit
 from tests.support.functional import read_functional
 
+INDIVIDUALS = [AttributeRepresentation.INDIVIDUALS]
+LITERALS = [AttributeRepresentation.LITERALS]
+BOTH = [AttributeRepresentation.INDIVIDUALS, AttributeRepresentation.LITERALS]
 BIN_SETTINGS = dict(
-    data_representations=[DataRepresentation.EQUAL_BINS],
+    attribute_representations=[
+        AttributeRepresentation.INDIVIDUALS,
+        AttributeRepresentation.EQUAL_BINS,
+    ],
     bins=2,
     bin_labels=["low", "high"],
 )
@@ -149,16 +155,7 @@ def test_a_bin_class_and_a_value_of_the_same_label_are_named_apart(tmp_path):
     store = _order_store(price=[float(n) for n in range(1, 13)])
 
     onto = emit(
-        OntoBuildSettings(
-            **{
-                **BIN_SETTINGS,
-                "data_representations": [
-                    DataRepresentation.VALUES,
-                    DataRepresentation.EQUAL_BINS,
-                ],
-                "bin_labels": ["1", "12"],
-            }
-        ),
+        OntoBuildSettings(**{**BIN_SETTINGS, "bin_labels": ["1", "12"]}),
         tmp_path / "bins.ofn",
         data=store,
     )
@@ -166,18 +163,6 @@ def test_a_bin_class_and_a_value_of_the_same_label_are_named_apart(tmp_path):
     assert "order.price_bin_1" in onto.classes
     assert "order.price.1" in onto.individuals
     assert onto.classes & onto.individuals == set()
-
-
-def test_a_boolean_attribute_keeps_its_values_when_numbers_are_left_out(tmp_path):
-    onto = emit(
-        OntoBuildSettings(data_representations=[]),
-        tmp_path / "bool.ofn",
-        data=_order_store(express=[True, False], price=[1.0, 2.0]),
-    )
-
-    assert "order.price" not in onto.declared
-    assert {"order.express.True", "order.express.False"} <= onto.individuals
-    assert ("has_value_order.express", "order.express.True") in onto.data_assertions
 
 
 def test_a_boolean_attribute_is_not_binned(tmp_path, caplog):
@@ -212,7 +197,7 @@ def test_a_value_outside_every_bin_is_emitted_without_a_bin(recording_sink, capl
     assert "fall outside all bin boundaries" in caplog.text
     assert _values(sink) >= {"price.1", "price.7", "price.99"}
     assert binned == {"price.1", "price.7"}
-    assert _literal_subjects(sink) == set()
+    assert _literal_subjects(sink) == {"price.1", "price.7", "price.99"}
 
 
 def test_a_column_too_narrow_to_bin_is_emitted_unbinned_and_reported_once(
@@ -236,16 +221,8 @@ def test_a_column_too_narrow_to_bin_is_emitted_unbinned_and_reported_once(
     assert len(warnings) == 1
 
 
-def test_values_alongside_a_binning_mode_keeps_the_literals(recording_sink):
-    settings = OntoBuildSettings(
-        **{
-            **BIN_SETTINGS,
-            "data_representations": [
-                DataRepresentation.VALUES,
-                DataRepresentation.EQUAL_BINS,
-            ],
-        }
-    )
+def test_a_number_under_individuals_always_carries_its_literal(recording_sink):
+    settings = OntoBuildSettings(**BIN_SETTINGS)
     sink = recording_sink(settings.profile)
     rows = pd.DataFrame({"oid": ["o1", "o2", "o3"], "price": [1.0, 7.0, 99.0]})
 
@@ -260,12 +237,69 @@ def test_values_alongside_a_binning_mode_keeps_the_literals(recording_sink):
 # Literals and bin definitions
 # --------------------------------------------------------------------------
 
-VALUES_AND_BINS = dict(
-    data_representations=[DataRepresentation.VALUES, DataRepresentation.EQUAL_BINS],
-    bins=2,
-    bin_labels=["low", "high"],
-)
+VALUES_AND_BINS = BIN_SETTINGS
 TWELVE_PRICES = [float(n) for n in range(1, 13)]
+
+
+def test_literals_puts_the_literal_on_the_entity(tmp_path):
+    onto = emit(
+        OntoBuildSettings(attribute_representations=LITERALS),
+        tmp_path / "literals.ofn",
+        data=_order_store(price=[1.5, 2.0]),
+    )
+
+    assert ("has_value_order.price", "o1", "1.5", "decimal") in onto.data_values
+
+
+def test_literals_alone_emits_no_attribute_class_and_no_has_property(tmp_path):
+    onto = emit(
+        OntoBuildSettings(attribute_representations=LITERALS),
+        tmp_path / "literals.ofn",
+        data=_order_store(channel=["web", "shop"]),
+    )
+
+    assert "order.channel" not in onto.declared
+    assert "has_order.channel" not in onto.declared
+    assert "has_value_order.channel" in onto.declared
+    assert onto.individuals & {"order.channel.web", "order.channel.shop"} == set()
+
+
+def test_individuals_and_literals_write_the_literal_in_both_places(tmp_path):
+    onto = emit(
+        OntoBuildSettings(attribute_representations=BOTH),
+        tmp_path / "both.ofn",
+        data=_order_store(channel=["web"]),
+    )
+
+    assert ("has_order.channel", "o1", "order.channel.web") in onto.relations
+    assert (
+        "has_value_order.channel",
+        "order.channel.web",
+        "web",
+        "string",
+    ) in onto.data_values
+    assert ("has_value_order.channel", "o1", "web", "string") in onto.data_values
+
+
+@pytest.mark.parametrize(
+    ("representations", "domain"),
+    [
+        (INDIVIDUALS, {"order.channel"}),
+        (LITERALS, {"order"}),
+        (BOTH, {"order.channel", "order"}),
+    ],
+    ids=["individuals", "literals", "both"],
+)
+def test_the_value_property_domain_follows_the_selection(
+    tmp_path, representations, domain
+):
+    onto = emit(
+        OntoBuildSettings(attribute_representations=representations),
+        tmp_path / "domain.ofn",
+        data=_order_store(channel=["web"]),
+    )
+
+    assert onto.domains["has_value_order.channel"] == domain
 
 
 def test_a_text_value_carries_a_string_literal(tmp_path):
@@ -366,18 +400,6 @@ def test_a_bin_has_no_definition_under_el(recording_sink):
         "order.price_bin_low",
         "order.price_bin_high",
     }
-
-
-def test_a_bin_without_values_has_no_definition(recording_sink):
-    sink = recording_sink(OWLProfile.OWL2DL)
-    settings = OntoBuildSettings(
-        **{**VALUES_AND_BINS, "data_representations": [DataRepresentation.EQUAL_BINS]}
-    )
-    OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
-        _order_store(price=TWELVE_PRICES)
-    )
-
-    assert sink.of_kind("bin_definition") == []
 
 
 @pytest.mark.reasoner

@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from semanticlog.core.enums import (
+    AttributeRepresentation,
     BuildEnum,
-    DataRepresentation,
     EventOrderRepresentation,
     InverseRepresentation,
     OCELExtension,
@@ -37,7 +37,8 @@ class OntoBuildSettings:
         ocel_extensions: Optional OCEL 2.0 features to emit.
         inverse_representations: How inverse properties are expressed. Empty
             for no inverses.
-        data_representations: How numeric attribute values are expressed.
+        attribute_representations: How attribute values are expressed. Not
+            empty.
         bins: Number of bins for the binning modes. At least two.
         bin_labels: Label per bin. Must have exactly `bins` entries, all
             different.
@@ -57,7 +58,9 @@ class OntoBuildSettings:
     order_representations: tuple[EventOrderRepresentation, ...] = ()
     ocel_extensions: tuple[OCELExtension, ...] = ()
     inverse_representations: tuple[InverseRepresentation, ...] = ()
-    data_representations: tuple[DataRepresentation, ...] = (DataRepresentation.VALUES,)
+    attribute_representations: tuple[AttributeRepresentation, ...] = (
+        AttributeRepresentation.INDIVIDUALS,
+    )
     bins: int = DEFAULT_BINS
     bin_labels: tuple[str, ...] = tuple(DEFAULT_BIN_LABELS)
     derive_annotations: bool = False
@@ -67,7 +70,7 @@ class OntoBuildSettings:
         "order_representations",
         "ocel_extensions",
         "inverse_representations",
-        "data_representations",
+        "attribute_representations",
         "bin_labels",
     )
 
@@ -76,7 +79,7 @@ class OntoBuildSettings:
         "order_representations": EventOrderRepresentation,
         "ocel_extensions": OCELExtension,
         "inverse_representations": InverseRepresentation,
-        "data_representations": DataRepresentation,
+        "attribute_representations": AttributeRepresentation,
     }
 
     def __post_init__(self) -> None:
@@ -169,10 +172,23 @@ class OntoBuildSettings:
         return OCELExtension.ATTRIBUTE_HISTORY in self.ocel_extensions
 
     @property
-    def binning_mode(self) -> DataRepresentation | None:
+    def emits_value_individuals(self) -> bool:
+        """Whether each attribute value becomes an individual of an attribute class."""
+        return AttributeRepresentation.INDIVIDUALS in self.attribute_representations
+
+    @property
+    def emits_entity_literals(self) -> bool:
+        """Whether an event, object or change record carries its literals itself."""
+        return AttributeRepresentation.LITERALS in self.attribute_representations
+
+    @property
+    def binning_mode(self) -> AttributeRepresentation | None:
         """The selected binning mode, or None if numeric values are not binned."""
-        for mode in (DataRepresentation.EQUAL_BINS, DataRepresentation.DIST_BINS):
-            if mode in self.data_representations:
+        for mode in (
+            AttributeRepresentation.EQUAL_BINS,
+            AttributeRepresentation.DIST_BINS,
+        ):
+            if mode in self.attribute_representations:
                 return mode
         return None
 
@@ -207,13 +223,26 @@ class OntoBuildSettings:
                 "inverse_representations, or set profile to OWL2DL."
             )
 
+        if not self.attribute_representations:
+            errors.append(
+                "attribute_representations is empty. Choose individuals, "
+                "literals or both."
+            )
+
         if (
-            DataRepresentation.EQUAL_BINS in self.data_representations
-            and DataRepresentation.DIST_BINS in self.data_representations
+            AttributeRepresentation.EQUAL_BINS in self.attribute_representations
+            and AttributeRepresentation.DIST_BINS in self.attribute_representations
         ):
             errors.append(
                 "equal_bins and dist_bins cannot both be set. Keep at most one "
-                "in data_representations."
+                "in attribute_representations."
+            )
+
+        if self.binning_mode is not None and not self.emits_value_individuals:
+            errors.append(
+                f"{self.binning_mode.value} needs individuals in "
+                "attribute_representations, because a bin is a class of value "
+                "individuals."
             )
 
         if errors:

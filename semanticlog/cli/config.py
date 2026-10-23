@@ -367,7 +367,8 @@ def _binning_warnings(merged: dict[str, Any], settings: OntoBuildSettings) -> li
         return []
     return [
         "bins/bin_labels have no effect without equal_bins or dist_bins in "
-        f"data_representations (currently {[r.value for r in settings.data_representations]})."
+        "attribute_representations (currently "
+        f"{[r.value for r in settings.attribute_representations]})."
     ]
 
 

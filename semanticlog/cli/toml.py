@@ -13,7 +13,8 @@ from semanticlog.core.errors import ConfigError
 
 RENAMED_KEYS: dict[str, str] = {
     "order": "order_representations",
-    "data_representation": "data_representations",
+    "data_representation": "attribute_representations",
+    "data_representations": "attribute_representations",
     "inverse_representation": "inverse_representations",
     "size_limit": "size_limit_mb",
 }

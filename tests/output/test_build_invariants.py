@@ -9,7 +9,7 @@ import pytest
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import (
-    DataRepresentation,
+    AttributeRepresentation,
     EventOrderRepresentation,
     InverseRepresentation,
     OCELExtension,
@@ -57,7 +57,7 @@ def test_the_matrix_builds_every_value_of_every_setting():
         "profile": set(),
         "order_representations": set(),
         "inverse_representations": set(),
-        "data_representations": set(),
+        "attribute_representations": set(),
         "ocel_extensions": set(),
         "derive_annotations": set(),
     }
@@ -68,7 +68,7 @@ def test_the_matrix_builds_every_value_of_every_setting():
         for key in (
             "order_representations",
             "inverse_representations",
-            "data_representations",
+            "attribute_representations",
             "ocel_extensions",
         ):
             values = getattr(settings, key)
@@ -78,7 +78,7 @@ def test_the_matrix_builds_every_value_of_every_setting():
         "profile": set(OWLProfile),
         "order_representations": {*EventOrderRepresentation, None},
         "inverse_representations": {*InverseRepresentation, None},
-        "data_representations": {*DataRepresentation, None},
+        "attribute_representations": set(AttributeRepresentation),
         "ocel_extensions": {*OCELExtension, None},
         "derive_annotations": {True, False},
     }

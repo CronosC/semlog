@@ -20,7 +20,9 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from semanticlog.core.enums import DataRepresentation as DataRepresentation
+    from semanticlog.core.enums import (
+        AttributeRepresentation as AttributeRepresentation,
+    )
     from semanticlog.core.enums import (
         EventOrderRepresentation as EventOrderRepresentation,
     )
@@ -59,7 +61,7 @@ _EXPORTS: dict[str, str] = {
     "BuildResult": "semanticlog.onto.result",
     "ClassicalLoader": "semanticlog.data.loading.classical_loader",
     "DEFAULT_IRI": "semanticlog.core.vocabulary",
-    "DataRepresentation": "semanticlog.core.enums",
+    "AttributeRepresentation": "semanticlog.core.enums",
     "DeclareResult": "semanticlog.data.declare",
     "EntityKind": "semanticlog.data.tables",
     "EventOrderRepresentation": "semanticlog.core.enums",

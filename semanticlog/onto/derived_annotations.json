@@ -54,7 +54,7 @@
   },
   "attribute.value": {
     "label": "{original} value",
-    "comment": "Relates a '{original}' value of {owners} to its literal."
+    "comment": "Carries the literal of a '{original}' value of {owners}."
   },
   "attribute.bin_lowest": {
     "label": "{original} ({types}): {bin}",

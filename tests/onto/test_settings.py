@@ -5,7 +5,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from semanticlog.core.enums import (
-    DataRepresentation,
+    AttributeRepresentation,
     EventOrderRepresentation,
     InverseRepresentation,
     OWLProfile,
@@ -49,15 +49,18 @@ def test_replace_returns_a_copy_and_leaves_the_original_alone():
 
 def test_an_enum_setting_may_be_written_as_its_value_or_its_member_name():
     settings = OntoBuildSettings(
-        profile="OWL2EL", data_representations=["equal_bins", "VALUES"]
+        profile="OWL2EL", attribute_representations=["equal_bins", "INDIVIDUALS"]
     )
 
     assert settings.profile is OWLProfile.OWL2EL
-    assert settings.data_representations == (
-        DataRepresentation.EQUAL_BINS,
-        DataRepresentation.VALUES,
+    assert settings.attribute_representations == (
+        AttributeRepresentation.EQUAL_BINS,
+        AttributeRepresentation.INDIVIDUALS,
     )
-    assert settings.to_dict()["data_representations"] == ["equal_bins", "values"]
+    assert settings.to_dict()["attribute_representations"] == [
+        "equal_bins",
+        "individuals",
+    ]
 
 
 def test_an_unknown_enum_value_is_rejected_on_construction():
@@ -82,17 +85,34 @@ def test_an_unknown_enum_value_is_rejected_on_construction():
         ),
         (
             {
-                "data_representations": [
-                    DataRepresentation.EQUAL_BINS,
-                    DataRepresentation.DIST_BINS,
+                "attribute_representations": [
+                    AttributeRepresentation.INDIVIDUALS,
+                    AttributeRepresentation.EQUAL_BINS,
+                    AttributeRepresentation.DIST_BINS,
                 ],
                 "bins": 2,
                 "bin_labels": ["low", "high"],
             },
             "equal_bins and dist_bins cannot both be set",
         ),
+        ({"attribute_representations": []}, "attribute_representations is empty"),
+        (
+            {
+                "attribute_representations": [AttributeRepresentation.EQUAL_BINS],
+                "bins": 2,
+                "bin_labels": ["low", "high"],
+            },
+            "equal_bins needs individuals",
+        ),
     ],
-    ids=["ef under el", "ef without df", "axiomatic inverses under el", "two binnings"],
+    ids=[
+        "ef under el",
+        "ef without df",
+        "axiomatic inverses under el",
+        "two binnings",
+        "no representation",
+        "bins without individuals",
+    ],
 )
 def test_settings_that_contradict_each_other_fail_validation(overrides, match):
     with pytest.raises(ConfigError, match=match):

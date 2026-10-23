@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 
 from semanticlog.core.enums import (
-    DataRepresentation,
+    AttributeRepresentation,
     EventOrderRepresentation,
     InverseRepresentation,
     OCELExtension,
@@ -102,7 +102,10 @@ MATRIX: dict[str, Callable[[], Configuration]] = {
         profile=OWLProfile.OWL2EL,
         order_representations=[EventOrderRepresentation.EF_EXPLICIT],
         inverse_representations=[InverseRepresentation.IMPLICIT],
-        data_representations=[DataRepresentation.VALUES, DataRepresentation.EQUAL_BINS],
+        attribute_representations=[
+            AttributeRepresentation.INDIVIDUALS,
+            AttributeRepresentation.EQUAL_BINS,
+        ],
         bins=2,
         bin_labels=["low", "high"],
         derive_annotations=True,
@@ -113,15 +116,16 @@ MATRIX: dict[str, Callable[[], Configuration]] = {
             EventOrderRepresentation.EF,
             EventOrderRepresentation.EF_EXPLICIT,
         ],
-        data_representations=[DataRepresentation.VALUES, DataRepresentation.DIST_BINS],
+        attribute_representations=[
+            AttributeRepresentation.INDIVIDUALS,
+            AttributeRepresentation.DIST_BINS,
+        ],
         ocel_extensions=[OCELExtension.ATTRIBUTE_HISTORY],
     ),
-    "el_history_bins_only": lambda: settings(
+    "el_history_literals": lambda: settings(
         profile=OWLProfile.OWL2EL,
         ocel_extensions=[OCELExtension.ATTRIBUTE_HISTORY],
-        data_representations=[DataRepresentation.EQUAL_BINS],
-        bins=2,
-        bin_labels=["low", "high"],
+        attribute_representations=[AttributeRepresentation.LITERALS],
         derive_annotations=True,
     ),
     "dl_declare_multi_cc": lambda: settings(
@@ -132,7 +136,10 @@ MATRIX: dict[str, Callable[[], Configuration]] = {
         ],
         declare=ragged_declare_constraints(),
         inverse_representations=[InverseRepresentation.IMPLICIT],
-        data_representations=[],
+        attribute_representations=[
+            AttributeRepresentation.INDIVIDUALS,
+            AttributeRepresentation.LITERALS,
+        ],
         derive_annotations=True,
     ),
     "dl_no_case_concept": lambda: settings(

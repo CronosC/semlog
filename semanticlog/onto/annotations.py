@@ -497,12 +497,13 @@ class AnnotationWriter:
             )
 
     def attribute_change_schema(
-        self, attr: str, change_class: str, change_prop: str
+        self, attr: str, change_class: str, change_prop: str | None = None
     ) -> None:
-        """Annotate the change class and change property of one attribute."""
+        """Annotate the change class of one attribute, and its change property if given."""
         original = self.original(attr)
         self.write("change.class", change_class, original=original)
-        self.write("change.property", change_prop, original=original)
+        if change_prop is not None:
+            self.write("change.property", change_prop, original=original)
 
     def attribute_change_individuals(
         self,
