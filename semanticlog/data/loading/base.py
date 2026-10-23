@@ -34,20 +34,26 @@ class LoaderColumns:
         act_col: Column holding the activity name.
         time_col: Column holding the event timestamp.
         object_cols: Further columns that each become an object type.
+        object_attribute_cols: Columns that describe the case or another
+            object column rather than an event. Each must not vary within an
+            object.
     """
 
     case_col: str = "case:concept:name"
     act_col: str = "concept:name"
     time_col: str = "time:timestamp"
     object_cols: tuple[str, ...] = ()
+    object_attribute_cols: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if isinstance(self.object_cols, str):
-            raise ConfigError(
-                f"object_cols must be a list, got the string {self.object_cols!r}. "
-                f"Pass [{self.object_cols!r}]."
-            )
-        object.__setattr__(self, "object_cols", tuple(self.object_cols))
+        for name in ("object_cols", "object_attribute_cols"):
+            value = getattr(self, name)
+            if isinstance(value, str):
+                raise ConfigError(
+                    f"{name} must be a list, got the string {value!r}. "
+                    f"Pass [{value!r}]."
+                )
+            object.__setattr__(self, name, tuple(value))
 
     @classmethod
     def keys(cls) -> tuple[str, ...]:
@@ -77,6 +83,11 @@ class LoaderColumns:
     def structural(self) -> tuple[str, ...]:
         """Every structural column, in order."""
         return (self.case_col, self.act_col, self.time_col, *self.object_cols)
+
+    @property
+    def named(self) -> tuple[str, ...]:
+        """Every column a config names, in order."""
+        return (*self.structural, *self.object_attribute_cols)
 
 
 class Inference:

@@ -1,8 +1,9 @@
 """Reader for flat, single-case event logs.
 
 `ClassicalLoader` reads a `.csv` or `.xes` log. The case column and each
-column in `object_cols` become object types, and the other columns become
-attributes.
+column in `object_cols` become object types. The columns in
+`object_attribute_cols` become attributes of those objects, and the other
+columns become attributes of the events.
 """
 
 import csv
@@ -83,17 +84,19 @@ class ClassicalLoader(Loader):
         Ids are prefixed: events with `e` and the row number, cases with `t`,
         and the values of another object column with the column name. Every
         event relates to its case through `modifies`, and to another object
-        column through `modifies_<column>`. A column constant within each
-        object of a type becomes an attribute of that type. The other columns
-        stay on the events.
+        column through `modifies_<column>`. A column named in
+        `object_attribute_cols` becomes an attribute of the first object type,
+        the case first, within whose objects it does not vary. The other
+        columns stay on the events.
 
         Returns:
             A store with one activity per distinct activity name.
 
         Raises:
             ConfigError: If a configured column is not in the file.
-            InputError: If a row has no case id or no activity, or if the
-                time column holds a value that is not a timestamp.
+            InputError: If a row has no case id or no activity, if the time
+                column holds a value that is not a timestamp, or if an object
+                attribute column varies within every object type.
         """
         logger.info("Loading classical data from file %s", self.path)
         log = (
@@ -121,7 +124,7 @@ class ClassicalLoader(Loader):
             if column
             not in {event_id, columns.act_col, columns.time_col, *object_types}
         ]
-        owned = self._object_attributes(log, object_types, attributes)
+        owned = self._object_attributes(log, object_types)
         event_attributes = [
             c for c in attributes if c not in set().union(*owned.values())
         ]
@@ -186,12 +189,17 @@ class ClassicalLoader(Loader):
                     f"{setting} {column!r} is not a column of {self.path}. "
                     f"Available columns: {sorted(map(str, log.columns))}."
                 )
-        missing = [c for c in columns.object_cols if c not in log.columns]
-        if missing:
-            raise ConfigError(
-                f"object_cols names {missing}, which are not columns of "
-                f"{self.path}. Available columns: {sorted(map(str, log.columns))}."
-            )
+        for setting, named in (
+            ("object_cols", columns.object_cols),
+            ("object_attribute_cols", columns.object_attribute_cols),
+        ):
+            missing = [c for c in named if c not in log.columns]
+            if missing:
+                raise ConfigError(
+                    f"{setting} names {missing}, which are not columns of "
+                    f"{self.path}. Available columns: "
+                    f"{sorted(map(str, log.columns))}."
+                )
 
     def _require_filled(self, log: pd.DataFrame) -> None:
         """Raise if a row has no case id or no activity.
@@ -234,27 +242,31 @@ class ClassicalLoader(Loader):
         return parsed
 
     def _object_attributes(
-        self, log: pd.DataFrame, object_types: list[str], attributes: list[str]
+        self, log: pd.DataFrame, object_types: list[str]
     ) -> dict[str, set[str]]:
-        """Return the columns constant within each object, keyed by object type.
+        """Return the named object attribute columns, keyed by the object type each goes to.
 
-        A column constant within two object types goes to the first type
-        named.
+        A column goes to the first type, in the order given, within whose
+        objects it does not vary.
+
+        Raises:
+            InputError: If a named column varies within the objects of every
+                type, naming the column, the last type tried and a sample of
+                its objects with more than one value.
         """
         owned: dict[str, set[str]] = {name: set() for name in object_types}
-        taken: set[str] = set()
-        for object_type in object_types:
-            for column in attributes:
-                if column in taken:
-                    continue
-                if (log.groupby(object_type)[column].nunique(dropna=False) <= 1).all():
+        for column in self.columns.object_attribute_cols:
+            for object_type in object_types:
+                varying = log.groupby(object_type)[column].nunique(dropna=False)
+                if (varying <= 1).all():
                     owned[object_type].add(column)
-                    taken.add(column)
-        for object_type, columns in owned.items():
-            if columns:
-                logger.info(
-                    "%s do not vary within a '%s' and are read as its attributes.",
-                    ", ".join(sorted(columns)),
-                    object_type,
+                    break
+            else:
+                sample = sorted(map(str, varying[varying > 1].index[:_SAMPLE]))
+                raise InputError(
+                    f"object_attribute_cols names {column!r}, which varies within "
+                    f"the objects of every object type, last {object_type!r} "
+                    f"(for example {', '.join(sample)}). Name a column that has "
+                    "one value per object, or leave it on the events."
                 )
         return owned

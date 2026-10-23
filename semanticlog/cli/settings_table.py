@@ -403,6 +403,18 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         argparse={"nargs": "*", "metavar": "COLUMN"},
     ),
     Setting(
+        "object_attribute_cols",
+        [],
+        _list_of(_as_str),
+        "run",
+        help=(
+            "Flat log only: columns that describe a case or another object "
+            "column rather than an event. Each must not vary within an object "
+            "(default: none)."
+        ),
+        argparse={"nargs": "*", "metavar": "COLUMN"},
+    ),
+    Setting(
         "attribute_representations",
         settings_default("attribute_representations"),
         _list_of(_enum_of(AttributeRepresentation)),
@@ -605,12 +617,19 @@ LOG_INPUT_KEYS: tuple[str, ...] = (
     "act_col",
     "time_col",
     "object_cols",
+    "object_attribute_cols",
     "ocel_extensions",
     "case_concepts",
     "auto_case_concepts",
 )
 
-COLUMN_KEYS: tuple[str, ...] = ("case_col", "act_col", "time_col", "object_cols")
+COLUMN_KEYS: tuple[str, ...] = (
+    "case_col",
+    "act_col",
+    "time_col",
+    "object_cols",
+    "object_attribute_cols",
+)
 
 DECLARE_MINING_KEYS: tuple[str, ...] = (
     "constraints",

@@ -98,7 +98,7 @@ The paths a build wrote and the verdict of `reason --check` go to stdout. Progre
 
 ### Reading a flat log
 
-A `.csv` or `.xes` log has one case notion and no objects. The case column becomes an object type and every event relates to its case. Each column named in `object_cols` becomes another object type the same way. The other columns become attributes.
+A `.csv` or `.xes` log has one case notion and no objects. The case column becomes an object type and every event relates to its case. Each column named in `object_cols` becomes another object type the same way. A column named in `object_attribute_cols` becomes an attribute of the case, or of the first object column within whose objects it does not vary. The other columns become attributes of the events.
 
 ```bash
 printf 'case_id,activity,timestamp,resource\nc1,register,2024-01-01 09:00,ann\nc1,approve,2024-01-02 10:00,bo\n' > runs/claims.csv
@@ -106,7 +106,7 @@ uv run semlog inspect runs/claims.csv --case-col case_id --act-col activity --ti
 uv run semlog build runs/claims.csv --case-col case_id --act-col activity --time-col timestamp --object-cols resource --case-concepts case_id --order-representations df
 ```
 
-A timestamp without a time zone is read as UTC. `case_col`, `act_col` and `time_col` default to the XES column names, so an `.xes` file needs none of them unless it renames those columns. `object_cols` is empty by default. All four are TOML keys and flags.
+A timestamp without a time zone is read as UTC. `case_col`, `act_col` and `time_col` default to the XES column names, so an `.xes` file needs none of them unless it renames those columns. `object_cols` and `object_attribute_cols` are empty by default. All five are TOML keys and flags.
 
 ## What a build produces
 

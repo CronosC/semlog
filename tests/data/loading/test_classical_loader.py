@@ -117,10 +117,11 @@ def test_an_xes_log_becomes_the_store_a_csv_of_it_would(tmp_path, csv_path):
     )
 
 
-def test_a_column_constant_within_each_case_moves_onto_the_case(tmp_path):
+def test_a_named_constant_column_becomes_an_object_attribute(tmp_path):
     path = _write(tmp_path, region=["north", "north"], cost=[10, 20])
+    columns = LoaderColumns(object_attribute_cols=["region"])
 
-    oced = ClassicalLoader(path).get_oced()
+    oced = ClassicalLoader(path, columns).get_oced()
 
     assert list(oced.table(EntityKind.OBJECT, CASE).data.columns) == [CASE, "region"]
     assert list(oced.table(EntityKind.EVENT, "a").data.columns) == [
@@ -128,6 +129,47 @@ def test_a_column_constant_within_each_case_moves_onto_the_case(tmp_path):
         "time:timestamp",
         "cost",
     ]
+
+
+def test_an_unnamed_constant_column_stays_on_the_events(tmp_path):
+    path = _write(tmp_path, region=["north", "north"])
+
+    oced = ClassicalLoader(path).get_oced()
+
+    assert list(oced.table(EntityKind.OBJECT, CASE).data.columns) == [CASE]
+    assert "region" in oced.table(EntityKind.EVENT, "a").data.columns
+
+
+def test_a_named_column_that_varies_within_a_case_is_rejected(tmp_path):
+    path = _write(tmp_path, cost=[10, 20])
+    columns = LoaderColumns(object_attribute_cols=["cost"])
+
+    with pytest.raises(
+        InputError, match="'cost', which varies within .*for example tc1"
+    ):
+        ClassicalLoader(path, columns).get_oced()
+
+
+def test_a_named_column_missing_from_the_file_is_rejected(tmp_path):
+    path = _write(tmp_path)
+    columns = LoaderColumns(object_attribute_cols=["region"])
+
+    with pytest.raises(ConfigError, match="object_attribute_cols names \\['region'\\]"):
+        ClassicalLoader(path, columns).get_oced()
+
+
+def test_a_named_column_goes_to_the_first_object_type_it_is_constant_in(tmp_path):
+    """`team` varies within the case but not within a resource."""
+    path = _write(tmp_path, resource=["ann", "bo"], team=["red", "blue"])
+    columns = LoaderColumns(object_cols=["resource"], object_attribute_cols=["team"])
+
+    oced = ClassicalLoader(path, columns).get_oced()
+
+    assert list(oced.table(EntityKind.OBJECT, "resource").data.columns) == [
+        "resource",
+        "team",
+    ]
+    assert "team" not in oced.table(EntityKind.OBJECT, CASE).data.columns
 
 
 def test_an_object_column_becomes_a_type_with_prefixed_ids_and_its_own_relation(

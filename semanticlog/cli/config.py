@@ -65,6 +65,7 @@ def _loader_columns(named: Mapping[str, Any]) -> dict[str, Any]:
     """Return the column names a flat log is read with, leaving out unset ones."""
     columns = dict(named)
     columns["object_cols"] = columns["object_cols"] or None
+    columns["object_attribute_cols"] = columns["object_attribute_cols"] or None
     return {key: value for key, value in columns.items() if value is not None}
 
 
@@ -176,6 +177,8 @@ class RunConfig:
         time_col: Column holding the timestamp of a flat log.
         object_cols: Further columns of a flat log that each become an object
             type.
+        object_attribute_cols: Columns of a flat log that describe an object
+            rather than an event.
         annotation_document: JSON file of entity name to label and comment.
         declare_file: File of mined DECLARE constraints.
         constraints: Constraint templates `mine-declare` keeps. Not used by a
@@ -205,6 +208,7 @@ class RunConfig:
     act_col: str | None
     time_col: str | None
     object_cols: list[str]
+    object_attribute_cols: list[str]
     annotation_document: str | None
     declare_file: str | None
     constraints: list[str] | None
