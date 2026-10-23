@@ -215,7 +215,9 @@ class OCEDOntoBuilder:
         sink: AxiomSink | None = None,
     ) -> None:
         self.sink: AxiomSink = (
-            sink if sink is not None else InMemorySink(iri, settings.profile)
+            sink
+            if sink is not None
+            else InMemorySink(iri, settings.profile, settings.tbox_iri)
         )
         self.iri = self.sink.iri
         self._settings = settings

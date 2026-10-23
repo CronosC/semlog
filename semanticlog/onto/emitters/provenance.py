@@ -53,7 +53,7 @@ class ProvenanceEmitter(Emitter):
         """
         from semanticlog import __version__
 
-        base = vocab.TBOX_IRI
+        base = self.sink.tbox_iri
         record = {
             f"{base}{vocab.BUILD_TOOL}": f"semlog {__version__}",
             f"{base}{vocab.BUILD_CONFIGURATION}": json.dumps(

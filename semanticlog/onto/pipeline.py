@@ -68,9 +68,9 @@ def build_log(
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     sink: AxiomSink = (
-        StreamingSink(str(output), iri, settings.profile)
+        StreamingSink(str(output), iri, settings.profile, settings.tbox_iri)
         if streaming
-        else InMemorySink(iri, settings.profile)
+        else InMemorySink(iri, settings.profile, settings.tbox_iri)
     )
     result = OCEDOntoBuilder(iri, settings, sink=sink).build_ontology(
         data, inputs, source=source, run=record

@@ -20,6 +20,7 @@ from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.tables import RelationKind
 from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.reason import Reasoner
+from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import StreamingSink
 from tests.support import stores
 from tests.support.build import BACKENDS, emit
@@ -83,6 +84,23 @@ def test_the_matrix_builds_every_value_of_every_setting():
         "ocel_extensions": {*OCELExtension, None},
         "derive_annotations": {True, False},
     }
+
+
+def test_two_builds_with_different_tbox_iris_share_no_schema_iri(tiny_store, tmp_path):
+    texts = []
+    for stem, tbox_iri in (
+        ("a", "https://a.example/schema#"),
+        ("b", "https://b.example/s/"),
+    ):
+        path = tmp_path / f"{stem}.ofn"
+        emit(OntoBuildSettings(tbox_iri=tbox_iri), path, data=tiny_store)
+        texts.append(path.read_text(encoding="utf-8"))
+
+    assert "https://a.example/schema#" in texts[0]
+    assert "https://b.example/s/" in texts[1]
+    assert "https://a.example/schema#" not in texts[1]
+    assert "https://b.example/s/" not in texts[0]
+    assert vocab.TBOX_IRI not in texts[0] + texts[1]
 
 
 _KIND_PREFIXES = tuple(f"{kind.value}:" for kind in IndividualKind)

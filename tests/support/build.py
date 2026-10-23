@@ -44,14 +44,17 @@ def emit(
     """
     config = configured(spec)
     data = stores.build(stores.MATRIX_STORE) if data is None else data
+    settings = config.settings
     if backend == STREAMING:
-        sink = StreamingSink(str(path), DEFAULT_IRI, config.settings.profile)
-        OCEDOntoBuilder(DEFAULT_IRI, config.settings, sink=sink).build_ontology(
+        sink = StreamingSink(
+            str(path), DEFAULT_IRI, settings.profile, settings.tbox_iri
+        )
+        OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
             data, config.inputs, source=source
         )
         return read_functional(path)
 
-    builder = OCEDOntoBuilder(DEFAULT_IRI, config.settings)
+    builder = OCEDOntoBuilder(DEFAULT_IRI, settings)
     builder.build_ontology(data, config.inputs, source=source)
     builder.sink.save(str(path))
-    return read_rdf(path, DEFAULT_IRI)
+    return read_rdf(path, DEFAULT_IRI, settings.tbox_iri)

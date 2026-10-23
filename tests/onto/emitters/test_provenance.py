@@ -14,6 +14,7 @@ from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.emitters.provenance import build_configuration
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
+from semanticlog.onto.sinks import StreamingSink
 from tests.support.rdf import read_rdf
 
 
@@ -37,6 +38,19 @@ def test_the_record_names_the_tool_and_its_version(record):
 
 def test_the_record_has_no_version_info(record):
     assert "versionInfo" not in record()
+
+
+def test_the_record_keys_use_the_configured_tbox_iri(tiny_store, tmp_path):
+    path = tmp_path / "prov.ofn"
+    settings = OntoBuildSettings(tbox_iri="https://example.com/schema#")
+    sink = StreamingSink(str(path), DEFAULT_IRI, settings.profile, settings.tbox_iri)
+    OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
+        tiny_store, source="log.jsonocel"
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert 'Annotation(<https://example.com/schema#sourceLog> "log.jsonocel")' in text
+    assert "Declaration(AnnotationProperty(oced:sourceLog))" in text
 
 
 def test_the_resolved_settings_are_recorded_as_json(record):

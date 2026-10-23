@@ -14,7 +14,7 @@ def _rdf_datatype(datatype: object) -> str:
     return str(datatype).rpartition("#")[2] if datatype is not None else "string"
 
 
-def read_rdf(path: str | Path, iri: str) -> Emitted:
+def read_rdf(path: str | Path, iri: str, tbox_iri: str = TBOX_IRI) -> Emitted:
     """Read an ontology in RDF/XML, as InMemorySink writes it.
 
     Reads with rdflib. An object property assertion is recorded whether or not
@@ -22,8 +22,9 @@ def read_rdf(path: str | Path, iri: str) -> Emitted:
 
     Args:
         path: File to read.
-        iri: Log base IRI. Names under it and under the TBox IRI are read as
+        iri: Log base IRI. Names under it and under `tbox_iri` are read as
             their local names.
+        tbox_iri: Namespace of the schema names.
 
     Returns:
         The same `Emitted` that `read_functional` returns, without axiom
@@ -36,7 +37,7 @@ def read_rdf(path: str | Path, iri: str) -> Emitted:
 
     base = iri if iri.endswith("/") else iri + "/"
     ontology_iri = URIRef(base.removesuffix("/"))
-    namespaces = (TBOX_IRI, *(f"{base}{kind.path}" for kind in IndividualKind), base)
+    namespaces = (tbox_iri, *(f"{base}{kind.path}" for kind in IndividualKind), base)
 
     def local(term: object) -> str | None:
         """Return the local name of a log, TBox or individual term, or None."""

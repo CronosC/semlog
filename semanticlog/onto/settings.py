@@ -20,6 +20,7 @@ from semanticlog.core.enums import (
     OWLProfile,
 )
 from semanticlog.core.errors import ConfigError
+from semanticlog.core.vocabulary import TBOX_IRI
 from semanticlog.data.binning import DEFAULT_BIN_LABELS, DEFAULT_BINS, check_bins
 
 DEFAULT_MAX_EF_PAIRS = 50_000_000
@@ -33,6 +34,8 @@ class OntoBuildSettings:
 
     Attributes:
         profile: OWL 2 profile the output stays inside.
+        tbox_iri: Namespace of the schema classes and properties. Ends in
+            `#` or `/`.
         order_representations: How event order is expressed. Empty for none.
         ocel_extensions: Optional OCEL 2.0 features to emit.
         inverse_representations: How inverse properties are expressed. Empty
@@ -50,13 +53,15 @@ class OntoBuildSettings:
             for no limit.
 
     Raises:
-        ConfigError: If a sequence field is given a plain string, or an enum
-            field an unknown value. With a binning mode selected, also if
-            `bins` is below two or `bin_labels` does not hold exactly `bins`
-            entries that all differ.
+        ConfigError: If a sequence field is given a plain string, an enum
+            field an unknown value, or `tbox_iri` is empty, holds whitespace
+            or `>`, or ends in neither `#` nor `/`. With a binning mode
+            selected, also if `bins` is below two or `bin_labels` does not
+            hold exactly `bins` entries that all differ.
     """
 
     profile: OWLProfile = OWLProfile.OWL2DL
+    tbox_iri: str = TBOX_IRI
     order_representations: tuple[EventOrderRepresentation, ...] = ()
     ocel_extensions: tuple[OCELExtension, ...] = ()
     inverse_representations: tuple[InverseRepresentation, ...] = ()
@@ -96,6 +101,7 @@ class OntoBuildSettings:
             if not isinstance(value, tuple):
                 object.__setattr__(self, name, tuple(value))
         self._resolve_enums()
+        check_tbox_iri(self.tbox_iri)
         if self.binning_mode is not None:
             check_bins(self.bins, self.bin_labels)
 
@@ -259,6 +265,22 @@ class OntoBuildSettings:
             field.name: _plain(getattr(self, field.name))
             for field in dataclasses.fields(self)
         }
+
+
+def check_tbox_iri(iri: str) -> None:
+    """Raise `ConfigError` unless `iri` can hold the schema names.
+
+    It must be non-empty, hold no whitespace or `>`, and end in `#` or `/`.
+    """
+    if not iri or any(c.isspace() for c in iri) or ">" in iri:
+        raise ConfigError(
+            f"tbox_iri {iri!r} cannot be written into an ontology. Use a "
+            "non-empty IRI without whitespace or '>'."
+        )
+    if not iri.endswith(("#", "/")):
+        raise ConfigError(
+            f"tbox_iri must end in '#' or '/', got {iri!r}. Append one of them."
+        )
 
 
 def _plain(value: Any) -> Any:

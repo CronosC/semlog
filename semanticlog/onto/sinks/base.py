@@ -36,16 +36,18 @@ class AxiomSink(ABC):
     IRI, or that is used for two different entities, raises with a message
     naming both sources.
 
-    A TBox `Term` is written under `TBOX_IRI`, a class or property under the
+    A TBox `Term` is written under `tbox_iri`, a class or property under the
     log base, and an individual under the path of its kind below the log base.
 
     Args:
         iri: Log base IRI. A trailing `/` is added when missing.
         profile: Profile of the build.
+        tbox_iri: Namespace of the schema names. The settings have checked it.
 
     Attributes:
         iri: Log base IRI, ending in `/`.
         profile: OWL 2 profile the output stays inside.
+        tbox_iri: Namespace of the schema names.
 
     Raises:
         ConfigError: If the base IRI is empty, holds whitespace or `>`, or
@@ -54,8 +56,11 @@ class AxiomSink(ABC):
 
     iri: str
     profile: OWLProfile
+    tbox_iri: str
 
-    def __init__(self, iri: str, profile: OWLProfile) -> None:
+    def __init__(
+        self, iri: str, profile: OWLProfile, tbox_iri: str = vocab.TBOX_IRI
+    ) -> None:
         if not iri or any(c.isspace() for c in iri) or ">" in iri:
             raise ConfigError(
                 f"Base IRI {iri!r} cannot be written into an ontology. Use a "
@@ -67,6 +72,7 @@ class AxiomSink(ABC):
             )
         self.iri = iri if iri.endswith("/") else iri + "/"
         self.profile = profile
+        self.tbox_iri = tbox_iri
         self._names = NameLedger()
         self._dropped_unions = 0
         self._replaced_unions = 0
@@ -88,7 +94,7 @@ class AxiomSink(ABC):
             kind: The kind of an individual, which places it under its path.
         """
         if vocab.is_tbox(name):
-            return f"{vocab.TBOX_IRI}{name}"
+            return f"{self.tbox_iri}{name}"
         if kind is None:
             return f"{self.iri}{name}"
         return f"{self.iri}{kind.path}{name}"
@@ -296,9 +302,9 @@ class AxiomSink(ABC):
             )
         record = dict(annotations or {})
         names = [
-            vocab.Term(property_iri.removeprefix(vocab.TBOX_IRI))
+            vocab.Term(property_iri.removeprefix(self.tbox_iri))
             for property_iri in record
-            if property_iri.startswith(vocab.TBOX_IRI)
+            if property_iri.startswith(self.tbox_iri)
         ]
         for name in names:
             self._declare_name(name, SinkEntity.ANNOTATION_PROPERTY, "the build record")

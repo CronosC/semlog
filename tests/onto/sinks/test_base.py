@@ -23,7 +23,7 @@ from semanticlog.core.vocabulary import (
 from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.sinks import InMemorySink, StreamingSink
 from tests.support import stores
-from tests.support.build import IN_MEMORY, STREAMING, emit
+from tests.support.build import BACKENDS, IN_MEMORY, STREAMING, emit
 from tests.support.owlapi import ontology_annotations
 from tests.support.settings import CONFIGURATIONS, NAMES
 
@@ -164,6 +164,29 @@ def test_a_base_iri_without_a_slash_is_given_one(recording_sink):
     assert recording_sink(iri="https://example.org/upper").iri == (
         "https://example.org/upper/"
     )
+
+
+SCHEMA = "https://example.com/schema#"
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_a_term_is_written_under_the_configured_tbox_iri(backend, tmp_path, read_back):
+    sink = (
+        StreamingSink(str(tmp_path / "s.ofn"), DEFAULT_IRI, OWLProfile.OWL2DL, SCHEMA)
+        if backend == STREAMING
+        else InMemorySink(DEFAULT_IRI, OWLProfile.OWL2DL, SCHEMA)
+    )
+    sink.add_class(vocab.EVENT, source="the TBox")
+    sink.add_class("order", vocab.EVENT, source="a test")
+
+    onto = read_back(sink)
+
+    assert sink.iri_of(vocab.EVENT) == f"{SCHEMA}Event"
+    assert onto.parents["order"] == {"Event"}
+    if backend == STREAMING:
+        text = (tmp_path / "s.ofn").read_text(encoding="utf-8")
+        assert f"Prefix(oced:=<{SCHEMA}>)" in text
+        assert TBOX_IRI not in text
 
 
 def test_an_iri_ending_in_a_hash_is_rejected():

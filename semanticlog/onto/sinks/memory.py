@@ -50,6 +50,7 @@ from owlapy.owl_ontology import Ontology
 from owlapy.owl_property import OWLDataProperty, OWLObjectProperty
 from owlapy.vocab import OWLFacet
 
+from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import IndividualKind, OWLProfile, SinkEntity
 from semanticlog.onto.sinks.base import PARTIAL_SUFFIX, AxiomSink
 from semanticlog.onto.sinks.literals import DECIMAL, RDFS, XSD, Literal
@@ -77,13 +78,16 @@ class InMemorySink(AxiomSink):
     Args:
         iri: Base IRI of the ontology.
         profile: Profile of the build.
+        tbox_iri: Namespace of the schema names.
 
     Attributes:
         onto: The ontology being built.
     """
 
-    def __init__(self, iri: str, profile: OWLProfile) -> None:
-        super().__init__(iri, profile)
+    def __init__(
+        self, iri: str, profile: OWLProfile, tbox_iri: str = vocab.TBOX_IRI
+    ) -> None:
+        super().__init__(iri, profile, tbox_iri)
         self.onto = Ontology(IRI.create(self.ontology_iri), load=False)
         self._pending_inverses: list[tuple[str, str]] = []
 

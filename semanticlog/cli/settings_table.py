@@ -24,7 +24,7 @@ from semanticlog.core.enums import (
     resolve_reasoner_backend,
 )
 from semanticlog.core.errors import ConfigError
-from semanticlog.core.vocabulary import default_iri
+from semanticlog.core.vocabulary import TBOX_IRI, default_iri
 from semanticlog.data.binning import DEFAULT_BIN_LABELS, DEFAULT_BINS
 from semanticlog.data.loading import LOG_SUFFIXES
 from semanticlog.onto.settings import DEFAULT_MAX_EF_PAIRS, OntoBuildSettings
@@ -308,6 +308,17 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         help=(
             f"Base IRI of every name from the log (default: {default_iri('STEM')}, "
             "with STEM the artifact stem). A trailing / is added when missing."
+        ),
+        argparse={"metavar": "IRI"},
+    ),
+    Setting(
+        "tbox_iri",
+        settings_default("tbox_iri"),
+        _as_str,
+        "settings",
+        help=(
+            f"Namespace of the schema classes and properties (default: {TBOX_IRI}). "
+            "Ends in # or /."
         ),
         argparse={"metavar": "IRI"},
     ),

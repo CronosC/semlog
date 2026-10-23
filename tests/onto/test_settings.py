@@ -11,6 +11,7 @@ from semanticlog.core.enums import (
     OWLProfile,
 )
 from semanticlog.core.errors import ConfigError
+from semanticlog.core.vocabulary import TBOX_IRI
 from semanticlog.onto.settings import OntoBuildSettings
 
 DF = EventOrderRepresentation.DF
@@ -61,6 +62,24 @@ def test_an_enum_setting_may_be_written_as_its_value_or_its_member_name():
         "equal_bins",
         "individuals",
     ]
+
+
+def test_the_default_tbox_iri_is_the_constant():
+    assert OntoBuildSettings().tbox_iri == TBOX_IRI
+
+
+@pytest.mark.parametrize(
+    ("iri", "match"),
+    [
+        ("https://example.org/schema", "must end in '#' or '/'"),
+        ("", "cannot be written"),
+        ("https://exa mple.org/#", "cannot be written"),
+    ],
+    ids=["no terminator", "empty", "whitespace"],
+)
+def test_a_tbox_iri_that_cannot_hold_the_schema_is_rejected(iri, match):
+    with pytest.raises(ConfigError, match=match):
+        OntoBuildSettings(tbox_iri=iri)
 
 
 def test_an_unknown_enum_value_is_rejected_on_construction():

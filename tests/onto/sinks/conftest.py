@@ -42,6 +42,6 @@ def read_back(tmp_path):
             return read_functional(Path(sink.path))
         path = tmp_path / "memory.owl"
         sink.save(str(path))
-        return read_rdf(path, DEFAULT_IRI)
+        return read_rdf(path, DEFAULT_IRI, sink.tbox_iri)
 
     return read

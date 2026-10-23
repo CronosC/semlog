@@ -32,13 +32,20 @@ class StreamingSink(AxiomSink):
         path: Destination file. Replaced once the ontology is complete.
         iri: Base IRI of the ontology.
         profile: Profile of the build.
+        tbox_iri: Namespace of the schema names.
 
     Attributes:
         path: Destination file. Replaced once the ontology is complete.
     """
 
-    def __init__(self, path: str, iri: str, profile: OWLProfile) -> None:
-        super().__init__(iri, profile)
+    def __init__(
+        self,
+        path: str,
+        iri: str,
+        profile: OWLProfile,
+        tbox_iri: str = vocab.TBOX_IRI,
+    ) -> None:
+        super().__init__(iri, profile, tbox_iri)
         self.path = path
         self._partial = Path(path + PARTIAL_SUFFIX)
         self._file: TextIO | None = open(self._partial, "w", encoding="utf-8")
@@ -74,7 +81,7 @@ class StreamingSink(AxiomSink):
         for kind in IndividualKind:
             self._out.write(f"Prefix({kind.value}:=<{self.iri}{kind.path}>)\n")
         self._out.write(
-            f"Prefix({vocab.TBOX_PREFIX}:=<{vocab.TBOX_IRI}>)\n"
+            f"Prefix({vocab.TBOX_PREFIX}:=<{self.tbox_iri}>)\n"
             f"Prefix(owl:=<http://www.w3.org/2002/07/owl#>)\n"
             f"Prefix(rdf:=<http://www.w3.org/1999/02/22-rdf-syntax-ns#>)\n"
             f"Prefix(rdfs:=<{RDFS}>)\n"
