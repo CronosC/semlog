@@ -16,10 +16,7 @@ from semanticlog.onto.emitters.base import Emitter
 from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import AxiomSink
 
-_PARENTS = {
-    EntityKind.EVENT: (vocab.EVENT, vocab.EVENT_ATTRIBUTE),
-    EntityKind.OBJECT: (vocab.OBJECT, vocab.OBJECT_ATTRIBUTE),
-}
+_PARENTS = {EntityKind.EVENT: vocab.EVENT, EntityKind.OBJECT: vocab.OBJECT}
 
 
 class EntityEmitter(Emitter):
@@ -43,7 +40,7 @@ class EntityEmitter(Emitter):
         non-structural column is emitted as an attribute. Event timestamps are
         left to `TimeEmitter`.
         """
-        parent, attribute_parent = _PARENTS[kind]
+        parent = _PARENTS[kind]
         views = [v for v in data.tables(changes=False) if v.kind is kind]
 
         for view in views:
@@ -58,7 +55,6 @@ class EntityEmitter(Emitter):
             self.attributes.emit_columns(
                 view.frame.drop(columns=view.structural),
                 str(view.id_column),
-                attribute_parent,
                 kind.individual,
             )
 

@@ -147,12 +147,12 @@ class HistoryEmitter(Emitter):
         self.sink.add_class(
             attr_change_cls, vocab.ATTRIBUTE_CHANGE, source=change_source
         )
-        self.attributes.declare_value_property(attr_name, vocab.OBJECT_ATTRIBUTE)
+        self.attributes.declare_value_property(attr_name)
         change_prop = vocab.change_value_property(attr_name)
         if not self.settings.emits_value_individuals:
             self.annotations.attribute_change_schema(attr_name, attr_change_cls)
             return attr_change_cls, change_prop
-        self.attributes.add_attribute_class(attr_name, vocab.OBJECT_ATTRIBUTE)
+        self.attributes.add_attribute_class(attr_name)
         self.sink.add_property(
             change_prop,
             superprop=vocab.ATTRIBUTE_CHANGE_VALUE,

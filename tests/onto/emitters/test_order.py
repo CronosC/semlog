@@ -260,8 +260,8 @@ def test_an_event_in_no_relation_is_in_no_trace(tiny_store, tmp_path):
                 {
                     "eid": ["e4"],
                     "ts": pd.to_datetime(["2024-01-04 09:00"]),
-                    "step.channel": ["web"],
-                    "step.price": [1.0],
+                    "channel": ["web"],
+                    "price": [1.0],
                 }
             ),
         ],

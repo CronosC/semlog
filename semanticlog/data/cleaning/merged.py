@@ -13,7 +13,6 @@ import pandas as pd
 
 from semanticlog.data.cleaning.allocate import KIND_PREFIX, VALUE_PREFIX
 from semanticlog.data.cleaning.names import clean_series, cleaned, free_name
-from semanticlog.data.cleaning.qualify import qualified_attribute
 from semanticlog.data.cleaning.renames import RenameKind, RenameLog
 from semanticlog.data.cleaning.rewrite import (
     apply_attribute_renames,
@@ -69,7 +68,7 @@ def resolve_merged_names(data: OCEDStore, log: RenameLog) -> None:
 
     Both relation families form one namespace. Attributes are checked per
     table, and the id and time columns keep their names. Values are checked
-    per type and attribute.
+    per attribute, across every table that carries it.
     """
     activities = merged_names(
         data.types(EntityKind.EVENT), KIND_PREFIX[RenameKind.ACTIVITY]
@@ -109,16 +108,15 @@ def resolve_merged_names(data: OCEDStore, log: RenameLog) -> None:
         for old, free in ids.items():
             log.record(RenameKind.ID, old, free)
 
-    for (type_name, attribute), values in value_groups(data).items():
+    for attribute, values in value_groups(data).items():
         renames = merged_names(values, VALUE_PREFIX)
         if not renames:
             continue
-        column = qualified_attribute(cleaned(type_name), attribute)
         logger.info(
             "  renaming %s value(s) of attribute %s that would clean to another",
             len(renames),
-            column,
+            attribute,
         )
-        apply_value_renames(data, attribute, renames, type_name=type_name)
+        apply_value_renames(data, attribute, renames)
         for old, free in renames.items():
-            log.record_value(column, cleaned(free), old)
+            log.record_value(attribute, cleaned(free), old)

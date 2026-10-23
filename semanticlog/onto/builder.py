@@ -250,7 +250,6 @@ class OCEDOntoBuilder:
             attribute_binnings(data, self.settings),
             attribute_datatypes(data, self.settings),
             attribute_history=attribute_history,
-            groups=data.attribute_groups,
         )
         times = TimeEmitter(*parts)
         return Emitters(

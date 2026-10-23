@@ -45,8 +45,6 @@ class OntoBuildSettings:
         bins: Number of bins for the binning modes. At least two.
         bin_labels: Label per bin. Must have exactly `bins` entries, all
             different.
-        shared_attributes: Also emit one class and one property per attribute
-            name above the per-type ones.
         derive_annotations: Emit labels and comments derived from the original
             names in the log.
         max_ef_pairs: Ceiling on materialized eventually-follows pairs. Zero
@@ -70,7 +68,6 @@ class OntoBuildSettings:
     )
     bins: int = DEFAULT_BINS
     bin_labels: tuple[str, ...] = tuple(DEFAULT_BIN_LABELS)
-    shared_attributes: bool = False
     derive_annotations: bool = False
     max_ef_pairs: int = DEFAULT_MAX_EF_PAIRS
 

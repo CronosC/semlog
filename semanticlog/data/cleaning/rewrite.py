@@ -45,16 +45,12 @@ def text_values(view: TableView, column: str) -> list[str]:
     ]
 
 
-def value_groups(data: OCEDStore) -> dict[tuple[str, str], list[str]]:
-    """Return the distinct text values of each attribute, keyed by type and cleaned attribute.
-
-    A change table counts as its object type.
-    """
-    groups: dict[tuple[str, str], list[str]] = {}
+def value_groups(data: OCEDStore) -> dict[str, list[str]]:
+    """Return the distinct text values of each attribute, keyed by cleaned attribute, over every table."""
+    groups: dict[str, list[str]] = {}
     for view in data.tables():
         for column in view.attributes:
-            key = (view.name, cleaned(column))
-            groups.setdefault(key, []).extend(text_values(view, column))
+            groups.setdefault(cleaned(column), []).extend(text_values(view, column))
     return groups
 
 
@@ -108,32 +104,19 @@ def apply_id_renames(data: OCEDStore, renames: Mapping[str, str]) -> None:
 
 
 def apply_value_renames(
-    data: OCEDStore,
-    attribute: str,
-    renames: Mapping[str, str],
-    *,
-    type_name: str | None = None,
+    data: OCEDStore, attribute: str, renames: Mapping[str, str]
 ) -> None:
-    """Rewrite values in every column that carries the attribute, change tables included.
-
-    Only the tables of `type_name` are rewritten when it is given.
-    """
+    """Rewrite values in every column that carries the attribute, change tables included."""
     for view in data.tables():
-        if type_name is not None and view.name != type_name:
-            continue
         columns = [c for c in view.attributes if cleaned(c) == attribute]
         if columns:
             view.replace(remap(view.frame, columns, renames))
 
 
 def apply_attribute_renames(data: OCEDStore, renames: Mapping[str, str]) -> None:
-    """Rename attribute columns in every table, in the `ocel:field` of change rows and in the attribute groups."""
+    """Rename attribute columns in every table and in the `ocel:field` of change rows."""
     for view in data.tables():
         frame = view.frame.rename(columns=renames)
         if "ocel:field" in frame.columns:
             frame = remap(frame, ["ocel:field"], renames)
         view.replace(frame)
-    data.attribute_groups = {
-        group: [renames.get(member, member) for member in members]
-        for group, members in data.attribute_groups.items()
-    }

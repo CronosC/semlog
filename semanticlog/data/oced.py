@@ -48,7 +48,6 @@ class OCEDStore:
         self._used_ids: set[object] = set()
         self._ocel_mode = ocel_mode
         self._backmap: dict[str, str] = {}
-        self._attribute_groups: dict[str, list[str]] = {}
         self._object_changes: dict[str, pd.DataFrame] = {}
 
     @property
@@ -59,36 +58,6 @@ class OCEDStore:
     @backmap.setter
     def backmap(self, mapping: dict[str, str]) -> None:
         self._backmap = mapping
-
-    @property
-    def attribute_groups(self) -> dict[str, list[str]]:
-        """Each attribute name of the log to the qualified attributes that came from it.
-
-        Empty until the attributes are qualified.
-        """
-        return self._attribute_groups
-
-    @attribute_groups.setter
-    def attribute_groups(self, groups: dict[str, list[str]]) -> None:
-        self._attribute_groups = groups
-
-    def rename_attribute_group(self, old_name: str, new_name: str) -> None:
-        """Rename an attribute name, keeping its members.
-
-        Raises:
-            InputError: If the old name is unknown, or the new name is taken.
-        """
-        if old_name not in self._attribute_groups:
-            raise InputError(
-                f"Cannot rename attribute name {old_name!r}, which this store "
-                f"does not hold. It holds {sorted(self._attribute_groups)}."
-            )
-        if new_name in self._attribute_groups:
-            raise InputError(
-                f"Cannot rename attribute name {old_name!r}: {new_name!r} is "
-                "already an attribute name."
-            )
-        self._attribute_groups[new_name] = self._attribute_groups.pop(old_name)
 
     def get_original(
         self, iri_or_local_name: str, base_iri: str = _DEFAULT_IRI

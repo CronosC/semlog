@@ -481,18 +481,6 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         argparse={"metavar": "JSON"},
     ),
     Setting(
-        "shared_attributes",
-        settings_default("shared_attributes"),
-        _as_bool,
-        "settings",
-        help=(
-            "Also emit one class and one property per attribute name above the "
-            "per-type ones, so a query over has_<name> reaches every type's "
-            "value (default: off)."
-        ),
-        argparse={"action": argparse.BooleanOptionalAction},
-    ),
-    Setting(
         "derive_annotations",
         settings_default("derive_annotations"),
         _as_bool,

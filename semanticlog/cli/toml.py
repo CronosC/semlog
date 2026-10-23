@@ -19,6 +19,11 @@ RENAMED_KEYS: dict[str, str] = {
     "size_limit": "size_limit_mb",
 }
 
+# A setting that no longer exists, with the sentence that replaces it.
+REMOVED_KEYS: dict[str, str] = {
+    "shared_attributes": "Every attribute name is shared by the types that carry it.",
+}
+
 # `extends` is read by the loader and is not a build setting.
 _KNOWN_KEYS: tuple[str, ...] = (*sorted(BUILD_DEFAULTS), "extends")
 
@@ -26,7 +31,8 @@ _KNOWN_KEYS: tuple[str, ...] = (*sorted(BUILD_DEFAULTS), "extends")
 def _check_keys(raw: dict[str, Any], source: Path) -> None:
     """Reject unknown settings and suggest the nearest one.
 
-    A key in `RENAMED_KEYS` is matched by name, the rest by similarity.
+    A key in `REMOVED_KEYS` is reported with what replaces it, a key in
+    `RENAMED_KEYS` is matched by name, the rest by similarity.
 
     Raises:
         ConfigError: If the file names a setting that does not exist.
@@ -34,6 +40,11 @@ def _check_keys(raw: dict[str, Any], source: Path) -> None:
     unknown = sorted(set(raw) - set(_KNOWN_KEYS))
     if not unknown:
         return
+    for key in unknown:
+        if key in REMOVED_KEYS:
+            raise ConfigError(
+                f"{source}: {key!r} was removed. {REMOVED_KEYS[key]} Delete the key."
+            )
     hints = []
     for key in unknown:
         renamed = RENAMED_KEYS.get(key)

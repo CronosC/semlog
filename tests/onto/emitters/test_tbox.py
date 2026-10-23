@@ -103,7 +103,7 @@ def test_the_time_and_attribute_properties_are_functional_under_dl(
 ):
     onto = emit(OntoBuildSettings(), tmp_path / "tiny.ofn", data=tiny_store)
 
-    assert {"observed_at", "has_step.channel"} <= onto.functional
+    assert {"observed_at", "has_channel"} <= onto.functional
 
 
 def test_has_data_value_has_no_functional_axiom_and_no_domain(tiny_store, tmp_path):

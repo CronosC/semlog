@@ -23,7 +23,6 @@ from semanticlog.data.tables import EntityKind
 KIND_PREFIX: dict[RenameKind, str] = {
     RenameKind.OBJECT_TYPE: "object_",
     RenameKind.ATTRIBUTE: "attribute_",
-    RenameKind.ATTRIBUTE_GROUP: "attribute_",
     RenameKind.RELATION: "relation_",
     RenameKind.ACTIVITY: "event_",
     RenameKind.ID: "id_",
@@ -72,11 +71,9 @@ def _allocate_kind(
 def allocate_schema_names(
     data: OCEDStore, log: RenameLog, bin_labels: Collection[str]
 ) -> NameRegistry:
-    """Give every object type, attribute, attribute name, relation and activity a free name.
+    """Give every object type, attribute, relation and activity a free name.
 
-    They are claimed in that order. An attribute name is the source name
-    shared by the attributes of several types, which a build may emit as a
-    class above them.
+    They are claimed in that order.
 
     Args:
         data: Store to fix, modified in place. Its names must be safe.
@@ -109,14 +106,6 @@ def allocate_schema_names(
         attribute_names(data),
         rename_attribute,
         derives=lambda name: vocab.derived_from_attribute(name, labels),
-    )
-    _allocate_kind(
-        registry,
-        log,
-        RenameKind.ATTRIBUTE_GROUP,
-        list(data.attribute_groups),
-        data.rename_attribute_group,
-        derives=vocab.derived_from_attribute_group,
     )
     _allocate_kind(
         registry,

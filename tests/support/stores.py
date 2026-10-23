@@ -110,7 +110,7 @@ def awkward() -> OCEDStore:
     - `e11` and `e12` carry the same timestamp.
     - `price` spans eleven values, the last well outside the rest.
     - `channel` is carried by both object types and `clerk` by both
-      activities, and each type gets its own attribute.
+      activities, so one attribute has two owners.
     - `order` records attribute changes, for the attribute history extension.
     """
     data = OCEDStore(ocel_mode=True)

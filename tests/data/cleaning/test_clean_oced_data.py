@@ -54,9 +54,9 @@ def test_every_name_in_the_store_is_made_safe_and_mapped_to_its_source():
         "act_type_": "act type!",
         "obj_type": "obj type",
         "rel_name": "rel name",
-        "act_type_.total_cost": "total cost",
+        "total_cost": "total cost",
         "e_1": "e 1",
-        "act_type_.total_cost.2023-03-15_12_45": "2023-03-15 12:45",
+        "total_cost.2023-03-15_12_45": "2023-03-15 12:45",
     }
     assert cleaned.get_relation("rel_name").data.values.tolist() == [["e_1", "o1"]]
 
@@ -132,8 +132,28 @@ def test_an_id_equal_to_an_activity_name_is_kept(make_store, events):
 def test_a_value_equal_to_an_object_type_name_is_kept(make_store, events):
     cleaned = clean_oced_data(make_store(events=events("e1", channel=["obj"])))
 
-    assert list(cleaned.table(EntityKind.EVENT, "act").data["act.channel"]) == ["obj"]
-    assert "act.channel.obj" not in cleaned.backmap
+    assert list(cleaned.table(EntityKind.EVENT, "act").data["channel"]) == ["obj"]
+    assert "channel.obj" not in cleaned.backmap
+
+
+def test_an_attribute_of_two_types_keeps_one_name(make_store, events):
+    oced = make_store(
+        objects=pd.DataFrame({"oid": ["o1"], "status": ["new"]}),
+        events=events("e1", status=["open"]),
+    )
+
+    cleaned = clean_oced_data(oced)
+
+    assert list(cleaned.table(EntityKind.EVENT, "act").data.columns) == [
+        "eid",
+        "ts",
+        "status",
+    ]
+    assert list(cleaned.table(EntityKind.OBJECT, "obj").data.columns) == [
+        "oid",
+        "status",
+    ]
+    assert cleaned.backmap == {}
 
 
 def test_a_blank_id_is_rejected_before_cleaning_rewrites_it(make_store):
@@ -153,8 +173,8 @@ def test_an_empty_text_value_becomes_an_underscore_mapped_to_the_empty_string(
 
     cleaned = clean_oced_data(oced)
 
-    assert list(cleaned.table(EntityKind.OBJECT, "obj").data["obj.flag"]) == ["_", "X"]
-    assert cleaned.backmap["obj.flag._"] == ""
+    assert list(cleaned.table(EntityKind.OBJECT, "obj").data["flag"]) == ["_", "X"]
+    assert cleaned.backmap["flag._"] == ""
 
 
 def test_only_a_moved_object_type_is_listed_with_its_new_name(make_store):

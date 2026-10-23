@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import math
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
 import pandas as pd
 
@@ -102,8 +102,9 @@ def attribute_datatypes(
 ) -> dict[str, str]:
     """Return the datatype of the literals of each attribute, for its value property range.
 
-    An attribute whose columns take more than one datatype is left out and
-    logged.
+    An attribute that is an integer in one table and a decimal in another is
+    a decimal. One whose columns take any other mix of datatypes is left out
+    and logged.
 
     Args:
         data: Store to read.
@@ -118,6 +119,8 @@ def attribute_datatypes(
             found[column].add(_column_datatype(view.frame[column].dropna()))
     datatypes: dict[str, str] = {}
     for attribute, kinds in found.items():
+        if kinds == {INTEGER, DECIMAL}:
+            kinds = {DECIMAL}
         if len(kinds) == 1 and None not in kinds:
             (kind,) = kinds
             datatypes[attribute] = profile_datatype(str(kind), settings.profile)
@@ -182,8 +185,10 @@ def attribute_source(attribute: str) -> str:
 class AttributeEmitter(Emitter):
     """Emits attribute classes, their values, and the links to their owners.
 
-    One attribute is emitted once per entity type and again from the
+    One attribute is emitted once per type carrying it and again from the
     attribute history. `emitted.values_of` records which values are written.
+    Its class sits below `EventAttribute` or `ObjectAttribute` when one kind
+    of type carries it, and below `Attribute` when both do.
 
     Args:
         sink: Where axioms go.
@@ -198,9 +203,6 @@ class AttributeEmitter(Emitter):
         attribute_history: Whether the build emits the attribute change
             history. A change record then carries a literal under `literals`,
             so the change class joins the domain of the value property.
-        groups: Each attribute name of the log to the qualified attributes
-            that came from it. Under `shared_attributes` each name becomes a
-            class and a property above its attributes.
     """
 
     def __init__(
@@ -213,64 +215,61 @@ class AttributeEmitter(Emitter):
         binnings: Mapping[str, Binning],
         datatypes: Mapping[str, str] | None = None,
         attribute_history: bool = False,
-        groups: Mapping[str, Sequence[str]] | None = None,
     ) -> None:
         super().__init__(sink, settings, annotations, emitted)
         self._owners = owners
         self._binnings = binnings
         self._datatypes = datatypes or {}
         self._attribute_history = attribute_history
-        self._groups = groups or {}
-        self._group_of = {
-            member: group
-            for group, members in self._groups.items()
-            for member in members
-        }
-        self._declared_groups: set[str] = set()
         self._warned_unbinnable: set[str] = set()
         self._annotated: set[str] = set()
         self._classes: dict[str, None] = {}
         self._bin_classes: dict[str, dict[str, None]] = defaultdict(dict)
 
-    def add_attribute_class(self, attr: str, parent: str) -> None:
-        """Declare an attribute class below its parent and record it."""
-        self.sink.add_class(attr, parent, source=attribute_source(attr))
+    def add_attribute_class(self, attr: str) -> None:
+        """Declare an attribute class below the class of the kinds carrying it, and record it."""
+        self.sink.add_class(attr, self._parent_of(attr), source=attribute_source(attr))
         self._classes[attr] = None
+
+    def _parent_of(self, attr: str) -> str:
+        """Return the class an attribute class sits below."""
+        kinds = set(self._owners.get(attr, {}))
+        if kinds == {EntityKind.EVENT}:
+            return vocab.EVENT_ATTRIBUTE
+        if kinds == {EntityKind.OBJECT}:
+            return vocab.OBJECT_ATTRIBUTE
+        return vocab.ATTRIBUTE
 
     def _owner_types(self, attr: str) -> list[str]:
         """Return the sorted types carrying a value of `attr`."""
         by_kind = self._owners.get(attr, {})
         return sorted({t for types in by_kind.values() for t in types})
 
-    def _value_domain(self, attr: str, parent: str) -> list[str]:
+    def _value_domain(self, attr: str) -> list[str]:
         """Return the classes whose members carry the literal of `attr`."""
         domain = []
         if self.settings.emits_value_individuals:
             domain.append(attr)
         if self.settings.emits_entity_literals:
             domain.extend(self._owner_types(attr))
-            if self._attribute_history and parent == vocab.OBJECT_ATTRIBUTE:
+            carried_by_objects = EntityKind.OBJECT in self._owners.get(attr, {})
+            if self._attribute_history and carried_by_objects:
                 domain.append(vocab.attribute_change_class(attr))
         return domain
 
-    def declare_value_property(self, attr: str, parent: str) -> str:
+    def declare_value_property(self, attr: str) -> str:
         """Declare the data property that carries the literal of a value of `attr`.
 
         Its domain is the attribute class under `individuals`, the owner
         types under `literals`, and both under both. The change class of an
-        object attribute joins the domain when the build emits the history,
-        and is declared here so the domain can name it.
-
-        Args:
-            attr: The attribute.
-            parent: Class the attribute class goes below, either the event or
-                the object attribute class.
+        attribute an object type carries joins the domain when the build
+        emits the history, and is declared here so the domain can name it.
 
         Returns:
             The property name.
         """
         prop = vocab.value_property(attr)
-        domain = self._value_domain(attr, parent)
+        domain = self._value_domain(attr)
         change_cls = vocab.attribute_change_class(attr)
         if change_cls in domain:
             self.sink.add_class(
@@ -294,7 +293,7 @@ class AttributeEmitter(Emitter):
             )
         return prop
 
-    def declare_attribute(self, attr: str, parent: str) -> str:
+    def declare_attribute(self, attr: str) -> str:
         """Declare what one attribute needs before its values are emitted.
 
         The value property is declared in every mode. The attribute class and
@@ -303,22 +302,16 @@ class AttributeEmitter(Emitter):
         Returns:
             The `has_` property name, declared only under `individuals`.
         """
-        self.declare_value_property(attr, parent)
+        self.declare_value_property(attr)
         prop = vocab.has_attribute_property(attr)
         if not self.settings.emits_value_individuals:
             return prop
-        self.add_attribute_class(attr, parent)
-        superprop: str = vocab.HAS_ATTRIBUTE
-        group = self._group_of.get(attr) if self.settings.shared_attributes else None
-        if group is not None:
-            self._declare_group(group)
-            self.sink.add_class(attr, group, source=attribute_source(attr))
-            superprop = vocab.attribute_group_property(group)
+        self.add_attribute_class(attr)
         self.sink.add_property(
             prop,
             domain_class=self._owner_types(attr) or None,
             range_class=attr,
-            superprop=superprop,
+            superprop=vocab.HAS_ATTRIBUTE,
             create_inverse=self.settings.has_inverses,
             axiomatic_inverse=self.settings.axiomatic_inverses,
             source=attribute_source(attr),
@@ -329,33 +322,6 @@ class AttributeEmitter(Emitter):
             self.annotations.attribute(attr, prop, self._owners.get(attr, {}))
         return prop
 
-    def _declare_group(self, group: str) -> None:
-        """Declare the class and property of an attribute name, once.
-
-        The class sits directly below `Attribute`, because one name can be
-        on an event type and an object type. The property sits below
-        `has_attribute` with the owner types of every member as its domain.
-        """
-        if group in self._declared_groups:
-            return
-        self._declared_groups.add(group)
-        source = f"attribute name {group!r}"
-        self.sink.add_class(group, vocab.ATTRIBUTE, source=source)
-        prop = vocab.attribute_group_property(group)
-        owners = sorted(
-            {t for member in self._groups[group] for t in self._owner_types(member)}
-        )
-        self.sink.add_property(
-            prop,
-            domain_class=owners or None,
-            range_class=group,
-            superprop=vocab.HAS_ATTRIBUTE,
-            create_inverse=self.settings.has_inverses,
-            axiomatic_inverse=self.settings.axiomatic_inverses,
-            source=source,
-        )
-        self.annotations.attribute_group(group, prop)
-
     def emit_disjointness(self) -> None:
         """State that the attribute classes, and the bins of each, share no value."""
         self.sink.add_disjoint_classes(self._classes, source="the attribute classes")
@@ -363,11 +329,7 @@ class AttributeEmitter(Emitter):
             self.sink.add_disjoint_classes(bins, source=f"the bins of {attr!r}")
 
     def emit_columns(
-        self,
-        df: pd.DataFrame,
-        key_col: str,
-        attribute_parent: str,
-        owner: IndividualKind,
+        self, df: pd.DataFrame, key_col: str, owner: IndividualKind
     ) -> None:
         """Emit every attribute column of one table.
 
@@ -376,8 +338,6 @@ class AttributeEmitter(Emitter):
         Args:
             df: Table holding the entities and their attributes.
             key_col: Column holding the entity id.
-            attribute_parent: Class the attribute classes go below, either the
-                event or the object attribute class.
             owner: The kind of individual the entities are.
         """
         for attr in (c for c in df.columns if c != key_col):
@@ -385,7 +345,7 @@ class AttributeEmitter(Emitter):
             if not mask.any():
                 continue
             df_attr = df.loc[mask, [key_col, attr]]
-            prop = self.declare_attribute(attr, attribute_parent)
+            prop = self.declare_attribute(attr)
             self.emit_column_values(df_attr, key_col, attr, prop, owner)
 
     def emit_column_values(

@@ -90,11 +90,11 @@ def test_an_attribute_cleaning_to_the_id_column_name_moves_and_the_id_keeps_it()
     assert table.id == "o_id"
     assert list(table.data.columns) == [
         "o_id",
-        "order.attribute_o_id",
-        "order.a_b",
-        "order.attribute_a_b",
+        "attribute_o_id",
+        "a_b",
+        "attribute_a_b",
     ]
-    assert cleaned.backmap["order.attribute_a_b"] == "a_b"
+    assert cleaned.backmap["attribute_a_b"] == "a_b"
 
 
 def test_two_ids_cleaning_alike_are_kept_apart_across_the_store(make_store, events):
@@ -129,12 +129,10 @@ def test_values_of_one_attribute_cleaning_alike_are_kept_apart_across_tables():
 
     cleaned = clean_oced_data(oced)
 
-    assert list(cleaned.table(EntityKind.OBJECT, "order").data["order.status"]) == [
-        "a_b"
-    ]
-    assert list(cleaned.get_object_changes("order")["order.status"]) == ["value_a_b"]
-    assert cleaned.backmap["order.status.a_b"] == "a b"
-    assert cleaned.backmap["order.status.value_a_b"] == "a_b"
+    assert list(cleaned.table(EntityKind.OBJECT, "order").data["status"]) == ["a_b"]
+    assert list(cleaned.get_object_changes("order")["status"]) == ["value_a_b"]
+    assert cleaned.backmap["status.a_b"] == "a b"
+    assert cleaned.backmap["status.value_a_b"] == "a_b"
 
 
 def test_one_value_under_two_attributes_is_not_a_collision(make_store, events):
@@ -145,15 +143,10 @@ def test_one_value_under_two_attributes_is_not_a_collision(make_store, events):
 
     cleaned = clean_oced_data(oced)
 
-    assert cleaned.backmap == {
-        "act.clerk": "clerk",
-        "obj.channel": "channel",
-        "act.clerk.a_b": "a b",
-        "obj.channel.a_b": "a b",
-    }
+    assert cleaned.backmap == {"clerk.a_b": "a b", "channel.a_b": "a b"}
 
 
-def test_values_of_one_attribute_cleaning_alike_on_two_types_keep_their_names(
+def test_values_of_one_attribute_cleaning_alike_on_two_types_are_kept_apart(
     make_store, events
 ):
     oced = make_store(
@@ -163,24 +156,6 @@ def test_values_of_one_attribute_cleaning_alike_on_two_types_keep_their_names(
 
     cleaned = clean_oced_data(oced)
 
-    assert list(cleaned.table(EntityKind.EVENT, "act").data["act.status"]) == ["a_b"]
-    assert list(cleaned.table(EntityKind.OBJECT, "obj").data["obj.status"]) == ["a_b"]
-    assert cleaned.backmap == {
-        "act.status": "status",
-        "obj.status": "status",
-        "act.status.a_b": "a b",
-    }
-
-
-def test_a_cleaned_value_has_a_source_name_only_on_the_type_that_holds_it(
-    make_store, events
-):
-    oced = make_store(
-        objects=pd.DataFrame({"oid": ["o1"], "status": ["a b"]}),
-        events=events("e1", status=["c"]),
-    )
-
-    cleaned = clean_oced_data(oced)
-
-    assert "act.status.a_b" not in cleaned.backmap
-    assert cleaned.backmap["obj.status.a_b"] == "a b"
+    assert list(cleaned.table(EntityKind.EVENT, "act").data["status"]) == ["a_b"]
+    assert list(cleaned.table(EntityKind.OBJECT, "obj").data["status"]) == ["value_a_b"]
+    assert cleaned.backmap == {"status.a_b": "a b", "status.value_a_b": "a_b"}

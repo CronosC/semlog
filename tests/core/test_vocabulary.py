@@ -128,7 +128,6 @@ def test_every_schema_name_builder_is_registered_for_the_reserved_set():
             vocab.ATTRIBUTE_CLASSES,
             vocab.ATTRIBUTE_PROPERTIES,
             vocab.BIN_CLASSES,
-            vocab.ATTRIBUTE_GROUP_PROPERTIES,
         )
         for build in group
     }

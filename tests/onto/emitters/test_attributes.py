@@ -69,19 +69,21 @@ def _order_store(**columns) -> OCEDStore:
     return clean_oced_data(data)
 
 
-def _two_type_store() -> OCEDStore:
+def _two_kind_store(order_weight=2.5, step_weight=3.0) -> OCEDStore:
     """`weight` on the object type `order` and on the activity `step`, cleaned."""
     data = OCEDStore()
     data.add(
         EntityKind.OBJECT,
         "order",
-        pd.DataFrame({"oid": ["o1"], "weight": [2.5]}),
+        pd.DataFrame({"oid": ["o1"], "weight": [order_weight]}),
         id_col="oid",
     )
     data.add(
         EntityKind.EVENT,
         "step",
-        pd.DataFrame({"eid": ["e1"], "ts": [datetime(2024, 1, 1)], "weight": [3.0]}),
+        pd.DataFrame(
+            {"eid": ["e1"], "ts": [datetime(2024, 1, 1)], "weight": [step_weight]}
+        ),
         id_col="eid",
         time_col="ts",
     )
@@ -94,11 +96,6 @@ def _two_type_store() -> OCEDStore:
         to_type=["order"],
     )
     return clean_oced_data(data)
-
-
-def _shared(tmp_path, **overrides):
-    settings = OntoBuildSettings(shared_attributes=True, **overrides)
-    return emit(settings, tmp_path / "shared.ofn", data=_two_type_store())
 
 
 def _price_emitter(sink, settings: OntoBuildSettings, binning) -> AttributeEmitter:
@@ -122,15 +119,56 @@ def _literal_subjects(sink) -> set[str]:
 
 
 # --------------------------------------------------------------------------
-# Owners and domains
+# Owners, parents and domains
 # --------------------------------------------------------------------------
 
 
 def test_an_attribute_of_one_type_has_that_type_as_its_domain(tiny_store, tmp_path):
     onto = emit(OntoBuildSettings(), tmp_path / "tiny.ofn", data=tiny_store)
 
-    assert onto.domains["has_step.channel"] == {"step"}
-    assert onto.ranges["has_step.channel"] == {"step.channel"}
+    assert onto.domains["has_channel"] == {"step"}
+    assert onto.ranges["has_channel"] == {"channel"}
+
+
+def test_an_attribute_of_two_types_has_both_as_its_domain(tmp_path):
+    onto = emit(OntoBuildSettings(), tmp_path / "two.ofn", data=_two_kind_store())
+
+    assert onto.domains["has_weight"] == {"order", "step"}
+    assert onto.ranges["has_weight"] == {"weight"}
+    assert onto.property_parents["has_weight"] == {vocab.HAS_ATTRIBUTE}
+
+
+def test_one_value_under_two_types_gives_one_individual(tmp_path):
+    onto = emit(
+        OntoBuildSettings(), tmp_path / "one.ofn", data=_two_kind_store(2.5, 2.5)
+    )
+
+    assert {n for n in onto.individuals if n.startswith("weight.")} == {"weight.2.5"}
+    assert {("has_weight", "o1", "weight.2.5"), ("has_weight", "e1", "weight.2.5")} <= (
+        onto.relations
+    )
+
+
+def test_an_attribute_of_event_types_only_sits_below_event_attribute(
+    tiny_store, tmp_path
+):
+    onto = emit(OntoBuildSettings(), tmp_path / "tiny.ofn", data=tiny_store)
+
+    assert onto.parents["channel"] == {vocab.EVENT_ATTRIBUTE}
+
+
+def test_an_attribute_of_object_types_only_sits_below_object_attribute(tmp_path):
+    onto = emit(
+        OntoBuildSettings(), tmp_path / "order.ofn", data=_order_store(channel=["web"])
+    )
+
+    assert onto.parents["channel"] == {vocab.OBJECT_ATTRIBUTE}
+
+
+def test_an_attribute_of_both_kinds_sits_below_attribute(tmp_path):
+    onto = emit(OntoBuildSettings(), tmp_path / "two.ofn", data=_two_kind_store())
+
+    assert onto.parents["weight"] == {vocab.ATTRIBUTE}
 
 
 def test_the_attribute_classes_and_the_bins_of_one_attribute_are_disjoint(tmp_path):
@@ -142,8 +180,8 @@ def test_the_attribute_classes_and_the_bins_of_one_attribute_are_disjoint(tmp_pa
         ),
     )
 
-    assert frozenset({"order.price", "order.channel"}) in onto.disjoint
-    assert frozenset({"order.price_bin_low", "order.price_bin_high"}) in onto.disjoint
+    assert frozenset({"price", "channel"}) in onto.disjoint
+    assert frozenset({"price_bin_low", "price_bin_high"}) in onto.disjoint
 
 
 def test_a_build_with_typed_attributes_is_consistent(awkward_store, tmp_path):
@@ -151,6 +189,20 @@ def test_a_build_with_typed_attributes_is_consistent(awkward_store, tmp_path):
     OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings()).build_ontology(
         awkward_store
     ).save(str(path))
+
+    assert Reasoner(str(path)).check() is True
+
+
+@pytest.mark.reasoner
+def test_an_attribute_of_both_kinds_builds_consistently_under_hermit(tmp_path):
+    path = tmp_path / "two.ofn"
+    emit(
+        OntoBuildSettings(
+            inverse_representations=[InverseRepresentation.AXIOMATIC],
+        ),
+        path,
+        data=_two_kind_store(),
+    )
 
     assert Reasoner(str(path)).check() is True
 
@@ -164,17 +216,17 @@ def test_a_number_too_wide_for_plain_notation_is_named_without_an_exponent(
     tiny_store, tmp_path
 ):
     table = tiny_store.table(EntityKind.EVENT, "step")
-    table.data["step.price"] = [1.0e20, 2.5, 1.0e-7]
+    table.data["price"] = [1.0e20, 2.5, 1.0e-7]
 
     onto = emit(OntoBuildSettings(), tmp_path / "wide.ofn", data=tiny_store)
 
     assert {
-        "step.price.100000000000000000000",
-        "step.price.0.0000001",
+        "price.100000000000000000000",
+        "price.0.0000001",
     } <= onto.individuals
     assert (
-        "has_value_step.price",
-        "step.price.100000000000000000000",
+        "has_value_price",
+        "price.100000000000000000000",
     ) in onto.data_assertions
 
 
@@ -185,7 +237,7 @@ def test_attributes_whose_names_share_a_prefix_keep_their_own_values(tmp_path):
         data=_order_store(a_b=["x"], a=["y"]),
     )
 
-    assert {"order.a_b.x", "order.a.y"} <= onto.individuals
+    assert {"a_b.x", "a.y"} <= onto.individuals
 
 
 def test_a_bin_class_and_a_value_of_the_same_label_are_named_apart(tmp_path):
@@ -197,8 +249,8 @@ def test_a_bin_class_and_a_value_of_the_same_label_are_named_apart(tmp_path):
         data=store,
     )
 
-    assert "order.price_bin_1" in onto.classes
-    assert "order.price.1" in onto.individuals
+    assert "price_bin_1" in onto.classes
+    assert "price.1" in onto.individuals
     assert onto.classes & onto.individuals == set()
 
 
@@ -210,78 +262,9 @@ def test_a_boolean_attribute_is_not_binned(tmp_path, caplog):
             data=_order_store(express=[True, False], price=[1.0, 2.0]),
         )
 
-    assert {"order.express.True", "order.express.False"} <= onto.individuals
-    assert {c for c in onto.classes if c.startswith("order.express_bin_")} == set()
-    assert "'order.express' has too few distinct values" not in caplog.text
-
-
-# --------------------------------------------------------------------------
-# Shared attribute names
-# --------------------------------------------------------------------------
-
-
-def test_shared_attributes_puts_each_type_class_below_the_name_class(tmp_path):
-    onto = _shared(tmp_path)
-
-    assert onto.parents["order.weight"] == {vocab.OBJECT_ATTRIBUTE, "weight"}
-    assert onto.parents["step.weight"] == {vocab.EVENT_ATTRIBUTE, "weight"}
-
-
-def test_shared_attributes_puts_each_type_property_below_the_name_property(
-    tmp_path,
-):
-    onto = _shared(tmp_path)
-
-    assert onto.property_parents["has_order.weight"] == {"has_weight"}
-    assert onto.property_parents["has_step.weight"] == {"has_weight"}
-    assert onto.property_parents["has_weight"] == {vocab.HAS_ATTRIBUTE}
-    assert onto.domains["has_weight"] == {"order", "step"}
-    assert onto.ranges["has_weight"] == {"weight"}
-
-
-def test_a_name_on_an_event_type_and_an_object_type_sits_below_attribute_only(
-    tmp_path,
-):
-    onto = _shared(tmp_path)
-
-    assert onto.parents["weight"] == {vocab.ATTRIBUTE}
-
-
-def test_a_shared_class_is_not_in_the_disjointness_axiom(tmp_path):
-    onto = _shared(tmp_path)
-
-    assert [group for group in onto.disjoint if "weight" in group] == []
-    assert frozenset({"order.weight", "step.weight"}) in onto.disjoint
-
-
-def test_shared_attributes_off_emits_no_name_class(tmp_path):
-    onto = emit(OntoBuildSettings(), tmp_path / "plain.ofn", data=_two_type_store())
-
-    assert "weight" not in onto.declared
-    assert "has_weight" not in onto.declared
-    assert onto.property_parents["has_order.weight"] == {vocab.HAS_ATTRIBUTE}
-
-
-def test_shared_attributes_under_literals_alone_emits_nothing_shared(tmp_path):
-    onto = _shared(tmp_path, attribute_representations=LITERALS)
-
-    assert "weight" not in onto.declared
-    assert "has_weight" not in onto.declared
-
-
-@pytest.mark.reasoner
-def test_a_shared_attribute_build_is_consistent_under_hermit(tmp_path):
-    path = tmp_path / "shared.ofn"
-    emit(
-        OntoBuildSettings(
-            shared_attributes=True,
-            inverse_representations=[InverseRepresentation.AXIOMATIC],
-        ),
-        path,
-        data=_two_type_store(),
-    )
-
-    assert Reasoner(str(path)).check() is True
+    assert {"express.True", "express.False"} <= onto.individuals
+    assert {c for c in onto.classes if c.startswith("express_bin_")} == set()
+    assert "'express' has too few distinct values" not in caplog.text
 
 
 # --------------------------------------------------------------------------
@@ -296,7 +279,7 @@ def test_a_value_outside_every_bin_is_emitted_without_a_bin(recording_sink, capl
 
     with caplog.at_level(logging.WARNING):
         _price_emitter(sink, settings, LOW_HIGH).emit_columns(
-            rows, "oid", vocab.OBJECT_ATTRIBUTE, IndividualKind.OBJECT
+            rows, "oid", IndividualKind.OBJECT
         )
 
     binned = {name for _, name, cls in sink.of_kind("individual") if "_bin_" in cls}
@@ -319,7 +302,6 @@ def test_a_column_too_narrow_to_bin_is_emitted_unbinned_and_reported_once(
             emitter.emit_columns(
                 pd.DataFrame({"oid": [oid], "price": [4.0]}),
                 "oid",
-                vocab.OBJECT_ATTRIBUTE,
                 IndividualKind.OBJECT,
             )
 
@@ -334,7 +316,7 @@ def test_a_number_under_individuals_always_carries_its_literal(recording_sink):
     rows = pd.DataFrame({"oid": ["o1", "o2", "o3"], "price": [1.0, 7.0, 99.0]})
 
     _price_emitter(sink, settings, LOW_HIGH).emit_columns(
-        rows, "oid", vocab.OBJECT_ATTRIBUTE, IndividualKind.OBJECT
+        rows, "oid", IndividualKind.OBJECT
     )
 
     assert _literal_subjects(sink) == {"price.1", "price.7", "price.99"}
@@ -355,7 +337,7 @@ def test_literals_puts_the_literal_on_the_entity(tmp_path):
         data=_order_store(price=[1.5, 2.0]),
     )
 
-    assert ("has_value_order.price", "o1", "1.5", "decimal") in onto.data_values
+    assert ("has_value_price", "o1", "1.5", "decimal") in onto.data_values
 
 
 def test_literals_alone_emits_no_attribute_class_and_no_has_property(tmp_path):
@@ -365,10 +347,10 @@ def test_literals_alone_emits_no_attribute_class_and_no_has_property(tmp_path):
         data=_order_store(channel=["web", "shop"]),
     )
 
-    assert "order.channel" not in onto.declared
-    assert "has_order.channel" not in onto.declared
-    assert "has_value_order.channel" in onto.declared
-    assert onto.individuals & {"order.channel.web", "order.channel.shop"} == set()
+    assert "channel" not in onto.declared
+    assert "has_channel" not in onto.declared
+    assert "has_value_channel" in onto.declared
+    assert onto.individuals & {"channel.web", "channel.shop"} == set()
 
 
 def test_individuals_and_literals_write_the_literal_in_both_places(tmp_path):
@@ -378,22 +360,17 @@ def test_individuals_and_literals_write_the_literal_in_both_places(tmp_path):
         data=_order_store(channel=["web"]),
     )
 
-    assert ("has_order.channel", "o1", "order.channel.web") in onto.relations
-    assert (
-        "has_value_order.channel",
-        "order.channel.web",
-        "web",
-        "string",
-    ) in onto.data_values
-    assert ("has_value_order.channel", "o1", "web", "string") in onto.data_values
+    assert ("has_channel", "o1", "channel.web") in onto.relations
+    assert ("has_value_channel", "channel.web", "web", "string") in onto.data_values
+    assert ("has_value_channel", "o1", "web", "string") in onto.data_values
 
 
 @pytest.mark.parametrize(
     ("representations", "domain"),
     [
-        (INDIVIDUALS, {"order.channel"}),
+        (INDIVIDUALS, {"channel"}),
         (LITERALS, {"order"}),
-        (BOTH, {"order.channel", "order"}),
+        (BOTH, {"channel", "order"}),
     ],
     ids=["individuals", "literals", "both"],
 )
@@ -406,7 +383,7 @@ def test_the_value_property_domain_follows_the_selection(
         data=_order_store(channel=["web"]),
     )
 
-    assert onto.domains["has_value_order.channel"] == domain
+    assert onto.domains["has_value_channel"] == domain
 
 
 def test_a_text_value_carries_a_string_literal(tmp_path):
@@ -416,12 +393,7 @@ def test_a_text_value_carries_a_string_literal(tmp_path):
         data=_order_store(channel=["web", "shop"]),
     )
 
-    assert (
-        "has_value_order.channel",
-        "order.channel.web",
-        "web",
-        "string",
-    ) in onto.data_values
+    assert ("has_value_channel", "channel.web", "web", "string") in onto.data_values
 
 
 def test_an_attribute_value_property_is_below_has_data_value(tmp_path):
@@ -429,27 +401,8 @@ def test_an_attribute_value_property_is_below_has_data_value(tmp_path):
         OntoBuildSettings(), tmp_path / "price.ofn", data=_order_store(price=[1.5])
     )
 
-    assert onto.property_parents["has_value_order.price"] == {vocab.HAS_DATA_VALUE}
-    assert "has_value_order.price" in onto.functional
-
-
-def test_an_attribute_of_a_type_named_with_a_leading_digit_gets_a_value_property(
-    tmp_path,
-):
-    data = OCEDStore()
-    data.add(
-        EntityKind.EVENT,
-        "1. Beratung",
-        pd.DataFrame({"eid": ["e1"], "ts": [datetime(2024, 1, 1)], "titel": ["t"]}),
-        id_col="eid",
-        time_col="ts",
-    )
-
-    onto = emit(OntoBuildSettings(), tmp_path / "digit.ofn", data=clean_oced_data(data))
-
-    assert ("has_value_1._Beratung.titel", "1._Beratung.titel.t", "t", "string") in (
-        onto.data_values
-    )
+    assert onto.property_parents["has_value_price"] == {vocab.HAS_DATA_VALUE}
+    assert "has_value_price" in onto.functional
 
 
 @pytest.mark.parametrize(
@@ -468,7 +421,15 @@ def test_an_attribute_value_property_has_the_column_datatype_as_range(
         OntoBuildSettings(), tmp_path / "range.ofn", data=_order_store(x=values)
     )
 
-    assert onto.ranges["has_value_order.x"] == {datatype}
+    assert onto.ranges["has_value_x"] == {datatype}
+
+
+def test_an_integer_and_a_decimal_column_give_a_decimal_range(tmp_path):
+    onto = emit(
+        OntoBuildSettings(), tmp_path / "widened.ofn", data=_two_kind_store(2, 2.5)
+    )
+
+    assert onto.ranges["has_value_weight"] == {"decimal"}
 
 
 def test_mixed_datatypes_give_no_range(caplog):
@@ -477,8 +438,8 @@ def test_mixed_datatypes_give_no_range(caplog):
     with caplog.at_level(logging.WARNING):
         datatypes = attribute_datatypes(store, OntoBuildSettings())
 
-    assert "order.x" not in datatypes
-    assert "'order.x' holds values of more than one datatype" in caplog.text
+    assert "x" not in datatypes
+    assert "'x' holds values of more than one datatype" in caplog.text
 
 
 def test_a_bin_is_defined_by_its_edges_under_dl(recording_sink):
@@ -489,8 +450,8 @@ def test_a_bin_is_defined_by_its_edges_under_dl(recording_sink):
 
     definitions = {call[1]: call[2:] for call in sink.of_kind("bin_definition")}
     assert definitions == {
-        "order.price_bin_low": ("order.price", "has_value_order.price", None, 6.5),
-        "order.price_bin_high": ("order.price", "has_value_order.price", 6.5, None),
+        "price_bin_low": ("price", "has_value_price", None, 6.5),
+        "price_bin_high": ("price", "has_value_price", 6.5, None),
     }
 
 
@@ -504,8 +465,8 @@ def test_a_bin_has_no_definition_under_el(recording_sink):
 
     assert sink.of_kind("bin_definition") == []
     assert {c[1] for c in sink.of_kind("declare") if "_bin_" in c[1]} == {
-        "order.price_bin_low",
-        "order.price_bin_high",
+        "price_bin_low",
+        "price_bin_high",
     }
 
 
@@ -518,8 +479,8 @@ def test_a_reasoner_places_an_unasserted_value_in_its_bin(tmp_path):
         data=_order_store(price=TWELVE_PRICES),
     )
     extra = (
-        "ClassAssertion(:order.price value:probe)\n"
-        'DataPropertyAssertion(:has_value_order.price value:probe "9.5"^^xsd:decimal)\n'
+        "ClassAssertion(:price value:probe)\n"
+        'DataPropertyAssertion(:has_value_price value:probe "9.5"^^xsd:decimal)\n'
     )
     text = path.read_text(encoding="utf-8").rstrip()
     path.write_text(f"{text[:-1]}{extra})\n", encoding="utf-8")
@@ -529,5 +490,5 @@ def test_a_reasoner_places_an_unasserted_value_in_its_bin(tmp_path):
     reasoner.save(str(tmp_path / "materialized.ofn"))
 
     types = read_functional(tmp_path / "materialized.ofn").types["probe"]
-    assert "order.price_bin_high" in types
-    assert "order.price_bin_low" not in types
+    assert "price_bin_high" in types
+    assert "price_bin_low" not in types

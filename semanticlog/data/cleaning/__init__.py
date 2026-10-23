@@ -23,7 +23,6 @@ from semanticlog.data.cleaning.names import (
     clean_string,
     cleaned,
 )
-from semanticlog.data.cleaning.qualify import qualified_attribute, qualify_attributes
 from semanticlog.data.cleaning.renames import WORDS, RenameKind, RenameLog
 from semanticlog.data.cleaning.rewrite import attribute_names, entity_ids, text_values
 from semanticlog.data.integrity import check_missing_ids
@@ -58,8 +57,6 @@ def clean_oced_data(
 ) -> OCEDStore:
     """Make every name in a store safe to emit, and record what changed.
 
-    Every attribute is renamed to `<type>.<attribute>`.
-
     Sets `data.backmap` to the map of new name to source name.
 
     Args:
@@ -71,9 +68,8 @@ def clean_oced_data(
         The same store.
 
     Raises:
-        InputError: If an event or object has no id, if two pairs of type and
-            attribute give one name, or if two schema names are the same after
-            every rename has run.
+        InputError: If an event or object has no id, or if two schema names
+            are the same after every rename has run.
     """
     logger.info("Cleaning data")
     raise_reports([check_missing_ids(data)])
@@ -97,7 +93,6 @@ def clean_oced_data(
                 for obj_type in data.get_object_change_types()
             }
         )
-    qualify_attributes(data, log)
     fix_duplicate_names(data, log, bin_labels)
     verify_unique_names(data)
     data.backmap = log.flat()
@@ -179,7 +174,7 @@ def _record_value_renames(data: OCEDStore, log: RenameLog) -> None:
     """Record the attribute values that cleaning is about to rewrite."""
     for view in data.tables():
         for column in view.attributes:
-            cleaned_column = qualified_attribute(cleaned(view.name), cleaned(column))
+            cleaned_column = cleaned(column)
             for value in text_values(view, column):
                 cleaned_value = clean_string(value)
                 if cleaned_value != value:

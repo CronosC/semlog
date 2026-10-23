@@ -59,8 +59,8 @@ def test_the_event_timestamp_is_not_emitted_as_an_attribute(recording_sink, tiny
     owned = {call[1] for call in sink.of_kind("relation")}
 
     assert owned == {
-        vocab.has_attribute_property("step.channel"),
-        vocab.has_attribute_property("step.price"),
+        vocab.has_attribute_property("channel"),
+        vocab.has_attribute_property("price"),
     }
 
 

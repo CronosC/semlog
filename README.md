@@ -113,7 +113,7 @@ A timestamp without a time zone is read as UTC. `case_col`, `act_col` and `time_
 The ontology has a fixed upper schema of `Event`, `Object`, `Attribute` and `Time`, and the classes and properties taken from the log are placed below it:
 
 - one class per activity and per object type, one individual per event and per object
-- one class per attribute of each type, named `<type>.<attribute>`, with a named individual for each distinct value carrying its literal through `has_value_<type>.<attribute>`. With `attribute_representations = ["literals"]` the event or object carries the literal itself instead
+- one class per attribute name, below `EventAttribute`, `ObjectAttribute` or `Attribute` by the kinds of type that carry it, with a named individual for each distinct value carrying its literal through `has_value_<attribute>`. With `attribute_representations = ["literals"]` the event or object carries the literal itself instead
 - one individual per distinct timestamp, linked to its events through `observed_at`
 - the relations of the log as sub-properties of `event_object_relation` and `object_object_relation`
 - event order as `df_<case concept>` properties, optionally with eventually-follows and DECLARE constraint membership
@@ -140,7 +140,6 @@ The record of how the file was produced is annotated onto the ontology itself: t
 | `bins`, `bin_labels` | `5`, `very_low` … `very_high` | Bin count and labels for the two binning modes. |
 | `max_ef_pairs` | `50000000` | Ceiling on materialized eventually-follows pairs. Zero for no limit. |
 | `size_limit_mb` | `0` | Skip inputs larger than this many MB. Zero for no limit. |
-| `shared_attributes` | `false` | Also emit one class and one property per attribute name above the per-type ones, so `has_<name>` reaches the value of every type that carries the name. Needs `individuals`. |
 | `derive_annotations` | `false` | Emit `rdfs:label` and `rdfs:comment` derived from the original names in the log. |
 | `annotation_document` | none | JSON file mapping entity names to `{label, comment}`. |
 | `declare_file` | none | File written by `semlog mine-declare`. Required for `declare`. |
