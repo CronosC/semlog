@@ -83,6 +83,9 @@ class RecordingSink(AxiomSink):
         for name, text in pairs:
             self._record("annotate", str(name), annotation, text)
 
+    def write_entity_annotation(self, prop, name, value, iri):
+        self._record("annotate", str(name), str(prop), value)
+
     def write_ontology_header(self, annotations):
         for property_iri, value in annotations.items():
             self._record("ontology_annotation", property_iri, value)

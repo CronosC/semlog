@@ -199,6 +199,33 @@ def test_a_repeated_schema_statement_is_written_once(sink):
     }
 
 
+def test_an_iri_valued_annotation_is_written_once_on_both_sinks(real_sink, read_back):
+    sink = real_sink()
+    sink.add_class("pay", source="an activity")
+    sink.add_class("Response__pay__", source="a constraint")
+    sink.declare_annotation_property(vocab.ACTIVATION, "a test")
+    sink.declare_annotation_property(vocab.TEMPLATE, "a test")
+    for _ in range(2):
+        sink.annotate_entity_with("Response__pay__", vocab.ACTIVATION, "pay", iri=True)
+        sink.annotate_entity_with("Response__pay__", vocab.TEMPLATE, "Response")
+
+    onto = read_back(sink)
+
+    assert {a for a in onto.annotations if a[0] == "Response__pay__"} == {
+        ("Response__pay__", "activation", "pay"),
+        ("Response__pay__", "template", "Response"),
+    }
+    assert sink.axiom_count == 6
+
+
+def test_an_annotation_naming_an_undeclared_entity_is_rejected(sink):
+    sink.add_class("Response__pay__", source="a constraint")
+    sink.declare_annotation_property(vocab.ACTIVATION, "a test")
+
+    with pytest.raises(ValueError, match="'pay' is not declared"):
+        sink.annotate_entity_with("Response__pay__", vocab.ACTIVATION, "pay", iri=True)
+
+
 def test_a_row_level_assertion_is_written_every_time(sink):
     for _ in range(3):
         sink.assert_relations("df_order", [("e1", "e2")], (EVENT, EVENT))

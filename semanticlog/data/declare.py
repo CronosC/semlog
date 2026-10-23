@@ -15,6 +15,52 @@ from typing import Any
 
 from semanticlog.core.errors import InputError
 
+# The templates Declare4Py parses, from its DeclareModel grammar. Unary ones
+# take one activity, the rest take an ordered pair.
+UNARY_TEMPLATES: tuple[str, ...] = (
+    "Absence1",
+    "Absence2",
+    "Absence3",
+    "Existence1",
+    "Existence2",
+    "Existence3",
+    "Exactly1",
+    "Exactly2",
+    "End",
+    "Init",
+)
+
+BINARY_TEMPLATES: tuple[str, ...] = (
+    "Choice",
+    "Exclusive Choice",
+    "Responded Existence",
+    "Response",
+    "Alternate Response",
+    "Chain Response",
+    "Precedence",
+    "Alternate Precedence",
+    "Chain Precedence",
+    "Succession",
+    "Alternate Succession",
+    "Chain Succession",
+    "Co-Existence",
+    "Not Co-Existence",
+    "Not Succession",
+    "Not Chain Succession",
+)
+
+TEMPLATES: frozenset[str] = frozenset(UNARY_TEMPLATES) | frozenset(BINARY_TEMPLATES)
+
+_BY_COMPACT_NAME: dict[str, str] = {t.replace(" ", ""): t for t in TEMPLATES}
+
+
+def template_name(compact: str) -> str:
+    """Return a template as Declare4Py spells it, from the form without spaces a constraint name holds.
+
+    A name that is no known template is returned as it is.
+    """
+    return _BY_COMPACT_NAME.get(compact, compact)
+
 
 @dataclass(frozen=True)
 class MiningSettings:

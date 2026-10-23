@@ -19,46 +19,19 @@ import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.errors import ConfigError, DependencyError, InputError
-from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
+from semanticlog.data.declare import (
+    BINARY_TEMPLATES,
+    TEMPLATES,
+    UNARY_TEMPLATES,
+    ConceptConstraints,
+    DeclareResult,
+    MiningSettings,
+)
 from semanticlog.data.readable import ReadableStore
 
 logger = logging.getLogger(__name__)
 
-# The templates Declare4Py parses, from its DeclareModel grammar. Unary ones
-# take one activity, the rest take an ordered pair.
-UNARY_TEMPLATES: tuple[str, ...] = (
-    "Absence1",
-    "Absence2",
-    "Absence3",
-    "Existence1",
-    "Existence2",
-    "Existence3",
-    "Exactly1",
-    "Exactly2",
-    "End",
-    "Init",
-)
-
-BINARY_TEMPLATES: tuple[str, ...] = (
-    "Choice",
-    "Exclusive Choice",
-    "Responded Existence",
-    "Response",
-    "Alternate Response",
-    "Chain Response",
-    "Precedence",
-    "Alternate Precedence",
-    "Chain Precedence",
-    "Succession",
-    "Alternate Succession",
-    "Chain Succession",
-    "Co-Existence",
-    "Not Co-Existence",
-    "Not Succession",
-    "Not Chain Succession",
-)
-
-TEMPLATES: frozenset[str] = frozenset(UNARY_TEMPLATES) | frozenset(BINARY_TEMPLATES)
+__all__ = ["BINARY_TEMPLATES", "TEMPLATES", "UNARY_TEMPLATES"]
 
 
 def template_of(column: str) -> str:

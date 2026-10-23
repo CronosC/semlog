@@ -185,12 +185,26 @@ def _split_activities(rest: str, known: Collection[str]) -> list[str]:
     return parts
 
 
+def split_constraint(constraint: str, known: Collection[str]) -> tuple[str, list[str]]:
+    """Return the template of a mined constraint name and its activities.
+
+    Mining writes `Response[a, b]` as `Response__a__b__`.
+
+    Args:
+        constraint: The constraint as it was mined.
+        known: Activity names of the log, used to split the name.
+
+    Returns:
+        The template without spaces, and the activities in order.
+    """
+    template, _, rest = constraint.partition("__")
+    return template, _split_activities(rest, known)
+
+
 def _declare_label(
     constraint: str, original: Callable[[str], str], known: Collection[str]
 ) -> str:
     """Return a mined constraint name as its template and its activities.
-
-    Mining writes `Response[a, b]` as `Response__a__b__`.
 
     Args:
         constraint: The constraint as it was mined.
@@ -200,8 +214,8 @@ def _declare_label(
     Returns:
         The constraint written out, such as `Response (place order, ship)`.
     """
-    template, _, rest = constraint.partition("__")
-    activities = [original(part) for part in _split_activities(rest, known)]
+    template, parts = split_constraint(constraint, known)
+    activities = [original(part) for part in parts]
     if not activities:
         return template
     return f"{template} ({', '.join(activities)})"
@@ -507,6 +521,10 @@ class AnnotationWriter:
                 constraint name.
         """
         self.write("declare.hierarchy", hierarchy)
+        if self.sink.is_declared(vocab.TEMPLATE):
+            self.write("declare.template", vocab.TEMPLATE)
+            self.write("declare.activation", vocab.ACTIVATION)
+            self.write("declare.target", vocab.TARGET)
         for constraint in constraints:
             self.write(
                 "declare.constraint",

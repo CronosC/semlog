@@ -400,6 +400,53 @@ def _declare_settings(declare: DeclareResult, profile=OWLProfile.OWL2DL):
     )
 
 
+def _unsplittable_constraint() -> DeclareResult:
+    """A constraint whose activity part names no activity of the matrix store."""
+    return DeclareResult(
+        concepts=(
+            ConceptConstraints(
+                "order",
+                ("o1", "o2"),
+                {"AlternateResponse__nope__ship__": frozenset({"o1"})},
+            ),
+        ),
+        mining=DISCOVERY,
+    )
+
+
+def _annotations_of(onto, name: str) -> dict[str, str]:
+    return {kind: text for n, kind, text in onto.annotations if n == name}
+
+
+def test_a_binary_constraint_names_its_template_activation_and_target(tmp_path):
+    onto = emit(_declare_settings(ragged_declare_constraints()), tmp_path / "d.ofn")
+
+    assert _annotations_of(onto, "Response__place_order__ship__") == {
+        "template": "Response",
+        "activation": "place_order",
+        "target": "ship",
+    }
+
+
+def test_a_unary_constraint_names_its_template_and_activation(tmp_path):
+    onto = emit(_declare_settings(ragged_declare_constraints()), tmp_path / "d.ofn")
+
+    assert _annotations_of(onto, "Existence__ship__") == {
+        "template": "Existence",
+        "activation": "ship",
+    }
+
+
+def test_a_constraint_whose_activities_do_not_split_names_its_template_only(
+    tmp_path,
+):
+    onto = emit(_declare_settings(_unsplittable_constraint()), tmp_path / "d.ofn")
+
+    assert _annotations_of(onto, "AlternateResponse__nope__ship__") == {
+        "template": "Alternate Response"
+    }
+
+
 def test_the_constraint_hierarchy_is_below_object(tmp_path):
     onto = emit(_declare_settings(ragged_declare_constraints()), tmp_path / "d.ofn")
 

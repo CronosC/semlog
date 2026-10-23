@@ -235,6 +235,14 @@ class StreamingSink(AxiomSink):
                 f'"{self._escape(str(text))}")'
             )
 
+    def write_entity_annotation(
+        self, prop: str, name: str, value: str, iri: bool
+    ) -> None:
+        target = self._ref(value) if iri else f'"{self._escape(value)}"'
+        self._axiom(
+            f"AnnotationAssertion({self._ref(prop)} {self._ref(name)} {target})"
+        )
+
     def _finish(self) -> None:
         """Close the ontology and the file, then move it into place."""
         out = self._out

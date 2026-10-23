@@ -131,9 +131,14 @@ def read_rdf(path: str | Path, iri: str) -> Emitted:
                 frozenset(n for m in graph.items(members) if (n := local(m)))
             )
 
+    annotation_properties = {
+        name
+        for prop in graph.subjects(RDF.type, OWL.AnnotationProperty)
+        if (name := local(prop)) is not None
+    }
     for subject, predicate, obj in graph:
         prop = local(predicate)
-        if prop is None:
+        if prop is None or prop in annotation_properties:
             continue
         subject_name = local(subject)
         if subject_name is None:
@@ -151,6 +156,18 @@ def read_rdf(path: str | Path, iri: str) -> Emitted:
         for subject, _, obj in graph.triples((None, predicate, None)):
             if (name := local(subject)) is not None:
                 emitted.annotations.add((name, kind, str(obj)))
+
+    for prop in graph.subjects(RDF.type, OWL.AnnotationProperty):
+        kind = local(prop)
+        if kind is None:
+            continue
+        for subject, _, obj in graph.triples((None, prop, None)):
+            name = local(subject)
+            if name is None or subject == ontology_iri:
+                continue
+            value = str(obj) if isinstance(obj, Literal) else local(obj)
+            if value is not None:
+                emitted.annotations.add((name, kind, value))
 
     for _, predicate, obj in graph.triples((ontology_iri, None, None)):
         if isinstance(obj, Literal):

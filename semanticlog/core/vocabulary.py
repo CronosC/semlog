@@ -158,6 +158,13 @@ def inverse(prop: str, named: Mapping[str, str] | None = None) -> str:
     return INVERSE_PREFIX + prop
 
 
+TEMPLATE = Term("template")
+ACTIVATION = Term("activation")
+TARGET = Term("target")
+
+SCHEMA_ANNOTATIONS: frozenset[str] = frozenset({TEMPLATE, ACTIVATION, TARGET})
+"""The annotation properties a build may attach to a DECLARE constraint class."""
+
 BUILD_TOOL = Term("buildTool")
 BUILD_CONFIGURATION = Term("buildConfiguration")
 SOURCE_LOG = Term("sourceLog")

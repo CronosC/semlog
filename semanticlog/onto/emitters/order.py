@@ -17,11 +17,11 @@ from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import IndividualKind
 from semanticlog.core.errors import ConfigError
 from semanticlog.data.cleaning import object_type_renames
-from semanticlog.data.declare import DeclareResult
+from semanticlog.data.declare import DeclareResult, template_name
 from semanticlog.data.flatten import iter_logs
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind
-from semanticlog.onto.annotations import AnnotationWriter
+from semanticlog.onto.annotations import AnnotationWriter, split_constraint
 from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters.base import Emitter
 from semanticlog.onto.inputs import BuildInputs
@@ -252,7 +252,9 @@ class OrderEmitter(Emitter):
 
         Every mined constraint becomes a class below the constraint hierarchy
         and below the object types of the case concepts it holds in. The case
-        object of a trace that satisfies it becomes a member.
+        object of a trace that satisfies it becomes a member. The class is
+        annotated with its template and, when the name splits into activities
+        of the log, with the activity classes it constrains.
 
         Args:
             data: Store being built from. Its activity names split the
@@ -283,14 +285,36 @@ class OrderEmitter(Emitter):
             ]
             if types:
                 self.sink.add_class(constraint, types, source=source)
+        activities = data.types(EntityKind.EVENT)
+        for prop in (vocab.TEMPLATE, vocab.ACTIVATION, vocab.TARGET):
+            self.sink.declare_annotation_property(prop, "the DECLARE schema")
+        for constraint in constraints:
+            self._annotate_constraint(constraint, activities)
         self.annotations.declare_constraints(
-            vocab.DECLARE_CONSTRAINT, constraints, data.types(EntityKind.EVENT)
+            vocab.DECLARE_CONSTRAINT, constraints, activities
         )
 
         for constraint in constraints:
             self.sink.assert_individuals(
                 constraint, declare.members(constraint), IndividualKind.OBJECT
             )
+
+    def _annotate_constraint(self, constraint: str, activities: Sequence[str]) -> None:
+        """Annotate one constraint class with its template and its activities.
+
+        The activities are written only when every part of the name is an
+        activity of the log. The first is the activation, the second the
+        target.
+        """
+        template, parts = split_constraint(constraint, activities)
+        self.sink.annotate_entity_with(
+            constraint, vocab.TEMPLATE, template_name(template)
+        )
+        if not parts or any(part not in activities for part in parts):
+            return
+        self.sink.annotate_entity_with(constraint, vocab.ACTIVATION, parts[0], iri=True)
+        if len(parts) > 1:
+            self.sink.annotate_entity_with(constraint, vocab.TARGET, parts[1], iri=True)
 
 
 def _case_concept_types(

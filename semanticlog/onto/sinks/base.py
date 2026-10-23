@@ -247,6 +247,20 @@ class AxiomSink(ABC):
         """
 
     @abstractmethod
+    def write_entity_annotation(
+        self, prop: str, name: str, value: str, iri: bool
+    ) -> None:
+        """Annotate a class or property with a TBox annotation property.
+
+        Args:
+            prop: The annotation property, a `Term`.
+            name: Local name of the entity annotated.
+            value: The text, or the local name of the class or property the
+                annotation points at.
+            iri: Whether `value` names an entity rather than holding text.
+        """
+
+    @abstractmethod
     def write_ontology_header(self, annotations: Mapping[str, str]) -> None:
         """Begin the ontology and write its annotations."""
 
@@ -749,6 +763,42 @@ class AxiomSink(ABC):
             self.write_annotations("label", [(iri_fragment, label)])
         if comment and self._names.first_annotation("comment", iri_fragment, comment):
             self.write_annotations("comment", [(iri_fragment, comment)])
+
+    def declare_annotation_property(self, prop: str, source: str) -> None:
+        """Declare a TBox annotation property, once.
+
+        Raises:
+            NameCollisionError: If the name is declared as another kind.
+        """
+        self._declare_name(prop, SinkEntity.ANNOTATION_PROPERTY, source)
+        if self._names.first_declaration(prop, SinkEntity.ANNOTATION_PROPERTY):
+            self.write_declaration(prop, SinkEntity.ANNOTATION_PROPERTY)
+
+    def annotate_entity_with(
+        self, name: str, prop: str, value: str, *, iri: bool = False
+    ) -> None:
+        """Attach a TBox annotation property to a declared class or property.
+
+        Args:
+            name: Local name of the entity annotated.
+            prop: The annotation property, declared through
+                `declare_annotation_property`.
+            value: The text, or with `iri` the local name of a declared class
+                or property.
+            iri: Whether `value` names an entity.
+
+        Raises:
+            ValueError: If the entity, the property or an entity `value` names
+                is not declared.
+        """
+        for entity in (name, prop, *([value] if iri else [])):
+            if not self.is_declared(entity):
+                raise ValueError(
+                    f"Cannot annotate {name!r} with {prop!r}: {entity!r} is not "
+                    "declared. Declare it first."
+                )
+        if self._names.first_annotation(str(prop), name, value):
+            self.write_entity_annotation(prop, name, value, iri)
 
     def annotate_individuals_bulk(
         self, pairs: list[tuple[str, str]], kind: IndividualKind

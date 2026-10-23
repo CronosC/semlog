@@ -92,6 +92,18 @@
     "label": "{constraint}",
     "comment": "Objects whose trace satisfies the DECLARE constraint '{constraint}'."
   },
+  "declare.template": {
+    "label": "template",
+    "comment": "The DECLARE template of a constraint class, such as Response."
+  },
+  "declare.activation": {
+    "label": "activation",
+    "comment": "The activity class a DECLARE constraint is activated by. The only activity of a unary template."
+  },
+  "declare.target": {
+    "label": "target",
+    "comment": "The activity class a DECLARE constraint of a binary template targets."
+  },
   "change.class": {
     "label": "{original} change",
     "comment": "Records of the '{original}' attribute taking a new value."

@@ -142,7 +142,7 @@ EXPECTED: dict[str, Shape] = {
         object_properties=36,
         data_properties=10,
         individuals=96,
-        axioms=950,
+        axioms=964,
         must_contain=_DF
         | _DECLARE
         | _NUMERIC

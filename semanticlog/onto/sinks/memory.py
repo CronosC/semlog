@@ -332,6 +332,20 @@ class InMemorySink(AxiomSink):
                 f"{', '.join(names[:5])}. Declare each entity before annotating it."
             ) from exc
 
+    def write_entity_annotation(
+        self, prop: str, name: str, value: str, iri: bool
+    ) -> None:
+        annotation_value = IRI.create(self.iri_of(value)) if iri else owl_literal(value)
+        self._add(
+            OWLAnnotationAssertionAxiom(
+                IRI.create(self.iri_of(name)),
+                OWLAnnotation(
+                    OWLAnnotationProperty(IRI.create(self.iri_of(prop))),
+                    annotation_value,
+                ),
+            )
+        )
+
     def write_ontology_header(self, annotations: Mapping[str, str]) -> None:
         """Write the build record as annotations on the ontology."""
         for property_iri, value in annotations.items():

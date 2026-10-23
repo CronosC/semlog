@@ -40,8 +40,11 @@ _DISJOINT = re.compile(r"^DisjointClasses\((.+)\)$")
 _EQUIVALENT = re.compile(rf"^EquivalentClasses\({_P}({_REF}) ")
 _FUNCTIONAL = re.compile(rf"^Functional(?:Object|Data)Property\({_P}({_REF})\)$")
 _INVERSE_FUNCTIONAL = re.compile(rf"^InverseFunctionalObjectProperty\({_P}({_REF})\)$")
+# An `rdfs:label` or `rdfs:comment` holds text. A TBox annotation property
+# holds text or names a class or property.
 _ENTITY_ANNOTATION = re.compile(
-    rf'^AnnotationAssertion\(rdfs:(label|comment) {_P}({_REF}) "(.*)"\)$', re.DOTALL
+    rf'^AnnotationAssertion\((?:rdfs|oced):(\w+) {_P}({_REF}) (?:"(.*)"|{_P}({_REF}))\)$',
+    re.DOTALL,
 )
 
 
@@ -173,5 +176,6 @@ def _read_axiom(line: str, emitted: Emitted) -> None:
     elif m := _INVERSE_FUNCTIONAL.match(line):
         emitted.inverse_functional.add(_unescape(m.group(1)))
     elif m := _ENTITY_ANNOTATION.match(line):
-        kind, name, text = m.groups()
-        emitted.annotations.add((_unescape(name), kind, _unescape(text)))
+        kind, name, text, target = m.groups()
+        value = text if text is not None else target
+        emitted.annotations.add((_unescape(name), kind, _unescape(value)))

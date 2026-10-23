@@ -220,6 +220,17 @@ def test_each_case_object_is_typed_by_the_constraints_of_its_case_concept(built)
     }
 
 
+def test_every_constraint_class_names_its_activation(built):
+    onto = built("dl_declare_multi_cc")
+    constraints = {
+        c for c, parents in onto.parents.items() if "DeclareConstraint" in parents
+    }
+    activated = {n for n, kind, _ in onto.annotations if kind == "activation"}
+
+    assert constraints
+    assert constraints <= activated
+
+
 def test_a_mined_constraint_is_labeled_with_what_it_says(built):
     onto = built("dl_declare_multi_cc")
     labels = {name: text for name, kind, text in onto.annotations if kind == "label"}
