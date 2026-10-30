@@ -1,4 +1,4 @@
-.PHONY: help test test-fast coverage format lint typecheck check install example build-all
+.PHONY: help test test-fast coverage format lint typecheck check verify install example build-all
 
 RUN := uv run
 
@@ -30,6 +30,10 @@ typecheck: ## Type check the package
 	$(RUN) mypy semanticlog/
 
 check: lint typecheck test ## Lint, type check and run the whole suite
+
+verify: check ## Check, build examples/pipeline.toml and test it for consistency under HermiT
+	$(RUN) semlog build --config examples/pipeline.toml
+	$(RUN) semlog reason examples/out/pipeline.ofn --check --backend HermiT
 
 example: ## Build examples/pipeline.toml
 	$(RUN) semlog build --config examples/pipeline.toml

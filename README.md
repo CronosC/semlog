@@ -194,7 +194,7 @@ make install
 make check
 ```
 
-`make install` installs the dev dependencies and the git hooks. `make check` runs lint, type check and the whole suite. `make help` lists every target. The reasoner tests need a JVM and skip themselves without one.
+`make install` installs the dev dependencies and the git hooks. `make check` runs lint, type check and the whole suite. `make verify` runs `make check`, builds `examples/pipeline.toml` and checks the result for consistency under HermiT, which needs Java. `make help` lists every target. The reasoner tests need a JVM and skip themselves without one.
 
 ## License
 
