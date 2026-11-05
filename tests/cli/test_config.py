@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from semanticlog.cli.config import resolve_log_inputs, resolve_run_config
-from semanticlog.core.enums import OCELExtension, OWLProfile
+from semanticlog.core.enums import OCELExtension, OutputFormat, OWLProfile
 from semanticlog.core.errors import ConfigError
 from semanticlog.onto.settings import OntoBuildSettings
 
@@ -229,6 +229,41 @@ def test_a_dry_run_plan_names_every_file_it_would_write(ocel):
     text = resolve(ocel, output="out", save_backmap=True).render()
 
     assert "#   out/pipeline.ofn\n#   out/pipeline.backmap.json" in text
+
+
+def test_a_dry_run_plan_names_each_converted_file(ocel):
+    text = resolve(ocel, output="out", output_formats=["ttl"]).render()
+
+    assert "#   out/pipeline.ofn\n#   out/pipeline.ttl" in text
+
+
+def test_output_formats_are_read_in_any_case(ocel):
+    cfg = resolve(ocel, output_formats=["TTL", "owx"])
+
+    assert cfg.output_formats == [OutputFormat.TTL, OutputFormat.OWX]
+
+
+def test_an_unknown_output_format_names_the_setting_and_the_choices(ocel):
+    with pytest.raises(
+        ConfigError,
+        match=r"output_formats: unknown value 'nt'\. Choose from: ofn, owl, owx, ttl, omn\.",
+    ):
+        resolve(ocel, output_formats=["nt"])
+
+
+@pytest.mark.parametrize(
+    ("streaming", "requested", "converted"),
+    [
+        (True, ["ofn", "ttl", "ttl"], ["pipeline.ttl"]),
+        (False, ["owl", "ofn"], ["pipeline.ofn"]),
+    ],
+)
+def test_converted_paths_leave_out_the_build_format_and_repeats(
+    ocel, streaming, requested, converted
+):
+    cfg = resolve(ocel, streaming=streaming, output_formats=requested)
+
+    assert [p.name for p in cfg.converted_paths(ocel).values()] == converted
 
 
 def test_a_dry_run_plan_leaves_out_case_concepts_chosen_from_the_log(ocel):

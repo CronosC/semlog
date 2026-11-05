@@ -62,6 +62,8 @@ def _cmd_build(args: argparse.Namespace) -> int:
     report = build_all(cfg)
     for input_path in report.built:
         print(cfg.ontology_path(input_path))
+        for path in cfg.converted_paths(input_path).values():
+            print(path)
     logger.info("Done: %s", report.summary())
     for path, message in report.failed:
         logger.error("%s: %s", path, message)

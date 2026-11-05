@@ -25,7 +25,7 @@ from semanticlog.cli.settings_table import (
     settings_targeting,
 )
 from semanticlog.cli.toml import RENAMED_KEYS, load_config_file, toml_value
-from semanticlog.core.enums import OCELExtension
+from semanticlog.core.enums import OCELExtension, OutputFormat
 from semanticlog.core.errors import ConfigError
 from semanticlog.core.vocabulary import default_iri
 from semanticlog.data.declare import DeclareResult
@@ -190,6 +190,7 @@ class RunConfig:
         save_backmap: Write the map of cleaned names to source names.
         streaming: Write functional syntax to disk as the build runs. Off
             builds in memory and writes RDF/XML.
+        output_formats: Further formats to write each ontology in.
         size_limit_mb: Skip inputs larger than this. Zero for no limit.
         log_dir: Directory for per-input log files.
         config_file: Config this run came from, recorded as provenance.
@@ -218,6 +219,7 @@ class RunConfig:
     reasoner_backend: str
     save_backmap: bool
     streaming: bool
+    output_formats: list[OutputFormat]
     size_limit_mb: int
     log_dir: Path | None
     config_file: Path | None = None
@@ -237,8 +239,28 @@ class RunConfig:
 
         `.ofn` for a streamed build, `.owl` for an in-memory one.
         """
-        suffix = "ofn" if self.streaming else "owl"
-        return self.output_dir / f"{self.output_stem(input_path)}.{suffix}"
+        return (
+            self.output_dir
+            / f"{self.output_stem(input_path)}.{self.build_format.value}"
+        )
+
+    @property
+    def build_format(self) -> OutputFormat:
+        """The format the build itself writes."""
+        return OutputFormat.OFN if self.streaming else OutputFormat.OWL
+
+    def converted_paths(self, input_path: Path) -> dict[OutputFormat, Path]:
+        """Return where each further format of one input goes.
+
+        The format the build writes itself is left out, and a repeated format
+        appears once.
+        """
+        stem = self.output_stem(input_path)
+        return {
+            f: self.output_dir / f"{stem}.{f.value}"
+            for f in self.output_formats
+            if f is not self.build_format
+        }
 
     def backmap_path(self, input_path: Path) -> Path:
         """Return where the name backmap for one input goes."""
@@ -331,6 +353,7 @@ class RunConfig:
         lines += ["", "# would write:"]
         for path in self.inputs:
             lines.append(f"#   {self.ontology_path(path)}")
+            lines.extend(f"#   {p}" for p in self.converted_paths(path).values())
             if self.save_backmap:
                 lines.append(f"#   {self.backmap_path(path)}")
         return "\n".join(lines)

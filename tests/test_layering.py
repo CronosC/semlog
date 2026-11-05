@@ -21,6 +21,7 @@ ALLOWED: dict[str, set[str]] = {
 ONTO_ALLOWED: dict[str, set[str]] = {
     "settings": set(),
     "reason": {"sinks"},
+    "convert": {"reason", "sinks"},
     "record": set(),
     "emitted": set(),
     "inputs": {"settings"},

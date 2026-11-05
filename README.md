@@ -1,10 +1,10 @@
 # semlog
 
-`semlog` turns an OCEL 2.0 event log, or a flat CSV or XES log, into one OWL 2 ontology file. The file is `<name>.ofn` in OWL functional syntax by default, or `<name>.owl` in RDF/XML with `--no-streaming`.
+`semlog` turns an OCEL 2.0 event log, or a flat CSV or XES log, into one OWL 2 ontology file. The file is `<name>.ofn` in OWL functional syntax by default, or `<name>.owl` in RDF/XML with `--no-streaming`. `output_formats` also writes it as RDF/XML, OWL/XML, Turtle or Manchester syntax.
 
 ## Installation
 
-You need Python 3.12 or newer. `semlog reason` and `--materialize` also need Java 17 or newer on `PATH` or in `JAVA_HOME`. Building an ontology needs no Java.
+You need Python 3.12 or newer. `semlog reason`, `--materialize` and `--output-formats` also need Java 17 or newer on `PATH` or in `JAVA_HOME`. Building an ontology needs no Java.
 
 The package is not on PyPI. Clone the repository and install it with [uv](https://docs.astral.sh/uv/):
 
@@ -146,6 +146,7 @@ The record of how the file was produced is annotated onto the ontology itself: t
 | `materialize` | `false` | Run a reasoner over the result and save what it entails. Needs a JVM. |
 | `reasoner_backend` | `HermiT` | Reasoner `materialize` runs: `HermiT`, `Pellet`, `ELK`. |
 | `streaming` | `true` | Write OWL functional syntax to disk as `<name>.ofn`. Off builds the ontology in memory and writes `<name>.owl` in RDF/XML, which rdflib reads. |
+| `output_formats` | none | Further formats to write the ontology in, each as `<name>.<format>`: `ofn` (functional syntax), `owl` (RDF/XML), `owx` (OWL/XML), `ttl` (Turtle), `omn` (Manchester syntax). They are written after `materialize`. The format the build writes itself is skipped. Needs a JVM. |
 | `save_backmap` | `false` | Also write the map from cleaned names to source names as JSON. |
 | `log_dir` | none | Directory for a log file per input. |
 

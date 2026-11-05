@@ -18,7 +18,7 @@ from semanticlog.cli.run import (
 from semanticlog.core.errors import ConfigError, DependencyError
 from semanticlog.core.vocabulary import default_iri
 from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
-from tests.support.owlapi import ontology_annotations
+from tests.support.owlapi import load, ontology_annotations
 from tests.support.rdf import read_rdf
 from tests.support.written import read_built, record
 
@@ -341,6 +341,35 @@ def test_materializing_during_a_build_grows_the_file_and_is_recorded(ocel, tmp_p
     grown = tmp_path / "grown" / "pipeline.ofn"
     assert grown.stat().st_size > (tmp_path / "plain" / "pipeline.ofn").stat().st_size
     assert ontology_annotations(grown)["materializeRequested"] == "true"
+
+
+@pytest.mark.reasoner
+def test_a_build_writes_each_output_format_and_prints_its_path(ocel, tmp_path, capsys):
+    out = tmp_path / "onto"
+    argv = ["build", str(ocel), "--output", str(out), "-q"]
+
+    assert main([*argv, "--output-formats", "ttl", "owx"]) == EXIT_OK
+    assert sorted(p.name for p in out.iterdir()) == [
+        "pipeline.ofn",
+        "pipeline.owx",
+        "pipeline.ttl",
+    ]
+    assert capsys.readouterr().out.split() == [
+        str(out / "pipeline.ofn"),
+        str(out / "pipeline.ttl"),
+        str(out / "pipeline.owx"),
+    ]
+
+
+@pytest.mark.reasoner
+def test_the_converted_files_hold_what_the_reasoner_added(ocel, tmp_path):
+    out = tmp_path / "onto"
+    argv = ["build", str(ocel), "--output", str(out), "--materialize", "-q"]
+
+    assert main([*argv, "--output-formats", "owx"]) == EXIT_OK
+    assert load(out / "pipeline.owx").getLogicalAxiomCount() == (
+        load(out / "pipeline.ofn").getLogicalAxiomCount()
+    )
 
 
 # --------------------------------------------------------------------------

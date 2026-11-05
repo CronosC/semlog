@@ -24,6 +24,7 @@ from semanticlog.data.flatten import choose_case_concepts
 from semanticlog.data.loading import load_and_clean
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.stats import file_digest, store_stats
+from semanticlog.onto.convert import convert
 from semanticlog.onto.emitters.provenance import build_configuration
 from semanticlog.onto.pipeline import build_log
 from semanticlog.onto.reason import Reasoner
@@ -218,6 +219,17 @@ def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
         with _timed(timings, "reason"):
             added = Reasoner(str(onto_path), backend=cfg.reasoner_backend).materialize()
         logger.info("Materialization complete: %s axiom(s) added.", f"{added:,}")
+
+    if cfg.build_format in cfg.output_formats:
+        logger.info(
+            "Output format %s is the format of the build, skipped.",
+            cfg.build_format.value,
+        )
+    converted = cfg.converted_paths(input_path)
+    if converted:
+        logger.info("Converting to %s..", ", ".join(f.value for f in converted))
+        with _timed(timings, "convert"):
+            convert(onto_path, converted)
 
     stats = _ontology_stats(result)
     logger.info("Ontology: %s", ", ".join(f"{k}={v:,}" for k, v in stats.items()))

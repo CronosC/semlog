@@ -63,10 +63,13 @@ _UNSUPPORTED: dict[str, frozenset[str]] = {
 
 # Options for the JVM the OWL API runs on. The slf4j level silences the parser,
 # which reports the RDF/XML attempt it makes on a functional syntax file as a
-# warning and a stack trace. The other two silence warnings on Java 24 and
-# newer. An older JVM skips them under `ignoreUnrecognized`.
+# warning and a stack trace. The heap share replaces Java's default of a
+# quarter of the memory limit and leaves the other half to the Python process.
+# The last two silence warnings on Java 24 and newer. An older JVM skips them
+# under `ignoreUnrecognized`.
 _JVM_OPTIONS: tuple[str, ...] = (
     "-Dorg.slf4j.simpleLogger.defaultLogLevel=error",
+    "-XX:MaxRAMPercentage=50",
     "--enable-native-access=ALL-UNNAMED",
     "--sun-misc-unsafe-memory-access=allow",
 )

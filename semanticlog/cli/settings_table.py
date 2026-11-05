@@ -20,6 +20,7 @@ from semanticlog.core.enums import (
     EventOrderRepresentation,
     InverseRepresentation,
     OCELExtension,
+    OutputFormat,
     OWLProfile,
     resolve_reasoner_backend,
 )
@@ -568,6 +569,18 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
             "(.owl)."
         ),
         argparse={"action": argparse.BooleanOptionalAction},
+    ),
+    Setting(
+        "output_formats",
+        [],
+        _list_of(_enum_of(OutputFormat)),
+        "run",
+        help=(
+            f"Also write the ontology as: {enum_choices(OutputFormat)} "
+            "(default: none). Each file is named <name>.<format> and written "
+            "after the reasoner. Needs Java 17 or newer."
+        ),
+        argparse={"nargs": "*", "metavar": "FORMAT"},
     ),
     Setting(
         "save_backmap",

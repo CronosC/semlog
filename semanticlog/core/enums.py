@@ -196,6 +196,24 @@ class ReasonerBackend(BuildEnum):
 REASONER_BACKENDS: tuple[str, ...] = tuple(b.value for b in ReasonerBackend)
 
 
+class OutputFormat(BuildEnum):
+    """Format a built ontology is also written in, named by its file suffix.
+
+    Attributes:
+        OFN: OWL functional syntax.
+        OWL: RDF/XML.
+        OWX: OWL/XML.
+        TTL: Turtle.
+        OMN: Manchester syntax.
+    """
+
+    OFN = "ofn"
+    OWL = "owl"
+    OWX = "owx"
+    TTL = "ttl"
+    OMN = "omn"
+
+
 def resolve_reasoner_backend(text: str, *, key: str) -> str:
     """Return the backend name as the OWL API spells it, one of `REASONER_BACKENDS`.
 
