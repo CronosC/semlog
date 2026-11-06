@@ -1,8 +1,9 @@
 """Object attribute history, as one individual per recorded change.
 
 Every recorded change becomes a change record holding the new value and its
-timestamp. Without it, an object carries only the latest value of each
-attribute.
+timestamp. When exactly one event of the object occurred at that timestamp,
+the record links to it through `caused_by`. Without the history, an object
+carries only the latest value of each attribute.
 
 This runs only for a store loaded with the attribute history extension.
 """
@@ -10,12 +11,14 @@ This runs only for a store loaded with the attribute history extension.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import IndividualKind
 from semanticlog.data.readable import ReadableStore
+from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.annotations import AnnotationWriter
 from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters.attributes import AttributeEmitter, attribute_source
@@ -25,6 +28,71 @@ from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import AxiomSink
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _CauseCounts:
+    """How many change records a build emitted, and how many got no cause."""
+
+    records: int = 0
+    no_event: int = 0
+    several: int = 0
+
+
+def _utc(stamps: pd.Series) -> pd.Series:
+    """Return timestamps as UTC nanosecond timestamps, a naive one read as UTC."""
+    return pd.to_datetime(stamps, utc=True, errors="coerce").astype(
+        "datetime64[ns, UTC]"
+    )
+
+
+def _events_by_object_and_time(data: ReadableStore) -> pd.DataFrame:
+    """Return the events of each object at each timestamp.
+
+    An event linked to one object by several relations counts once.
+
+    Returns:
+        One row per object and UTC timestamp at which at least one event of
+        the object occurred, with the columns `object`, `time`, `event`, one
+        of those events, and `events`, how many there are.
+    """
+    times = [
+        pd.DataFrame(
+            {
+                "event": table.data[table.id].to_numpy(),
+                "time": _utc(table.data[table.time]).reset_index(drop=True),
+            }
+        )
+        for table in data.tables_of(EntityKind.EVENT).values()
+        if table.time is not None
+    ]
+    links = [
+        pd.DataFrame(
+            {
+                "event": relation.data[relation.from_id].to_numpy(),
+                "object": relation.data[relation.to_id].to_numpy(),
+            }
+        )
+        for relation in data.relations_of(RelationKind.E2O).values()
+    ]
+    if not times or not links:
+        return pd.DataFrame(
+            {
+                "object": pd.Series(dtype=object),
+                "time": pd.Series(dtype="datetime64[ns, UTC]"),
+                "event": pd.Series(dtype=object),
+                "events": pd.Series(dtype="int64"),
+            }
+        )
+    pairs = pd.concat(links, ignore_index=True).dropna().drop_duplicates()
+    stamped = pairs.merge(
+        pd.concat(times, ignore_index=True).dropna(), on="event", how="inner"
+    )
+    return (
+        stamped.groupby(["object", "time"], sort=False)
+        .agg(event=("event", "first"), events=("event", "size"))
+        .reset_index()
+    )
 
 
 class HistoryEmitter(Emitter):
@@ -62,18 +130,41 @@ class HistoryEmitter(Emitter):
         attribute representations of the build and a number is binned the
         same way as on the object.
         """
+        causes = _events_by_object_and_time(data)
+        counts = _CauseCounts()
         for obj_type in data.get_object_change_types():
             changes_df = data.get_object_changes(obj_type)
             for attr_name, grp in changes_df.groupby("ocel:field"):
-                self._emit_attribute(obj_type, str(attr_name), grp)
+                self._emit_attribute(obj_type, str(attr_name), grp, causes, counts)
+        if counts.records:
+            logger.info(
+                "  Linked %d of %d attribute change record(s) to the event that "
+                "caused them. %d had no event of their object at the time of "
+                "the change, %d had several.",
+                counts.records - counts.no_event - counts.several,
+                counts.records,
+                counts.no_event,
+                counts.several,
+            )
 
-    def _emit_attribute(self, obj_type: str, attr_name: str, grp: pd.DataFrame) -> None:
+    def _emit_attribute(
+        self,
+        obj_type: str,
+        attr_name: str,
+        grp: pd.DataFrame,
+        causes: pd.DataFrame,
+        counts: _CauseCounts,
+    ) -> None:
         """Emit the recorded changes of one attribute of one object type.
 
         Args:
             obj_type: Object type the changes belong to.
             attr_name: Attribute that changed, as `ocel:field` names it.
             grp: The change rows naming that attribute.
+            causes: The events of each object at each timestamp, as
+                `_events_by_object_and_time` returns them.
+            counts: Tally of the records left without a cause, updated in
+                place.
         """
         if attr_name not in grp.columns:
             logger.warning(
@@ -128,6 +219,40 @@ class HistoryEmitter(Emitter):
             "attr_change_id",
             "ts_str",
             (IndividualKind.CHANGE, IndividualKind.TIME),
+        )
+        self._emit_causes(tmp, causes, counts)
+
+    def _emit_causes(
+        self, tmp: pd.DataFrame, causes: pd.DataFrame, counts: _CauseCounts
+    ) -> None:
+        """Link each change record to the one event of its object at its timestamp.
+
+        A record whose object has no event or several events at that
+        timestamp gets no link and is counted.
+        """
+        keys = pd.DataFrame(
+            {
+                "object": tmp["ocel:oid"].to_numpy(),
+                "time": _utc(tmp["ocel:timestamp"]).reset_index(drop=True),
+            }
+        )
+        matched = keys.merge(causes, how="left", on=["object", "time"])
+        events = matched["events"].fillna(0).to_numpy()
+        linked = pd.DataFrame(
+            {
+                "attr_change_id": tmp["attr_change_id"].to_numpy(),
+                "event": matched["event"].to_numpy(),
+            }
+        )[events == 1]
+        counts.records += len(tmp)
+        counts.no_event += int((events == 0).sum())
+        counts.several += int((events > 1).sum())
+        self.assert_relations(
+            vocab.CAUSED_BY,
+            linked,
+            "attr_change_id",
+            "event",
+            (IndividualKind.CHANGE, IndividualKind.EVENT),
         )
 
     def _emit_schema(self, attr_name: str) -> tuple[str, str]:

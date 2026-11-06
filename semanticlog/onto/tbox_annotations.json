@@ -90,5 +90,13 @@
   "inv_changed_at": {
     "label": "is time of change",
     "comment": "Inverse of changed at. Relates a time point to the change records that took effect at it."
+  },
+  "caused_by": {
+    "label": "caused by",
+    "comment": "Relates an attribute change record to the event of the changed object that occurred at the time of the change."
+  },
+  "inv_caused_by": {
+    "label": "causes",
+    "comment": "Inverse of caused by. Relates an event to the attribute change records of its objects that took effect at its time."
   }
 }

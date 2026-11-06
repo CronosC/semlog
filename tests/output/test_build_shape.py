@@ -72,7 +72,9 @@ _DIST_BINS = frozenset(
 )
 # weight takes four distinct values, too few for either mode to bin.
 _NARROW_BINS = frozenset({"weight_bin_low", "weight_bin_high", "weight_bin_average"})
-_HISTORY = frozenset({"AttributeChange", "changed_at", "attribute_change_value"})
+_HISTORY = frozenset(
+    {"AttributeChange", "changed_at", "attribute_change_value", "caused_by"}
+)
 _DECLARE = frozenset({"DeclareConstraint", "Response__place_order__ship__"})
 _NUMERIC = frozenset({"price", "amount", "weight", "has_price"})
 
@@ -110,10 +112,10 @@ EXPECTED: dict[str, Shape] = {
     ),
     "dl_ef_dist_bins_history": Shape(
         classes=29,
-        object_properties=22,
+        object_properties=23,
         data_properties=8,
         individuals=95,
-        axioms=534,
+        axioms=539,
         must_contain=_DF | _EF | _DIST_BINS | _HISTORY | _NUMERIC,
         must_not_contain=_INVERSES | _DECLARE | _NARROW_BINS,
         # EF left to a reasoner is a transitivity axiom.
@@ -121,10 +123,10 @@ EXPECTED: dict[str, Shape] = {
     ),
     "el_history_literals": Shape(
         classes=16,
-        object_properties=12,
+        object_properties=13,
         data_properties=8,
         individuals=56,
-        axioms=461,
+        axioms=467,
         must_contain=_DF | _HISTORY | frozenset({"has_value_price"}),
         must_not_contain=_EF
         | _INVERSES
@@ -149,13 +151,13 @@ EXPECTED: dict[str, Shape] = {
     ),
     "dl_no_case_concept": Shape(
         classes=19,
-        object_properties=36,
+        object_properties=38,
         data_properties=8,
         individuals=95,
-        axioms=476,
+        axioms=483,
         must_contain=_HISTORY | _INVERSES | _NUMERIC,
         must_not_contain=_DF | _EF | _EQUAL_BINS | _DECLARE,
-        inverse_pairs=18,
+        inverse_pairs=19,
     ),
 }
 

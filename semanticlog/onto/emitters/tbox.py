@@ -122,5 +122,14 @@ class TBoxEmitter(Emitter):
             axiomatic_inverse=axiomatic,
             source="the TBox",
         )
+        self.sink.add_property(
+            vocab.CAUSED_BY,
+            domain_class=vocab.ATTRIBUTE_CHANGE,
+            range_class=vocab.EVENT,
+            create_inverse=has_inverses,
+            axiomatic_inverse=axiomatic,
+            source="the TBox",
+        )
         self.declare_inverse_functional(vocab.HAS_ATTRIBUTE_CHANGE)
         self.declare_functional(vocab.CHANGED_AT)
+        self.declare_functional(vocab.CAUSED_BY)

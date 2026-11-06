@@ -21,7 +21,7 @@ from tests.support.build import emit
 CHANGES = {
     "AttrChange_o1_channel_20240102T090000_000000",
     "AttrChange_o1_channel_20240106T090000_000000",
-    "AttrChange_o2_channel_20240103T090000_000000",
+    "AttrChange_o2_channel_20240102T090000_000000",
     "AttrChange_o1_price_20240104T090000_000000",
     "AttrChange_o2_price_20240105T090000_000000",
 }
@@ -226,3 +226,83 @@ def test_a_change_record_is_labeled_with_the_object_id_the_log_wrote(tmp_path):
         if kind == "label" and name.startswith("AttrChange_")
     ]
     assert labels == ["status change for order (ORD#123) at 2024-01-02 00:00:00"]
+
+
+def _store_with_causes() -> OCEDStore:
+    """One order with a change at the time of one event, of two events and of none.
+
+    `e1` concerns the order under two qualifiers, `e2` and `e3` share a
+    timestamp, and no event of the order occurs at the third change.
+    """
+    data = OCEDStore(ocel_mode=True)
+    data.add(EntityKind.OBJECT, "order", pd.DataFrame({"oid": ["o1"]}), id_col="oid")
+    data.add(
+        EntityKind.EVENT,
+        "step",
+        pd.DataFrame(
+            {
+                "eid": ["e1", "e2", "e3"],
+                "ts": pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-02"]),
+            }
+        ),
+        id_col="eid",
+        time_col="ts",
+    )
+    for qualifier in ("creates", "updates"):
+        data.add_relation(
+            RelationKind.E2O,
+            qualifier,
+            pd.DataFrame({"eid": ["e1", "e2", "e3"], "oid": ["o1"] * 3}),
+            from_id="eid",
+            to_id="oid",
+            to_type=["order"],
+        )
+    data.add_object_changes(
+        "order",
+        pd.DataFrame(
+            {
+                "ocel:oid": ["o1"] * 3,
+                "ocel:type": ["order"] * 3,
+                "ocel:timestamp": pd.to_datetime(
+                    ["2024-01-01", "2024-01-02", "2024-01-03"]
+                ),
+                "ocel:field": ["status"] * 3,
+                "status": ["open", "paid", "closed"],
+            }
+        ),
+    )
+    return clean_oced_data(data)
+
+
+def test_a_change_at_the_time_of_one_event_of_its_object_is_caused_by_it(history):
+    causes = {(s, o) for p, s, o in history.relations if p == vocab.CAUSED_BY}
+
+    assert causes == {("AttrChange_o2_channel_20240102T090000_000000", "e2")}
+
+
+def test_a_change_with_no_event_or_several_events_at_its_time_has_no_cause(tmp_path):
+    onto = emit(history_settings(), tmp_path / "causes.ofn", data=_store_with_causes())
+
+    causes = {(s, o) for p, s, o in onto.relations if p == vocab.CAUSED_BY}
+    assert causes == {("AttrChange_o1_status_20240101T000000_000000", "e1")}
+
+
+def test_the_build_reports_the_changes_left_without_a_cause(tmp_path, caplog):
+    with caplog.at_level(logging.INFO, logger="semanticlog.onto.emitters.history"):
+        emit(history_settings(), tmp_path / "causes.ofn", data=_store_with_causes())
+
+    assert (
+        "Linked 1 of 3 attribute change record(s) to the event that caused them. "
+        "1 had no event of their object at the time of the change, 1 had several."
+    ) in caplog.text
+
+
+def test_a_build_without_the_history_has_no_caused_by(tmp_path):
+    onto = emit(
+        history_settings(ocel_extensions=[]),
+        tmp_path / "plain.ofn",
+        data=_store_with_causes(),
+    )
+
+    assert vocab.CAUSED_BY not in onto.object_properties
+    assert {p for p, _, _ in onto.relations if p == vocab.CAUSED_BY} == set()

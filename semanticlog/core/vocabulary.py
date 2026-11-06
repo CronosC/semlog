@@ -90,6 +90,7 @@ TIMESTAMP = Term("timestamp")
 HAS_ATTRIBUTE_CHANGE = Term("has_attribute_change")
 ATTRIBUTE_CHANGE_VALUE = Term("attribute_change_value")
 CHANGED_AT = Term("changed_at")
+CAUSED_BY = Term("caused_by")
 DF = Term("df")
 EF = Term("ef")
 
@@ -117,6 +118,7 @@ _INVERTIBLE_PROPERTIES: frozenset[str] = frozenset(
         HAS_ATTRIBUTE_CHANGE,
         ATTRIBUTE_CHANGE_VALUE,
         CHANGED_AT,
+        CAUSED_BY,
         DF,
         EF,
     }

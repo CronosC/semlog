@@ -217,14 +217,15 @@ def awkward() -> OCEDStore:
         to_type=["item"],
     )
     # One string attribute and one numeric one change, so the history
-    # extension meets both kinds of value.
+    # extension meets both kinds of value. The change of o2 at day 2 falls on
+    # e2, an event of o2, so it gets a cause.
     data.add_object_changes(
         "order",
         pd.DataFrame(
             {
                 "ocel:oid": ["o1", "o1", "o2", "o1", "o2"],
                 "ocel:type": ["order"] * 5,
-                "ocel:timestamp": [_day(2), _day(6), _day(3), _day(4), _day(5)],
+                "ocel:timestamp": [_day(2), _day(6), _day(2), _day(4), _day(5)],
                 "ocel:field": ["channel", "channel", "channel", "price", "price"],
                 "channel": ["shop", "web", "by hand", None, None],
                 "price": [None, None, None, 12.75, 41.0],
