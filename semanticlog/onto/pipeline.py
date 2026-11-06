@@ -17,9 +17,7 @@ writes the file.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.readable import ReadableStore
@@ -37,8 +35,6 @@ def build_log(
     output: str | Path,
     *,
     iri: str = DEFAULT_IRI,
-    source: str | None = None,
-    record: Mapping[str, Any] | None = None,
     streaming: bool = True,
 ) -> BuildResult:
     """Build one cleaned store into an ontology file and return the result.
@@ -49,9 +45,6 @@ def build_log(
             against this log.
         output: Path of the ontology file. Its directory is created. The file
             is written when the build completes.
-        source: Path of the log, recorded as provenance.
-        record: Other values to record about this run, such as the input
-            checksum and the command. Each key must be a safe IRI local name.
         streaming: Write functional syntax to the file as axioms are emitted.
             False builds the ontology in memory and writes RDF/XML.
 
@@ -63,7 +56,6 @@ def build_log(
         ConfigError: If the base IRI, the settings or the inputs are unusable.
         InputError: If the store fails a pre-build check, or a name in it
             cannot be emitted.
-        ValueError: If a key of `record` cannot be an IRI local name.
     """
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -72,9 +64,7 @@ def build_log(
         if streaming
         else InMemorySink(iri, settings.profile, settings.tbox_iri)
     )
-    result = OCEDOntoBuilder(iri, settings, sink=sink).build_ontology(
-        data, inputs, source=source, run=record
-    )
+    result = OCEDOntoBuilder(iri, settings, sink=sink).build_ontology(data, inputs)
     sink.save(str(output))
     if result.path is None:
         result = dataclasses.replace(result, path=str(output))

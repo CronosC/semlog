@@ -60,13 +60,13 @@ def test_a_sink_given_no_record_writes_a_complete_ontology(streaming, path):
 
 
 def test_the_record_is_written_inside_the_ontology_header(streaming, path):
-    streaming.open_ontology({TBOX_IRI + "sourceLog": "some.jsonocel"})
+    streaming.open_ontology({TBOX_IRI + "buildTool": "semlog 0.5.0"})
     streaming.add_class("order", source="a build step")
     streaming.close()
 
     lines = path.read_text(encoding="utf-8").splitlines()
     header = lines.index(f"Ontology(<{DEFAULT_IRI.removesuffix('/')}>")
-    annotation = lines.index(f'Annotation(<{TBOX_IRI}sourceLog> "some.jsonocel")')
+    annotation = lines.index(f'Annotation(<{TBOX_IRI}buildTool> "semlog 0.5.0")')
     declaration = lines.index("Declaration(Class(:order))")
     assert header < annotation < declaration
 

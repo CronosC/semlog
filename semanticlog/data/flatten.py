@@ -128,7 +128,7 @@ def choose_case_concepts(
 
     Returns:
         The chosen types and the source of the choice, `config` or
-        `auto(n=...)`, recorded as provenance.
+        `auto(n=...)`, for the build log.
     """
     if case_concepts is not None:
         return _follow_renames(data, case_concepts), "config"

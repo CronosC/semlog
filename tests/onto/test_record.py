@@ -9,6 +9,13 @@ FUNCTIONAL = (
     "\n"
     ")\n"
 )
+OWL_API = (
+    "Prefix(oced:=<https://oced#>)\n"
+    "Ontology(<https://oced>\n"
+    r'Annotation(oced:buildConfiguration "{\"label\": \"a \\\"b\\\"\"}")'
+    "\n"
+    ")\n"
+)
 RDF_XML = (
     "<owl:Ontology>\n"
     "  <buildConfiguration>{&quot;label&quot;: &quot;a &amp; b&quot;}"
@@ -19,10 +26,14 @@ RDF_XML = (
 
 @pytest.mark.parametrize(
     ("text", "expected"),
-    [(FUNCTIONAL, {"label": 'a "b"'}), (RDF_XML, {"label": "a & b"})],
-    ids=["functional", "rdf_xml"],
+    [
+        (FUNCTIONAL, {"label": 'a "b"'}),
+        (OWL_API, {"label": 'a "b"'}),
+        (RDF_XML, {"label": "a & b"}),
+    ],
+    ids=["functional", "functional_prefixed", "rdf_xml"],
 )
-def test_the_configuration_is_read_back_from_either_syntax(tmp_path, text, expected):
+def test_the_configuration_is_read_back_from_any_writer(tmp_path, text, expected):
     path = tmp_path / "onto.ofn"
     path.write_text(text, encoding="utf-8")
 

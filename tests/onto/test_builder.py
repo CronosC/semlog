@@ -117,8 +117,6 @@ def test_every_emitter_is_run_by_a_step(tiny_store):
         data=tiny_store,
         inputs=BuildInputs(),
         settings=OntoBuildSettings(),
-        source=None,
-        record=None,
         attribute_history=True,
     )
 

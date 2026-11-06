@@ -51,8 +51,8 @@ _EPILOG = textwrap.dedent("""\
       semlog reason hiring.ofn --check
 
     a build writes one file, <name>.ofn in functional syntax, or <name>.owl in
-    RDF/XML under --no-streaming. The input checksum, the resolved settings, the
-    command and the semlog version are annotated onto the ontology.
+    RDF/XML under --no-streaming. The semlog version, the resolved settings and
+    the case concepts are annotated onto the ontology.
     """)
 
 

@@ -28,7 +28,6 @@ def emit(
     path: Path,
     backend: str = STREAMING,
     data: OCEDStore | None = None,
-    source: str = "matrix",
 ) -> Emitted:
     """Build one ontology, write it, and read it back.
 
@@ -37,7 +36,6 @@ def emit(
         path: File to write. The extension is left as given.
         backend: Which sink to build through.
         data: Store to build from. Defaults to the matrix store.
-        source: Value recorded as the source log annotation.
 
     Returns:
         The ontology that was written, read back from the file.
@@ -50,11 +48,11 @@ def emit(
             str(path), DEFAULT_IRI, settings.profile, settings.tbox_iri
         )
         OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
-            data, config.inputs, source=source
+            data, config.inputs
         )
         return read_functional(path)
 
     builder = OCEDOntoBuilder(DEFAULT_IRI, settings)
-    builder.build_ontology(data, config.inputs, source=source)
+    builder.build_ontology(data, config.inputs)
     builder.sink.save(str(path))
     return read_rdf(path, DEFAULT_IRI, settings.tbox_iri)

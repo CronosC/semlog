@@ -10,7 +10,6 @@ import logging
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
 
 from semanticlog.core.enums import SinkEntity
 from semanticlog.core.summary import counted, report_by_kind, report_names
@@ -77,8 +76,6 @@ class BuildContext:
         data: Store being built from.
         inputs: Case concepts, DECLARE constraints and annotations for it.
         settings: What to build.
-        source: Path of the log, recorded as provenance.
-        record: Anything else to record about this run.
         attribute_history: Whether this build emits the attribute change
             history. True when the setting is on and the store holds one.
     """
@@ -86,8 +83,6 @@ class BuildContext:
     data: ReadableStore
     inputs: BuildInputs
     settings: OntoBuildSettings
-    source: str | None
-    record: Mapping[str, Any] | None
     attribute_history: bool
 
 
@@ -117,7 +112,7 @@ class BuildStep:
 
 def _upper_schema(emitters: Emitters, context: BuildContext) -> None:
     """Emit the provenance record, then the upper schema."""
-    emitters.provenance.emit(context.source, context.record)
+    emitters.provenance.emit(context.inputs.case_concepts)
     emitters.tbox.emit(attribute_history=context.attribute_history)
 
 
@@ -365,8 +360,6 @@ class OCEDOntoBuilder:
         self,
         data: ReadableStore,
         inputs: BuildInputs | None = None,
-        source: str | None = None,
-        run: Mapping[str, Any] | None = None,
     ) -> BuildResult:
         """Build the ontology for one store.
 
@@ -379,10 +372,6 @@ class OCEDOntoBuilder:
             inputs: Case concepts, DECLARE constraints and annotations for this
                 log. Defaults to empty inputs, which suffice for a build with
                 no event order.
-            source: Path of the log, recorded as provenance.
-            run: Other values to record about this run, such as the input
-                checksum and the command. Each key becomes an annotation
-                property and must be a safe local name.
 
         Returns:
             The finished build.
@@ -390,13 +379,10 @@ class OCEDOntoBuilder:
         Raises:
             ConfigError: If the settings or the inputs are unusable.
             InputError: If the store fails a pre-build check.
-            ValueError: If this builder has been used, or a key of
-                `run` cannot be an IRI local name.
+            ValueError: If this builder has been used.
         """
         try:
-            return self._build(
-                data, BuildInputs() if inputs is None else inputs, source, run
-            )
+            return self._build(data, BuildInputs() if inputs is None else inputs)
         except BaseException:
             self.sink.abort()
             raise
@@ -405,8 +391,6 @@ class OCEDOntoBuilder:
         self,
         data: ReadableStore,
         inputs: BuildInputs,
-        source: str | None,
-        run: Mapping[str, Any] | None,
     ) -> BuildResult:
         """Run the build without aborting the sink on failure."""
         self.settings.validate()
@@ -427,8 +411,6 @@ class OCEDOntoBuilder:
             data=data,
             inputs=inputs,
             settings=self.settings,
-            source=source,
-            record=run,
             attribute_history=attribute_history,
         )
         emitters = self._make_emitters(data, inputs.annotations, attribute_history)

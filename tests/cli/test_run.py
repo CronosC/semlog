@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import re
 
 import pytest
 
@@ -18,7 +19,11 @@ from semanticlog.cli.run import (
 from semanticlog.core.errors import ConfigError, DependencyError
 from semanticlog.core.vocabulary import default_iri
 from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
-from tests.support.owlapi import load, ontology_annotations
+from semanticlog.data.loading import load_and_clean
+from semanticlog.onto.inputs import BuildInputs
+from semanticlog.onto.pipeline import build_log
+from semanticlog.onto.settings import OntoBuildSettings
+from tests.support.owlapi import load
 from tests.support.rdf import read_rdf
 from tests.support.written import read_built, record
 
@@ -35,33 +40,37 @@ def test_a_build_writes_one_ontology_and_prints_its_path(ocel, tmp_path, capsys)
     assert capsys.readouterr().out.strip() == str(out / "pipeline.ofn")
 
 
-def test_the_ontology_records_how_it_was_produced(cfg, ocel):
-    build_one(cfg, ocel)
-    written = record(cfg.ontology_path(ocel))
-
-    assert written["sourceLog"] == str(ocel)
-    assert len(written["sourceLogSha256"]) == 64
-    assert written["sourceLogBytes"] == str(ocel.stat().st_size)
-    assert written["buildCommand"] == "semlog build fixture"
-    assert written["buildConfiguration"]["profile"] == "OWL2DL"
-    assert written["buildInputStatistics"]["events"] == 12
-    assert written["materializeRequested"] == "false"
-
-
-def test_the_ontology_says_where_the_case_concepts_came_from(cfg, ocel, tmp_path):
-    build_one(cfg, ocel)
-    chosen = resolve_run_config(
+def test_the_header_holds_the_tool_the_settings_and_the_case_concepts(ocel, tmp_path):
+    cfg = resolve_run_config(
         {
             "input": [str(ocel)],
-            "output": str(tmp_path / "named"),
+            "output": str(tmp_path / "onto"),
             "case_concepts": ["order"],
         }
     )
-    build_one(chosen, ocel)
+    build_one(cfg, ocel)
+    written = record(cfg.ontology_path(ocel))
 
-    assert record(cfg.ontology_path(ocel))["caseConceptSource"] == "auto(n=3)"
-    named = record(chosen.ontology_path(ocel))
-    assert (named["caseConceptSource"], named["caseConcepts"]) == ("config", ["order"])
+    assert set(written) == {"buildTool", "buildConfiguration", "caseConcepts"}
+    assert written["buildConfiguration"]["profile"] == "OWL2DL"
+    assert written["caseConcepts"] == ["order"]
+
+
+def test_a_build_from_python_writes_the_header_the_cli_writes(ocel, tmp_path):
+    cfg = resolve_run_config(
+        {
+            "input": [str(ocel)],
+            "output": str(tmp_path / "onto"),
+            "case_concepts": ["order"],
+        }
+    )
+    build_one(cfg, ocel)
+    data = load_and_clean(ocel)
+    output = tmp_path / "python.ofn"
+
+    build_log(data, cfg.settings, BuildInputs(("order",)), output)
+
+    assert record(output) == record(cfg.ontology_path(ocel))
 
 
 def test_a_build_takes_its_name_and_settings_from_the_config(
@@ -73,30 +82,22 @@ def test_a_build_takes_its_name_and_settings_from_the_config(
     assert (
         main(["build", "--config", str(config), "--output", str(out), "-q"]) == EXIT_OK
     )
-    written = record(out / "hiring-el.ofn")
-    assert written["buildConfiguration"]["profile"] == "OWL2EL"
-    assert written["buildConfigFile"] == str(config)
+    assert record(out / "hiring-el.ofn")["buildConfiguration"]["profile"] == "OWL2EL"
 
 
-def test_the_backmap_is_written_and_recorded_when_asked_for(ocel, tmp_path):
+def test_the_backmap_is_written_when_asked_for(ocel, tmp_path):
     cfg = resolve_run_config(
         {"input": [str(ocel)], "output": str(tmp_path / "onto"), "save_backmap": True}
     )
     build_one(cfg, ocel)
 
     assert cfg.backmap_path(ocel).is_file()
-    assert record(cfg.ontology_path(ocel))["buildOutputs"] == {
-        "backmap": str(cfg.backmap_path(ocel))
-    }
 
 
 def test_two_builds_of_one_input_are_byte_for_byte_identical(ocel, tmp_path):
     outputs = []
     for name in ("first", "second"):
-        cfg = resolve_run_config(
-            {"input": [str(ocel)], "output": str(tmp_path / name)},
-            command="semlog build fixture",
-        )
+        cfg = resolve_run_config({"input": [str(ocel)], "output": str(tmp_path / name)})
         build_one(cfg, ocel)
         outputs.append(cfg.ontology_path(ocel).read_bytes())
 
@@ -197,11 +198,11 @@ def test_a_failure_before_the_build_leaves_no_partial_file(ocel, tmp_path, monke
     )
 
     def fail(*args, **kwargs):
-        raise RuntimeError("no record")
+        raise RuntimeError("no build")
 
-    monkeypatch.setattr("semanticlog.cli.run.run_record", fail)
+    monkeypatch.setattr("semanticlog.cli.run._warn_on_changed_settings", fail)
 
-    with pytest.raises(RuntimeError, match="no record"):
+    with pytest.raises(RuntimeError, match="no build"):
         build_one(cfg, ocel)
 
     assert list((tmp_path / "onto").glob("*.partial")) == []
@@ -213,6 +214,25 @@ def test_a_rebuild_under_other_settings_warns_before_overwriting(
 ):
     common = ["build", str(ocel), "--output", str(tmp_path / "onto"), streaming, "-q"]
     main([*common, "--case-concepts", "order"])
+    caplog.clear()
+
+    main([*common, "--case-concepts", "item"])
+
+    assert "different settings (case_concepts)" in caplog.text
+
+
+def test_a_rebuild_over_a_header_the_owl_api_wrote_warns_before_overwriting(
+    ocel, tmp_path, caplog
+):
+    common = ["build", str(ocel), "--output", str(tmp_path / "onto"), "-q"]
+    main([*common, "--case-concepts", "order"])
+    path = tmp_path / "onto" / "pipeline.ofn"
+    tbox = re.escape(OntoBuildSettings().tbox_iri)
+    text = path.read_text(encoding="utf-8")
+    # The OWL API writes header properties as prefixed names.
+    owlapi = re.sub(rf"Annotation\(<{tbox}(\w+)>", r"Annotation(oced:\1", text)
+    assert owlapi != text
+    path.write_text(owlapi, encoding="utf-8")
     caplog.clear()
 
     main([*common, "--case-concepts", "item"])
@@ -330,7 +350,7 @@ def test_an_oversized_input_is_skipped_and_reported(tmp_path):
 
 
 @pytest.mark.reasoner
-def test_materializing_during_a_build_grows_the_file_and_is_recorded(ocel, tmp_path):
+def test_materializing_during_a_build_grows_the_file(ocel, tmp_path):
     main(["build", str(ocel), "--output", str(tmp_path / "plain"), "-q"])
 
     code = main(
@@ -340,7 +360,6 @@ def test_materializing_during_a_build_grows_the_file_and_is_recorded(ocel, tmp_p
     assert code == EXIT_OK
     grown = tmp_path / "grown" / "pipeline.ofn"
     assert grown.stat().st_size > (tmp_path / "plain" / "pipeline.ofn").stat().st_size
-    assert ontology_annotations(grown)["materializeRequested"] == "true"
 
 
 @pytest.mark.reasoner

@@ -1,14 +1,13 @@
 """The record of how an ontology was produced, written into the ontology.
 
-`ProvenanceEmitter` writes the tool, settings and run record as ontology
-annotations.
+`ProvenanceEmitter` writes the tool, the settings and the case concepts as
+ontology annotations.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Sequence
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.onto.emitters.base import Emitter
@@ -16,59 +15,28 @@ from semanticlog.onto.settings import OntoBuildSettings
 
 
 def build_configuration(settings: OntoBuildSettings) -> dict:
-    """Return the settings to record.
-
-    Per-log values are recorded by the caller in the run record.
-    """
+    """Return the settings to record."""
     return settings.to_dict()
 
 
-def annotation_text(value: Any) -> str:
-    """Return a record entry as text. Non-strings are rendered as JSON."""
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, sort_keys=True, default=str)
-
-
 class ProvenanceEmitter(Emitter):
-    """Annotates the ontology with the tool, settings and run record."""
+    """Annotates the ontology with the tool, the settings and the case concepts."""
 
-    def emit(
-        self,
-        source: str | None = None,
-        run: Mapping[str, Any] | None = None,
-    ) -> None:
+    def emit(self, case_concepts: Sequence[str]) -> None:
         """Open the ontology with the provenance record as its annotations.
 
-        This is the first emitter a build runs.
-
-        Args:
-            source: Path of the log this ontology was built from.
-            run: Other values to record about the run, such as the input
-                checksum and the command. Each key becomes one annotation
-                property, and entries with no value are skipped.
-
-        Raises:
-            ValueError: If a key of `run` cannot be an IRI local name.
+        This is the first emitter a build runs. The settings and the case
+        concepts are written as JSON text.
         """
         from semanticlog import __version__
 
         base = self.sink.tbox_iri
-        record = {
-            f"{base}{vocab.BUILD_TOOL}": f"semlog {__version__}",
-            f"{base}{vocab.BUILD_CONFIGURATION}": json.dumps(
-                build_configuration(self.settings), sort_keys=True
-            ),
-        }
-        if source is not None:
-            record[f"{base}{vocab.SOURCE_LOG}"] = source
-        for name, value in (run or {}).items():
-            if value is None:
-                continue
-            if not vocab.is_safe_local_name(name):
-                raise ValueError(
-                    f"Run record key {name!r} cannot be an IRI local name. Use "
-                    "letters, digits, underscores, dots and hyphens only."
-                )
-            record[f"{base}{name}"] = annotation_text(value)
-        self.sink.open_ontology(record)
+        self.sink.open_ontology(
+            {
+                f"{base}{vocab.BUILD_TOOL}": f"semlog {__version__}",
+                f"{base}{vocab.BUILD_CONFIGURATION}": json.dumps(
+                    build_configuration(self.settings), sort_keys=True
+                ),
+                f"{base}{vocab.CASE_CONCEPTS}": json.dumps(list(case_concepts)),
+            }
+        )

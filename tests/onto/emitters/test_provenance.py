@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 
 import pytest
 
@@ -15,7 +16,10 @@ from semanticlog.onto.emitters.provenance import build_configuration
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import StreamingSink
+from tests.support.build import BACKENDS, STREAMING, emit
 from tests.support.rdf import read_rdf
+
+HEADER = {"buildTool", "buildConfiguration", "caseConcepts"}
 
 
 @pytest.fixture
@@ -44,13 +48,26 @@ def test_the_record_keys_use_the_configured_tbox_iri(tiny_store, tmp_path):
     path = tmp_path / "prov.ofn"
     settings = OntoBuildSettings(tbox_iri="https://example.com/schema#")
     sink = StreamingSink(str(path), DEFAULT_IRI, settings.profile, settings.tbox_iri)
-    OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
-        tiny_store, source="log.jsonocel"
-    )
+    OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(tiny_store)
 
     text = path.read_text(encoding="utf-8")
-    assert 'Annotation(<https://example.com/schema#sourceLog> "log.jsonocel")' in text
-    assert "Declaration(AnnotationProperty(oced:sourceLog))" in text
+    assert 'Annotation(<https://example.com/schema#caseConcepts> "[]")' in text
+    assert "Declaration(AnnotationProperty(oced:caseConcepts))" in text
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_the_header_holds_only_the_tool_the_settings_and_the_case_concepts(
+    tmp_path, backend
+):
+    path = tmp_path / ("prov.ofn" if backend == STREAMING else "prov.owl")
+    written = emit(OntoBuildSettings(), path, backend)
+
+    declared = re.findall(
+        r'AnnotationProperty\(oced:(\w+)\)|AnnotationProperty rdf:about="[^"]*#(\w+)"',
+        path.read_text(encoding="utf-8"),
+    )
+    assert set(written.ontology_annotations) == HEADER
+    assert {functional or rdf for functional, rdf in declared} == HEADER
 
 
 def test_the_resolved_settings_are_recorded_as_json(record):
@@ -75,29 +92,7 @@ def test_the_recorded_configuration_holds_every_setting():
     assert set(config) == {f.name for f in dataclasses.fields(OntoBuildSettings)}
 
 
-@pytest.mark.parametrize(
-    ("source", "expected"), [("logs/demo.jsonocel", "logs/demo.jsonocel"), (None, None)]
-)
-def test_the_source_log_is_recorded_when_it_is_known(record, source, expected):
-    assert record(source=source).get("sourceLog") == expected
+def test_the_case_concepts_are_recorded_as_json(record):
+    written = record(inputs=BuildInputs(case_concepts=["order"]))
 
-
-def test_each_run_record_entry_becomes_one_annotation(record):
-    written = record(
-        run={
-            "sourceLogSha256": "abc123",
-            "buildInputStatistics": {"b": 2, "a": 1},
-            "buildConfigFile": None,
-        }
-    )
-
-    assert written["sourceLogSha256"] == "abc123"
-    assert written["buildInputStatistics"] == '{"a": 1, "b": 2}'
-    assert "buildConfigFile" not in written
-
-
-def test_a_run_record_key_that_cannot_be_a_local_name_is_rejected(tiny_store):
-    builder = OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings())
-
-    with pytest.raises(ValueError, match="Run record key 'bad key' cannot be an IRI"):
-        builder.build_ontology(tiny_store, run={"bad key": "x"})
+    assert json.loads(written["caseConcepts"]) == ["order"]

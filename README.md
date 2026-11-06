@@ -121,7 +121,7 @@ The ontology has a fixed upper schema of `Event`, `Object`, `Attribute` and `Tim
 
 An OCEL attribute keeps the type the log declares for it: `string`, `integer`, `float`, `boolean` or `time`. A value that does not parse as its declared type is read as missing, with a warning. Undeclared attributes, and every column of a CSV or XES log apart from its id columns, are typed by their content. A value that does not parse as the type a column is given this way is also read as missing, with a warning. The case column and the object columns of a CSV log are read as text, so the case ids `007` and `7` stay two cases.
 
-The record of how the file was produced is annotated onto the ontology itself: the input checksum, the resolved settings, the command and the semlog version.
+The ontology header holds three annotations: `buildTool` with the semlog version, `buildConfiguration` with the resolved settings, and `caseConcepts` with the case concepts of the build. A rebuild into the same file warns when the settings or the case concepts differ.
 
 ## Build settings
 

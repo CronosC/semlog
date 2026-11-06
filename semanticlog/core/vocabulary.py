@@ -169,36 +169,10 @@ SCHEMA_ANNOTATIONS: frozenset[str] = frozenset({TEMPLATE, ACTIVATION, TARGET})
 
 BUILD_TOOL = Term("buildTool")
 BUILD_CONFIGURATION = Term("buildConfiguration")
-SOURCE_LOG = Term("sourceLog")
-SOURCE_LOG_SHA256 = Term("sourceLogSha256")
-SOURCE_LOG_BYTES = Term("sourceLogBytes")
 CASE_CONCEPTS = Term("caseConcepts")
-CASE_CONCEPT_SOURCE = Term("caseConceptSource")
-DECLARE_FILE = Term("declareFile")
-ANNOTATION_DOCUMENT = Term("annotationDocument")
-BUILD_COMMAND = Term("buildCommand")
-BUILD_CONFIG_FILE = Term("buildConfigFile")
-BUILD_INPUT_STATISTICS = Term("buildInputStatistics")
-BUILD_OUTPUTS = Term("buildOutputs")
-MATERIALIZE_REQUESTED = Term("materializeRequested")
 
 PROVENANCE_ANNOTATIONS: frozenset[str] = frozenset(
-    {
-        BUILD_TOOL,
-        BUILD_CONFIGURATION,
-        SOURCE_LOG,
-        SOURCE_LOG_SHA256,
-        SOURCE_LOG_BYTES,
-        CASE_CONCEPTS,
-        CASE_CONCEPT_SOURCE,
-        DECLARE_FILE,
-        ANNOTATION_DOCUMENT,
-        BUILD_COMMAND,
-        BUILD_CONFIG_FILE,
-        BUILD_INPUT_STATISTICS,
-        BUILD_OUTPUTS,
-        MATERIALIZE_REQUESTED,
-    }
+    {BUILD_TOOL, BUILD_CONFIGURATION, CASE_CONCEPTS}
 )
 
 

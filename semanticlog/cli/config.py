@@ -157,7 +157,7 @@ def resolve_log_inputs(
 class RunConfig:
     """One resolved run.
 
-    Every field up to `config_file` is a `BUILD_SETTINGS` entry and
+    Every field before `warnings` is a `BUILD_SETTINGS` entry and
     `resolve_run_config` supplies all of them. Defaults are declared in the
     table only.
 
@@ -193,8 +193,6 @@ class RunConfig:
         output_formats: Further formats to write each ontology in.
         size_limit_mb: Skip inputs larger than this. Zero for no limit.
         log_dir: Directory for per-input log files.
-        config_file: Config this run came from, recorded as provenance.
-        command: The command as typed, recorded as provenance.
         warnings: Warnings to log before the run starts.
     """
 
@@ -222,8 +220,6 @@ class RunConfig:
     output_formats: list[OutputFormat]
     size_limit_mb: int
     log_dir: Path | None
-    config_file: Path | None = None
-    command: str = ""
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
     def output_stem(self, input_path: Path) -> str:
@@ -416,7 +412,6 @@ def resolve_run_config(
     overrides: dict[str, Any],
     *,
     config_file: str | Path | None = None,
-    command: str = "",
 ) -> RunConfig:
     """Resolve defaults, config file and flags into one checked run.
 
@@ -426,7 +421,6 @@ def resolve_run_config(
     Args:
         overrides: Settings given on the command line.
         config_file: TOML config to read first.
-        command: The command as typed, recorded as provenance.
 
     Raises:
         ConfigError: If a setting is missing, unknown, of the wrong sort, or
@@ -468,8 +462,6 @@ def resolve_run_config(
 
     return RunConfig(
         settings=settings,
-        config_file=None if config_file is None else Path(config_file),
-        command=command,
         warnings=tuple(
             _binning_warnings(merged, settings) + _column_warnings(merged, inputs)
         ),

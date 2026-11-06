@@ -10,12 +10,7 @@ from tests.support.emitted import Emitted
 from tests.support.functional import read_functional
 from tests.support.rdf import read_rdf
 
-_JSON_ENTRIES = (
-    "buildConfiguration",
-    "buildInputStatistics",
-    "buildOutputs",
-    "caseConcepts",
-)
+_JSON_ENTRIES = ("buildConfiguration", "caseConcepts")
 
 
 def read_built(path: Path) -> Emitted:

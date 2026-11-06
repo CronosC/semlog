@@ -484,18 +484,18 @@ def test_the_inverse_of_a_parent_without_one_is_declared_before_use(sink):
 def test_the_record_declares_the_annotation_properties_in_the_tbox_namespace(sink):
     """OWL 2 DL requires a declaration for an annotation property."""
     sink.open_ontology(
-        {f"{TBOX_IRI}sourceLog": "log.jsonocel", OWL_VERSION_INFO: "semlog 0.5.0"}
+        {f"{TBOX_IRI}buildTool": "semlog 0.5.0", OWL_VERSION_INFO: "semlog 0.5.0"}
     )
 
-    assert [call[1] for call in sink.of_kind("declare")] == ["sourceLog"]
+    assert [call[1] for call in sink.of_kind("declare")] == ["buildTool"]
     assert len(sink.of_kind("ontology_annotation")) == 2
 
 
 def test_a_record_key_claims_its_name_as_an_annotation_property(sink):
-    sink.open_ontology({f"{TBOX_IRI}sourceLog": "log.jsonocel"})
+    sink.open_ontology({f"{TBOX_IRI}buildTool": "semlog 0.5.0"})
 
     with pytest.raises(NameCollisionError, match="as annotation from the build record"):
-        sink.add_class(vocab.SOURCE_LOG, source="an object type")
+        sink.add_class(vocab.BUILD_TOOL, source="an object type")
 
 
 def test_a_log_class_named_like_a_schema_class_is_a_second_entity(sink):
@@ -511,7 +511,7 @@ def test_the_record_after_the_first_axiom_is_rejected(sink):
     sink.add_class("order", source="a build step")
 
     with pytest.raises(ValueError, match="is open"):
-        sink.open_ontology({f"{TBOX_IRI}sourceLog": "log.jsonocel"})
+        sink.open_ontology({f"{TBOX_IRI}buildTool": "semlog 0.5.0"})
 
 
 def test_a_closed_sink_takes_no_more_axioms(sink):

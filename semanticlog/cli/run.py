@@ -23,7 +23,6 @@ from semanticlog.core.errors import SemlogError
 from semanticlog.data.flatten import choose_case_concepts
 from semanticlog.data.loading import load_and_clean
 from semanticlog.data.readable import ReadableStore
-from semanticlog.data.stats import file_digest, store_stats
 from semanticlog.onto.convert import convert
 from semanticlog.onto.emitters.provenance import build_configuration
 from semanticlog.onto.pipeline import build_log
@@ -91,13 +90,11 @@ class BuildReport:
         built: Inputs that produced an ontology.
         skipped: Inputs that were not attempted, with the reason.
         failed: Inputs that were attempted and failed, with the reason.
-        records: The provenance record of each successful build.
     """
 
     built: list[Path] = field(default_factory=list)
     skipped: list[tuple[Path, str]] = field(default_factory=list)
     failed: list[tuple[Path, str]] = field(default_factory=list)
-    records: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -122,58 +119,13 @@ def _ontology_stats(result: BuildResult) -> dict[str, int]:
     return stats
 
 
-def run_record(
-    cfg: RunConfig,
-    input_path: Path,
-    digest: str,
-    case_concepts: Sequence[str],
-    case_concept_source: str,
-    data: ReadableStore,
-) -> dict[str, Any]:
-    """Return what this run resolved per log, keyed by annotation name.
-
-    The settings themselves go under `buildConfiguration`. The record is
-    written before the reasoner runs, so `materializeRequested` holds what the
-    run asked for.
-
-    Args:
-        digest: SHA-256 of the input.
-        case_concept_source: Whether the case concepts were given or chosen.
-    """
-    outputs = {}
-    if cfg.save_backmap:
-        outputs["backmap"] = str(cfg.backmap_path(input_path))
-
-    return {
-        vocab.SOURCE_LOG_SHA256: digest,
-        vocab.SOURCE_LOG_BYTES: input_path.stat().st_size,
-        vocab.CASE_CONCEPTS: list(case_concepts) or None,
-        vocab.CASE_CONCEPT_SOURCE: case_concept_source,
-        vocab.DECLARE_FILE: cfg.declare_file,
-        vocab.ANNOTATION_DOCUMENT: cfg.annotation_document,
-        vocab.BUILD_COMMAND: cfg.command,
-        vocab.BUILD_CONFIG_FILE: None
-        if cfg.config_file is None
-        else str(cfg.config_file),
-        vocab.BUILD_INPUT_STATISTICS: store_stats(data),
-        vocab.BUILD_OUTPUTS: outputs or None,
-        vocab.MATERIALIZE_REQUESTED: cfg.materialize,
-    }
-
-
-def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
-    """Build one input, from loading the log to writing the ontology.
-
-    Returns:
-        The provenance record of this build.
-    """
+def build_one(cfg: RunConfig, input_path: Path) -> None:
+    """Build one input, from loading the log to writing the ontology."""
     onto_path = cfg.ontology_path(input_path)
     timings: dict[str, float] = {}
 
     logger.info("Input:  %s", input_path)
     logger.info("Output: %s", onto_path)
-
-    digest = file_digest(input_path)
 
     logger.info("Loading event data..")
     with _timed(timings, "load"):
@@ -193,7 +145,6 @@ def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
 
     settings = cfg.settings
     _warn_on_changed_settings(onto_path, settings, case_concepts)
-    record = run_record(cfg, input_path, digest, case_concepts, source, data)
 
     logger.info("Building ontology..")
     with _timed(timings, "build"):
@@ -203,8 +154,6 @@ def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
             inputs,
             onto_path,
             iri=cfg.log_iri(input_path),
-            source=str(input_path),
-            record=record,
             streaming=cfg.streaming,
         )
     logger.info("Ontology saved: %s", onto_path)
@@ -234,7 +183,6 @@ def build_one(cfg: RunConfig, input_path: Path) -> dict[str, Any]:
     stats = _ontology_stats(result)
     logger.info("Ontology: %s", ", ".join(f"{k}={v:,}" for k, v in stats.items()))
     logger.info("Timings:  %s", ", ".join(f"{k}={v:.2f}s" for k, v in timings.items()))
-    return record
 
 
 def build_all(cfg: RunConfig) -> BuildReport:
@@ -268,7 +216,7 @@ def build_all(cfg: RunConfig) -> BuildReport:
                 if log_path:
                     logger.info("Log:    %s", log_path)
 
-                report.records.append(build_one(cfg, input_path))
+                build_one(cfg, input_path)
                 report.built.append(input_path)
                 logger.info("=== Finished %s ===", input_path.name)
             except (SemlogError, OSError) as exc:

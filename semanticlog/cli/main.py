@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import shlex
 import sys
 from pathlib import Path
 
@@ -40,17 +39,11 @@ EXIT_USAGE = 2
 EXIT_INTERRUPTED = 130
 
 
-def _command_line(argv: list[str]) -> str:
-    """Rebuild the command as typed, for the provenance record."""
-    return "semlog " + shlex.join(argv)
-
-
 def _cmd_build(args: argparse.Namespace) -> int:
     """Resolve the configuration and build, or print it under --dry-run."""
     cfg = resolve_run_config(
         flag_overrides(args),
         config_file=args.config,
-        command=args.command_line,
     )
 
     if args.dry_run:
@@ -175,8 +168,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return EXIT_USAGE
-
-    args.command_line = _command_line(argv)
 
     try:
         setup_console_logging(_log_level(args))

@@ -2,7 +2,8 @@
 
 `ProvenanceEmitter` writes the record as ontology annotations. These functions
 find one annotation in the head of a written file, in functional syntax or in
-RDF/XML, and parse its JSON.
+RDF/XML, and parse its JSON. The file may be one semlog wrote or one the OWL
+API rewrote.
 """
 
 from __future__ import annotations
@@ -22,10 +23,15 @@ RECORD_HEAD_CHARS = 1 << 16
 def _record_patterns(
     annotation: str,
 ) -> tuple[tuple[re.Pattern[str], Callable[[str], str]], ...]:
-    """Return the pattern and unescaper for one annotation, per syntax."""
+    """Return the pattern and unescaper for one annotation, per syntax.
+
+    In functional syntax the property is a full IRI, as semlog writes it, or a
+    prefixed name, as the OWL API writes it after `materialize`.
+    """
+    prop = rf'(?:<[^>]*{annotation}>|[^\s:()<>"]*:{annotation})'
     return (
         (
-            re.compile(rf'Annotation\(<[^>]*{annotation}> "((?:[^"\\]|\\.)*)"\)'),
+            re.compile(rf'Annotation\({prop} "((?:[^"\\]|\\.)*)"\)'),
             _unescape_functional,
         ),
         (re.compile(rf"<[^<>]*{annotation}[^<>]*>(.*?)</", re.DOTALL), _unescape_xml),

@@ -53,26 +53,17 @@ def test_an_in_memory_build_writes_rdf_xml_and_keeps_the_ontology(tiny_store, tm
     assert "step" in read_rdf(output, DEFAULT_IRI).classes
 
 
-def test_the_iri_and_the_run_record_reach_the_file(tiny_store, tmp_path):
+def test_the_iri_and_the_header_reach_the_file(tiny_store, tmp_path):
     output = tmp_path / "named.ofn"
     iri = "https://example.org/tiny/"
 
-    result = build_log(
-        tiny_store,
-        NO_ORDER,
-        BuildInputs(),
-        output,
-        iri=iri,
-        source="tiny.jsonocel",
-        record={"sourceLogSha256": "abc", "stats": {"events": 3}},
-    )
+    result = build_log(tiny_store, NO_ORDER, BuildInputs(), output, iri=iri)
 
     annotations = read_functional(output).ontology_annotations
     assert result.iri == iri
     assert f"Ontology(<{iri.removesuffix('/')}>" in output.read_text(encoding="utf-8")
-    assert annotations["sourceLog"] == "tiny.jsonocel"
-    assert annotations["sourceLogSha256"] == "abc"
-    assert json.loads(annotations["stats"]) == {"events": 3}
+    assert set(annotations) == {"buildTool", "buildConfiguration", "caseConcepts"}
+    assert json.loads(annotations["caseConcepts"]) == []
 
 
 def test_a_rejected_build_leaves_no_file_behind(tiny_store, tmp_path):

@@ -39,7 +39,4 @@ def write_config(tmp_path: Path):
 @pytest.fixture
 def cfg(ocel: Path, tmp_path: Path) -> RunConfig:
     """A run of the fixture log into `tmp_path / "onto"`."""
-    return resolve_run_config(
-        {"input": [str(ocel)], "output": str(tmp_path / "onto")},
-        command="semlog build fixture",
-    )
+    return resolve_run_config({"input": [str(ocel)], "output": str(tmp_path / "onto")})

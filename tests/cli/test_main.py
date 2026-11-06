@@ -7,7 +7,6 @@ import sys
 import pytest
 
 from semanticlog.cli import EXIT_FAILED, EXIT_INTERRUPTED, EXIT_OK, EXIT_USAGE, main
-from tests.support.written import record
 
 # `semanticlog.cli` re-exports `main`, so the module comes from sys.modules.
 MAIN_MODULE = "semanticlog.cli.main"
@@ -43,15 +42,6 @@ def test_a_dry_run_prints_the_plan_and_its_warnings_and_writes_nothing(
     assert f"#   {out / 'pipeline.ofn'}" in capsys.readouterr().out
     assert "no effect" in caplog.text
     assert not out.exists()
-
-
-def test_the_command_line_is_recorded_in_the_ontology(ocel, tmp_path):
-    out = tmp_path / "onto"
-    main(["build", str(ocel), "--output", str(out), "--case-concepts", "order", "-q"])
-
-    assert record(out / "pipeline.ofn")["buildCommand"] == (
-        f"semlog build {ocel} --output {out} --case-concepts order -q"
-    )
 
 
 def test_an_in_memory_build_prints_only_the_written_path(ocel, tmp_path, capsys):
