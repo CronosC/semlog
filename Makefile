@@ -38,47 +38,10 @@ verify: check ## Check, build examples/pipeline.toml and test it for consistency
 example: ## Build examples/pipeline.toml
 	$(RUN) semlog build --config examples/pipeline.toml
 
-# Configs starting with _ are skipped. They hold settings the others extend.
-# A config whose declare_file does not exist is mined first.
-# A failed config does not stop the rest. The failures are summarized at the end.
-# Ctrl-C stops the current config and ends the run. The summary is still printed.
+# Builds every config not starting with _ through scripts/build_runs.sh, one at a
+# time under the memory cap SEMLOG_MEM (default 6G). Configs starting with _ hold
+# settings the others extend. Each build writes NAME.build.log and NAME.build.exit
+# into its output directory, and the script prints a summary line per config.
 build-all: ## Build every config in runs/
 	@test -d runs || { echo "No runs/ directory. Start from examples/pipeline.toml."; exit 2; }
-	@work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT; trap ':' INT; \
-	failed=""; \
-	for config in runs/[!_]*.toml; do \
-		test -e "$$config" || continue; \
-		name=$$(basename "$$config" .toml); \
-		log="$$work/$$name.log"; \
-		echo "=== $$config ==="; \
-		declare_file=$$($(RUN) semlog build --config "$$config" --dry-run 2>/dev/null \
-			| sed -n 's/^declare_file = "\(.*\)"$$/\1/p'); \
-		if test -n "$$declare_file" && ! test -f "$$declare_file"; then \
-			echo "--- mining $$declare_file ---"; \
-			( trap ':' INT; $(RUN) semlog mine-declare --config "$$config" 2>&1; echo $$? >"$$work/status" ) \
-				| tee "$$log"; \
-			status=$$(cat "$$work/status"); \
-			if test "$$status" -ne 0; then \
-				echo "MINING FAILED $$config (exit $$status)"; \
-				failed="$$failed $$name"; \
-				test "$$status" -ne 130 || break; \
-				continue; \
-			fi; \
-		fi; \
-		( trap ':' INT; $(RUN) semlog build --config "$$config" 2>&1; echo $$? >"$$work/status" ) \
-			| tee "$$log"; \
-		status=$$(cat "$$work/status"); \
-		test "$$status" -eq 0 && continue; \
-		echo "FAILED $$config (exit $$status)"; \
-		failed="$$failed $$name"; \
-		test "$$status" -ne 130 || break; \
-	done; \
-	test -n "$$failed" || exit 0; \
-	echo; \
-	echo "=== failed ==="; \
-	for name in $$failed; do \
-		echo "--- runs/$$name.toml ---"; \
-		tail -n 15 "$$work/$$name.log"; \
-		echo; \
-	done; \
-	exit 1
+	@scripts/build_runs.sh runs/[!_]*.toml
