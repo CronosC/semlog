@@ -41,15 +41,19 @@ def _free_column(log: pd.DataFrame, name: str) -> str:
     return free
 
 
-def _read_csv(path: str) -> pd.DataFrame:
+def _read_csv(path: str, text_cols: list[str]) -> pd.DataFrame:
     """Read a CSV log without the columns whose header is blank.
 
     A blank header is what pandas writes for its row index.
+
+    Args:
+        text_cols: Columns read as text, such as id columns. A column the
+            file does not have is ignored.
     """
     with open(path, newline="", encoding="utf-8") as handle:
         header = next(csv.reader(handle), [])
     blank = [i for i, name in enumerate(header) if not name.strip()]
-    log = pd.read_csv(path)
+    log = pd.read_csv(path, dtype=dict.fromkeys(text_cols, str))
     if blank:
         logger.warning(
             "Dropped %d column(s) of %s with no header, at position(s) %s.",
@@ -82,7 +86,8 @@ class ClassicalLoader(Loader):
         """Read the log and return it as a store.
 
         Ids are prefixed: events with `e` and the row number, cases with `t`,
-        and the values of another object column with the column name. Every
+        and the values of another object column with the column name. A CSV
+        log's id columns are read as text, so `007` and `7` stay apart. Every
         event relates to its case through `involves`, and to another object
         column through `involves_<column>`. A column named in
         `object_attribute_cols` becomes an attribute of the first object type,
@@ -102,7 +107,9 @@ class ClassicalLoader(Loader):
         log = (
             pm.read_xes(self.path)
             if Path(self.path).suffix.lower() == ".xes"
-            else _read_csv(self.path)
+            else _read_csv(
+                self.path, [self.columns.case_col, *self.columns.object_cols]
+            )
         )
         self._require_columns(log)
         self._require_filled(log)

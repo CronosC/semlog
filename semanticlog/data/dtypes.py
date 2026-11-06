@@ -107,6 +107,40 @@ def _as_declared(series: pd.Series, declared: str) -> pd.Series:
     return num.astype("float64")
 
 
+def _warn_lost(col: str, before: pd.Series, after: pd.Series, typed: str) -> None:
+    """Warn when a value of `before` is missing in its conversion `after`.
+
+    Args:
+        typed: How the column got its type, such as `declared integer`.
+    """
+    failed = before.notna() & after.isna()
+    if not failed.any():
+        return
+    sample = list(before[failed].astype(str).unique()[:_SAMPLE])
+    logger.warning(
+        "Attribute '%s' is %s, but %d of its value(s), such as %s, are not. "
+        "They are read as missing.",
+        col,
+        typed,
+        int(failed.sum()),
+        sample,
+    )
+
+
+def _inferred(col: str, before: pd.Series, after: pd.Series) -> pd.Series:
+    """Return `after`, the inferred conversion of `before`, and warn about lost values."""
+    if pd.api.types.is_datetime64_any_dtype(after):
+        kind = "time"
+    elif pd.api.types.is_bool_dtype(after):
+        kind = "boolean"
+    elif pd.api.types.is_integer_dtype(after):
+        kind = "integer"
+    else:
+        kind = "float"
+    _warn_lost(col, before, after, f"read as {kind}")
+    return after
+
+
 def cast_declared(df: pd.DataFrame, declared: Mapping[str, str]) -> pd.DataFrame:
     """Return a copy of the table with each declared column cast to its type.
 
@@ -123,17 +157,7 @@ def cast_declared(df: pd.DataFrame, declared: Mapping[str, str]) -> pd.DataFrame
             continue
         before = df[col]
         after = _as_declared(before, declared_type)
-        failed = before.notna() & after.isna()
-        if failed.any():
-            sample = list(before[failed].astype(str).unique()[:_SAMPLE])
-            logger.warning(
-                "Attribute '%s' is declared %s, but %d of its value(s), such "
-                "as %s, are not. They are read as missing.",
-                col,
-                declared_type,
-                int(failed.sum()),
-                sample,
-            )
+        _warn_lost(col, before, after, f"declared {declared_type}")
         df[col] = after
     return df
 
@@ -150,7 +174,8 @@ def infer_dtypes(
     Blank text becomes missing. A declared column is cast to its type, see
     `cast_declared`. Any other column becomes a timestamp, boolean or number
     when enough of its values parse, and a column of integer literals becomes
-    a number.
+    a number. A value that does not parse in a converted column becomes
+    missing, and a warning counts them per column.
 
     Args:
         ignore_cols: Columns kept as they are, such as id columns.
@@ -196,15 +221,15 @@ def infer_dtypes(
 
         dt = _try_datetime(df[col], non_null, min_parse_ratio)
         if dt is not None:
-            df[col] = dt
+            df[col] = _inferred(col, df[col], dt)
             continue
 
         boolean = _try_boolean(df[col], non_null, min_parse_ratio)
         if boolean is not None:
-            df[col] = boolean
+            df[col] = _inferred(col, df[col], boolean)
             continue
 
         num = _try_numeric(df[col], non_null, min_parse_ratio)
         if num is not None:
-            df[col] = num
+            df[col] = _inferred(col, df[col], num)
     return df

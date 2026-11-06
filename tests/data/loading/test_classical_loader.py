@@ -185,6 +185,24 @@ def test_an_object_column_becomes_a_type_with_prefixed_ids_and_its_own_relation(
     ]
 
 
+def test_case_ids_that_differ_only_in_leading_zeros_stay_two_cases(tmp_path):
+    path = _write(tmp_path, **{CASE: ["007", "7"]})
+
+    oced = ClassicalLoader(path).get_oced()
+
+    assert sorted(oced.ids(EntityKind.OBJECT, CASE)) == ["t007", "t7"]
+
+
+def test_a_number_in_an_object_column_with_gaps_gives_an_id_without_a_decimal(
+    tmp_path,
+):
+    path = _write(tmp_path, resource=["7", None])
+
+    oced = ClassicalLoader(path, LoaderColumns(object_cols=["resource"])).get_oced()
+
+    assert list(oced.ids(EntityKind.OBJECT, "resource")) == ["resource_7"]
+
+
 def test_an_event_id_column_of_the_log_is_kept_as_an_attribute(tmp_path):
     path = _write(tmp_path, event_id=["REAL-1", "REAL-2"])
 

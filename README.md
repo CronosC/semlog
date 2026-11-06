@@ -118,7 +118,7 @@ The ontology has a fixed upper schema of `Event`, `Object`, `Attribute` and `Tim
 - the relations of the log as sub-properties of `event_object_relation` and `object_object_relation`
 - event order as `df_<case concept>` properties, optionally with eventually-follows and DECLARE constraint membership
 
-An OCEL attribute keeps the type the log declares for it: `string`, `integer`, `float`, `boolean` or `time`. A value that does not parse as its declared type is read as missing, with a warning. Undeclared attributes, and every column of a CSV or XES log, are typed by their content.
+An OCEL attribute keeps the type the log declares for it: `string`, `integer`, `float`, `boolean` or `time`. A value that does not parse as its declared type is read as missing, with a warning. Undeclared attributes, and every column of a CSV or XES log apart from its id columns, are typed by their content. A value that does not parse as the type a column is given this way is also read as missing, with a warning. The case column and the object columns of a CSV log are read as text, so the case ids `007` and `7` stay two cases.
 
 The record of how the file was produced is annotated onto the ontology itself: the input checksum, the resolved settings, the command and the semlog version.
 

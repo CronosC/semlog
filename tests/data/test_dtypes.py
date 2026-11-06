@@ -120,3 +120,30 @@ def test_a_value_that_is_not_its_declared_type_is_missing_and_warned_about(
 
     assert [None if pd.isna(v) else v for v in out["x"]] == expected
     assert f"declared {declared}, but 1 of its value(s)" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("value", "kind"),
+    [
+        ("17", "integer"),
+        ("2024-01-01T00:00:00Z", "time"),
+        ("yes", "boolean"),
+    ],
+)
+def test_a_value_that_is_not_the_inferred_type_is_missing_and_warned_about(
+    value, kind, caplog
+):
+    out = infer_dtypes(pd.DataFrame({"x": [value] * 19 + ["unknown"]}))
+
+    assert out["x"].isna().sum() == 1
+    assert (
+        f"Attribute 'x' is read as {kind}, but 1 of its value(s), such as "
+        "['unknown'], are not." in caplog.text
+    )
+
+
+def test_a_column_whose_values_all_parse_is_converted_without_a_warning(caplog):
+    out = infer_dtypes(pd.DataFrame({"x": ["1.5", "2", "2024"]}))
+
+    assert str(out["x"].dtype) == "float64"
+    assert caplog.text == ""
