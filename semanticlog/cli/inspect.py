@@ -95,10 +95,9 @@ def inspect_input(
     )
 
     stamps = [
-        view.frame[column]
-        for view in data.tables(changes=False)
-        if view.kind is EntityKind.EVENT
-        for column in view.structural
+        table.data[table.time]
+        for table in data.tables_of(EntityKind.EVENT).values()
+        if table.time is not None
     ]
     non_empty = [s for s in stamps if len(s)]
     time_range = (

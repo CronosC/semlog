@@ -81,14 +81,69 @@ def test_a_log_holds_each_event_of_a_case_once_in_the_pm4py_columns(store):
     }
 
 
-def test_events_of_a_case_are_ordered_by_timestamp_then_by_event_id():
+def _positioned_store(positions):
+    """Return a store whose events e1, e9 and e10 on o1 carry the given positions.
+
+    e1 is a day later than e9 and e10, which share a timestamp and belong to
+    two activities.
+    """
+    store = OCEDStore()
+    store.add(EntityKind.OBJECT, "order", pd.DataFrame({"oid": ["o1"]}), id_col="oid")
+    for name, ids, days in (("late", ["e1"], [2]), ("tied", ["e9"], [1])):
+        store.add(
+            EntityKind.EVENT,
+            name,
+            pd.DataFrame({"eid": ids, "ts": _utc(*days), "pos": [positions[ids[0]]]}),
+            id_col="eid",
+            time_col="ts",
+            position_col="pos",
+        )
+    store.add(
+        EntityKind.EVENT,
+        "other",
+        pd.DataFrame({"eid": ["e10"], "ts": _utc(1), "pos": [positions["e10"]]}),
+        id_col="eid",
+        time_col="ts",
+        position_col="pos",
+    )
+    store.add_relation(
+        RelationKind.E2O,
+        "on",
+        pd.DataFrame({"eid": ["e1", "e9", "e10"], "oid": ["o1"] * 3}),
+        from_id="eid",
+        to_id="oid",
+        to_type=["order"],
+    )
+    return store
+
+
+@pytest.mark.parametrize(
+    ("positions", "expected"),
+    [
+        ({"e10": 0, "e9": 1, "e1": 2}, ["e10", "e9", "e1"]),
+        ({"e9": 0, "e1": 1, "e10": 2}, ["e9", "e10", "e1"]),
+    ],
+)
+def test_events_of_a_case_are_ordered_by_timestamp_then_by_position(
+    positions, expected
+):
+    assert list(get_log(_positioned_store(positions), "order").index) == expected
+
+
+def test_the_position_survives_cleaning():
+    store = clean_oced_data(_positioned_store({"e10": 0, "e9": 1, "e1": 2}))
+
+    assert list(get_log(store, "order").index) == ["e10", "e9", "e1"]
+
+
+def test_events_without_positions_at_one_timestamp_keep_the_store_order():
     store = _store(
         ("late", ["e9"], _utc(2)),
         ("tied", ["e2", "e1"], _utc(1, 1)),
         relations=[("on", ["e9", "e2", "e1"], ["o1", "o1", "o1"], ["order"])],
     )
 
-    assert list(get_log(store, "order").index) == ["e1", "e2", "e9"]
+    assert list(get_log(store, "order").index) == ["e2", "e1", "e9"]
 
 
 def test_an_event_with_no_timestamp_is_left_out_and_warned_about(caplog):

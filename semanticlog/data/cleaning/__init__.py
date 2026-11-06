@@ -232,6 +232,7 @@ def _clean_entities(
             id=clean_string(table.id),
             data=clean_dataframe(table.data),
             time=None if table.time is None else clean_string(table.time),
+            position=None if table.position is None else clean_string(table.position),
         )
     return tables
 

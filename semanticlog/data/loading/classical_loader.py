@@ -85,6 +85,7 @@ class ClassicalLoader(Loader):
     def get_oced(self) -> OCEDStore:
         """Read the log and return it as a store.
 
+        Each event carries its row number as its position in the log.
         Ids are prefixed: events with `e` and the row number, cases with `t`,
         and the values of another object column with the column name. A CSV
         log's id columns are read as text, so `007` and `7` stay apart. Every
@@ -150,15 +151,18 @@ class ClassicalLoader(Loader):
                 id_col=object_type,
             )
 
+        position = free_name("position", {str(c) for c in log.columns})
         for activity, rows in log.groupby(columns.act_col):
+            inferred = inference.infer(
+                rows[[event_id, columns.time_col, *event_attributes]], event_id
+            )
             oced.add(
                 EntityKind.EVENT,
                 str(activity),
-                inference.infer(
-                    rows[[event_id, columns.time_col, *event_attributes]], event_id
-                ),
+                inferred.assign(**{position: inferred.index}),
                 id_col=event_id,
                 time_col=columns.time_col,
+                position_col=position,
             )
 
         for object_type in object_types:

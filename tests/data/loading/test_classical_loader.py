@@ -128,6 +128,7 @@ def test_a_named_constant_column_becomes_an_object_attribute(tmp_path):
         "event_id",
         "time:timestamp",
         "cost",
+        "position",
     ]
 
 
@@ -227,6 +228,7 @@ def test_a_column_with_no_header_is_dropped(tmp_path):
     assert list(oced.table(EntityKind.EVENT, "a").data.columns) == [
         "event_id",
         "time:timestamp",
+        "position",
     ]
 
 
@@ -285,3 +287,15 @@ def test_the_time_column_is_parsed_over_the_whole_log_keeping_gaps(tmp_path):
         pd.Timestamp("2024-01-03", tz="UTC"),
         pd.NaT,
     ]
+
+
+def test_an_event_is_positioned_by_its_row(tmp_path):
+    path = _write(tmp_path, **{"concept:name": ["b", "a"]})
+
+    oced = ClassicalLoader(path).get_oced()
+
+    positions = {
+        activity: list(oced.table(EntityKind.EVENT, activity).data["position"])
+        for activity in ("a", "b")
+    }
+    assert positions == {"a": [1], "b": [0]}

@@ -77,25 +77,29 @@ class RelationKind(str, Enum):
 class EntityTable:
     """The events of one activity, or the objects of one type.
 
-    An event table has a timestamp column. An object table does not.
+    An event table has a timestamp column and may have a position column.
+    An object table has neither.
 
     Attributes:
         id: Column holding the entity id.
-        data: One row per entity. Every column other than `id` and `time` is
-            an attribute.
+        data: One row per entity. Every column other than `id`, `time` and
+            `position` is an attribute.
         time: Column holding the event timestamp, or None for an object table.
+        position: Column holding the place of each event in the source log,
+            or None. Events with the same timestamp are ordered by it.
     """
 
     id: str
     data: pd.DataFrame
     time: str | None = None
+    position: str | None = None
 
     @property
     def key_columns(self) -> frozenset[str]:
-        """The id column and, for events, the time column."""
-        if self.time is None:
-            return frozenset({self.id})
-        return frozenset({self.id, self.time})
+        """The id column and, for events, the time and position columns."""
+        return frozenset(
+            c for c in (self.id, self.time, self.position) if c is not None
+        )
 
 
 @dataclass
@@ -127,8 +131,9 @@ class TableView:
         name: Activity or object type this table holds.
         kind: The kind of entity the rows are, or None for a table whose rows
             are not entities.
-        key_columns: Columns that carry structure. An id, a timestamp, or the
-            `ocel:` columns of a change table.
+        key_columns: Columns that carry structure. An id, a timestamp, a
+            position in the source log, or the `ocel:` columns of a change
+            table.
         origin: How this table is named in a message, such as
             `activity 'ship'`.
         id_column: Column holding the id of the entity each row is, or None

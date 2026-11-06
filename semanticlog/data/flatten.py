@@ -19,17 +19,22 @@ from semanticlog.data.tables import EntityKind, RelationKind
 
 logger = logging.getLogger(__name__)
 
+_POSITION = "semlog:position"
+
 
 def get_log(data: ReadableStore, case_concept: str) -> pd.DataFrame:
     """Return the flat log for one case concept.
 
     Each object of the case concept becomes a case. A repeated event-object
     pair is kept once. An event with no timestamp is left out and logged.
+    Events of one case with the same timestamp keep the order of their
+    positions in the log. Events of an activity without positions follow
+    those with one, in the order the store holds them.
 
     Returns:
         A frame indexed by event id, with the PM4Py columns
         `case:concept:name`, `concept:name` and `time:timestamp`, sorted by
-        case, time and event id.
+        case, time and position in the log.
 
     Raises:
         InputError: If the type is unknown, no relation reaches it, the store
@@ -175,7 +180,10 @@ def _case_relations(data: ReadableStore, case_concept: str) -> pd.DataFrame:
 
 
 def _event_frame(data: ReadableStore) -> pd.DataFrame:
-    """Return every event as one frame of id, activity and timestamp.
+    """Return every event as one frame of id, activity, timestamp and position.
+
+    The position numbers the events by their position column, and the
+    events of activities without one after them in store order.
 
     Raises:
         InputError: If the log has no events, or its activities mix zoned and
@@ -190,6 +198,11 @@ def _event_frame(data: ReadableStore) -> pd.DataFrame:
         event_data = event_data.rename(
             columns={event_table.id: "event_id", event_table.time: "time:timestamp"}
         )
+        event_data[_POSITION] = (
+            float("nan")
+            if event_table.position is None
+            else event_table.data[event_table.position].to_numpy()
+        )
         for is_zoned in _zone_kinds(event_data["time:timestamp"]):
             zoned[is_zoned].append(event_type)
         events_data_list.append(event_data)
@@ -203,7 +216,10 @@ def _event_frame(data: ReadableStore) -> pd.DataFrame:
             f"  without one: {', '.join(sorted(zoned[False])[:5])}\n\n"
             "Give every event table the same kind of timestamp before flattening."
         )
-    return pd.concat(events_data_list, ignore_index=True)
+    events = pd.concat(events_data_list, ignore_index=True)
+    events = events.sort_values(_POSITION, kind="mergesort", na_position="last")
+    events[_POSITION] = range(len(events))
+    return events
 
 
 def _zone_kinds(stamps: pd.Series) -> set[bool]:
@@ -216,15 +232,12 @@ def _zone_kinds(stamps: pd.Series) -> set[bool]:
 def _flatten(
     case_concept: str, rel_data: pd.DataFrame, events_data: pd.DataFrame
 ) -> pd.DataFrame:
-    """Join events to their cases, sorted by case, timestamp and event id as text."""
+    """Join events to their cases, sorted by case, timestamp and position in the log."""
     log = pd.merge(events_data, rel_data, on="event_id", how="inner")
     log = log.rename(columns={case_concept: "case:concept:name"})
     log = _drop_undated(log, case_concept)
 
-    log = log.sort_values(
-        by=["case:concept:name", "time:timestamp", "event_id"],
-        key=lambda column: column.astype(str) if column.name == "event_id" else column,
-    )
+    log = log.sort_values(by=["case:concept:name", "time:timestamp", _POSITION])
     log = log.set_index("event_id")
     return log[["case:concept:name", "concept:name", "time:timestamp"]]
 

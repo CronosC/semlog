@@ -523,3 +523,52 @@ def test_an_attribute_keeps_the_type_the_log_declares(tmp_path, suffix):
     assert list(frame["code"]) == ["1", "2"]
     assert list(frame["rank"]) == [1, 2]
     assert str(frame["rank"].dtype) == "Int64"
+
+
+def _positions(oced) -> dict[str, int]:
+    """Return the position of every event, keyed by event id."""
+    positions = {}
+    for activity in oced.types(EntityKind.EVENT):
+        table = oced.table(EntityKind.EVENT, activity)
+        positions.update(
+            zip(table.data[table.id], table.data[table.position], strict=True)
+        )
+    return positions
+
+
+@pytest.mark.parametrize("listed", [["e10", "e9"], ["e9", "e10"]])
+def test_events_at_one_timestamp_are_positioned_in_file_order(tmp_path, listed):
+    activities = {"e10": "pay", "e9": "ship"}
+    path = tmp_path / "tied.jsonocel"
+    path.write_text(
+        json.dumps(
+            {
+                "objectTypes": [{"name": "order", "attributes": []}],
+                "eventTypes": [
+                    {"name": act, "attributes": []} for act in ("pay", "ship")
+                ],
+                "objects": [{"id": "o1", "type": "order"}],
+                "events": [
+                    {
+                        "id": eid,
+                        "type": activities[eid],
+                        "time": "2024-01-01T00:00:00Z",
+                        "relationships": [{"objectId": "o1", "qualifier": "on"}],
+                    }
+                    for eid in listed
+                ],
+            }
+        )
+    )
+
+    positions = _positions(PM4PyLoader(str(path)).get_oced())
+
+    assert sorted(positions, key=positions.get) == listed
+
+
+def test_the_event_position_is_no_attribute(simple_ocel):
+    oced = PM4PyLoader(simple_ocel).get_oced()
+
+    assert [
+        view.attributes for view in oced.tables() if view.name == "place_order"
+    ] == [[]]

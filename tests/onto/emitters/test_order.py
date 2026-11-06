@@ -6,6 +6,7 @@ store is one trace, the matrix store twelve traces over two case concepts.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 import pandas as pd
@@ -21,6 +22,9 @@ from semanticlog.core.errors import ConfigError
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.declare import ConceptConstraints, DeclareResult
+from semanticlog.data.loading.base import LoaderColumns
+from semanticlog.data.loading.classical_loader import ClassicalLoader
+from semanticlog.data.loading.pm4py_loader import PM4PyLoader
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.builder import OCEDOntoBuilder
@@ -224,12 +228,113 @@ def test_events_follow_each_other_in_timestamp_order(tmp_path):
     assert onto.types["b"] == {"step", "EndEvent_order"}
 
 
-def test_events_at_one_instant_are_ordered_by_event_id(tmp_path):
+def test_events_at_one_instant_keep_the_order_of_the_store(tmp_path):
     events = pd.DataFrame({"eid": ["c", "a", "b"], "ts": [datetime(2024, 1, 1)] * 3})
 
     onto = emit(_settings([DF]), tmp_path / "tie.ofn", data=_one_order(events))
 
-    assert _pairs(onto, "df_order") == {("a", "b"), ("b", "c")}
+    assert _pairs(onto, "df_order") == {("c", "a"), ("a", "b")}
+
+
+# Each event as id, activity and day of January 2024. e10 and e9 share a day.
+_TIED_EVENTS = {"e10": ("pay", 1), "e9": ("ship", 1), "e1": ("close", 2)}
+
+
+def _write_tied_log(tmp_path, file_format: str, listed: list[str]) -> str:
+    """Write a log of one order whose events are listed in the given order, and return its path."""
+    events = [(eid, *_TIED_EVENTS[eid]) for eid in listed]
+    if file_format == "csv":
+        path = tmp_path / "tied.csv"
+        # Nine rows of another order first, so the events of o1 are rows 9 to
+        # 11 and their ids do not sort as text in row order.
+        filler = [f"o0,fill,2023-12-{day:02d}T00:00:00Z" for day in range(1, 10)]
+        rows = filler + [
+            f"o1,{act},2024-01-{day:02d}T00:00:00Z" for _, act, day in events
+        ]
+        path.write_text("\n".join(["order,concept:name,time:timestamp", *rows]) + "\n")
+        return str(path)
+    activities = sorted({act for _, act, _ in events})
+    if file_format == "json":
+        path = tmp_path / "tied.jsonocel"
+        doc = {
+            "objectTypes": [{"name": "order", "attributes": []}],
+            "eventTypes": [{"name": act, "attributes": []} for act in activities],
+            "objects": [{"id": "o1", "type": "order"}],
+            "events": [
+                {
+                    "id": eid,
+                    "type": act,
+                    "time": f"2024-01-{day:02d}T00:00:00Z",
+                    "relationships": [{"objectId": "o1", "qualifier": "concerns"}],
+                }
+                for eid, act, day in events
+            ],
+        }
+        path.write_text(json.dumps(doc))
+        return str(path)
+    path = tmp_path / "tied.xmlocel"
+    event_types = "".join(
+        f'<event-type name="{act}"><attributes/></event-type>' for act in activities
+    )
+    event_elements = "".join(
+        f'<event id="{eid}" type="{act}" time="2024-01-{day:02d}T00:00:00+00:00">'
+        '<attributes/><objects><relationship object-id="o1" qualifier="concerns"/>'
+        "</objects></event>"
+        for eid, act, day in events
+    )
+    path.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?><log>"
+        '<object-types><object-type name="order"><attributes/></object-type>'
+        f"</object-types><event-types>{event_types}</event-types>"
+        '<objects><object id="o1" type="order"><attributes/></object></objects>'
+        f"<events>{event_elements}</events></log>"
+    )
+    return str(path)
+
+
+def _load_tied_log(
+    tmp_path, file_format: str, listed: list[str]
+) -> tuple[OCEDStore, dict[str, str]]:
+    """Load and clean the tied log.
+
+    Returns:
+        The store, and the id each listed event has in it. A CSV log numbers
+        its events by row, after the nine rows of another order.
+    """
+    path = _write_tied_log(tmp_path, file_format, listed)
+    if file_format == "csv":
+        store = ClassicalLoader(path, LoaderColumns(case_col="order")).get_oced()
+        ids = {eid: f"e{row}" for row, eid in enumerate(listed, start=9)}
+    else:
+        store = PM4PyLoader(path).get_oced()
+        ids = {eid: eid for eid in listed}
+    return clean_oced_data(store), ids
+
+
+@pytest.mark.parametrize("file_format", ["json", "xml", "csv"])
+@pytest.mark.parametrize(
+    ("listed", "trace"),
+    [
+        (["e10", "e9", "e1"], ["e10", "e9", "e1"]),
+        (["e9", "e10", "e1"], ["e9", "e10", "e1"]),
+        (["e1", "e9", "e10"], ["e9", "e10", "e1"]),
+    ],
+)
+def test_events_at_one_instant_keep_the_order_of_the_log_file(
+    tmp_path, file_format, listed, trace
+):
+    data, ids = _load_tied_log(tmp_path, file_format, listed)
+    trace = [ids[eid] for eid in trace]
+
+    onto = emit(_settings([DF, EF_EXPLICIT]), tmp_path / "tied.ofn", data=data)
+
+    def of_trace(prop: str) -> set[tuple[str, str]]:
+        return {pair for pair in _pairs(onto, prop) if set(pair) <= set(trace)}
+
+    assert of_trace("df_order") == _directly_follows([trace])
+    assert of_trace("ef_order") == _closure([trace])
+    assert "StartEvent_order" in onto.types[trace[0]]
+    assert "EndEvent_order" in onto.types[trace[-1]]
 
 
 def test_ef_over_a_shared_event_logs_a_warning(tmp_path, caplog):

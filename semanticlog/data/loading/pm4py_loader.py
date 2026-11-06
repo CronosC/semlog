@@ -193,6 +193,8 @@ class PM4PyLoader(Loader):
         no qualifier takes `involves` or `relates`. The ids of a type whose
         ids are all numeric are prefixed with the type. An attribute keeps the
         type the log declares for it, and only undeclared ones are inferred.
+        Each event carries its position in the order PM4Py reads the events,
+        which for XML and JSON is their order in the file.
 
         An object carries the value of each attribute with the greatest
         timestamp. The value PM4Py lists first for an attribute is read as its
@@ -426,18 +428,24 @@ def _fill_store(
             id_col="ocel:oid",
         )
 
-    for activity, frame in frames.events.groupby("ocel:activity"):
+    # PM4Py sorts the events by timestamp and then by their place in the
+    # file, so its row order is the order of the log.
+    events = frames.events.reset_index(drop=True)
+    position = free_name("ocel:position", {str(c) for c in events.columns})
+    for activity, frame in events.groupby("ocel:activity"):
         frame = frame.drop(columns=["ocel:activity"])
+        inferred = inference.infer(
+            frame,
+            "ocel:eid",
+            declared.get((EntityKind.EVENT, str(activity))),
+        )
         oced.add(
             EntityKind.EVENT,
             str(activity),
-            inference.infer(
-                frame,
-                "ocel:eid",
-                declared.get((EntityKind.EVENT, str(activity))),
-            ),
+            inferred.assign(**{position: inferred.index}),
             id_col="ocel:eid",
             time_col="ocel:timestamp",
+            position_col=position,
         )
 
     e2o_names, o2o_names = _relation_names(

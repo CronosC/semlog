@@ -91,21 +91,25 @@ class OCEDStore:
         *,
         id_col: str,
         time_col: str | None = None,
+        position_col: str | None = None,
     ) -> None:
         """Add the entities of one activity or object type.
 
         Args:
-            data: One row per entity. Every column other than `id_col` and
-                `time_col` becomes an attribute. Dtypes are taken as given.
-                The frame is held, not copied.
+            data: One row per entity. Every column other than `id_col`,
+                `time_col` and `position_col` becomes an attribute. Dtypes are
+                taken as given. The frame is held, not copied.
             time_col: Column holding the timestamp. Required for events, not
                 allowed for objects.
+            position_col: Column holding the place of each event in the
+                source log, numbered across all activities. Events with the
+                same timestamp are ordered by it. Not allowed for objects.
 
         Raises:
-            InputError: If the timestamp column is missing or misplaced, a
-                named column is not in the data, the type is already in the
-                store, or an id is repeated or held by another table. The
-                store is left as it was.
+            InputError: If the timestamp column is missing or misplaced, the
+                position column is misplaced, a named column is not in the
+                data, the type is already in the store, or an id is repeated
+                or held by another table. The store is left as it was.
         """
         if kind is EntityKind.EVENT and time_col is None:
             raise InputError(
@@ -116,8 +120,13 @@ class OCEDStore:
                 f"Object type {name!r} takes no time_col, got {time_col!r}. "
                 "Record attribute changes as OCEL attribute history."
             )
+        if kind is EntityKind.OBJECT and position_col is not None:
+            raise InputError(
+                f"Object type {name!r} takes no position_col, got "
+                f"{position_col!r}. Only events are ordered."
+            )
 
-        named = [id_col] if time_col is None else [id_col, time_col]
+        named = [c for c in (id_col, time_col, position_col) if c is not None]
         absent = [column for column in named if column not in data.columns]
         if absent:
             raise InputError(
@@ -142,7 +151,9 @@ class OCEDStore:
                 "store, for example by prefixing them with their type."
             )
 
-        tables[name] = EntityTable(id=id_col, data=data, time=time_col)
+        tables[name] = EntityTable(
+            id=id_col, data=data, time=time_col, position=position_col
+        )
         self._used_ids.update(counts)
 
     def types(self, kind: EntityKind) -> list[str]:
