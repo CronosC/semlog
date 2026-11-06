@@ -1,7 +1,8 @@
 """Readers that turn source event logs into an OCED store.
 
-`PM4PyLoader` reads OCEL 2.0. `ClassicalLoader` reads flat single-case logs.
-`loader_for` picks one by file extension, and `load_and_clean` reads and
+`OCELLoader` reads OCEL 2.0, and `PM4PyLoader` reads it through PM4Py.
+`ClassicalLoader` reads flat single-case logs. `loader_for` picks the
+`OCELLoader` or the `ClassicalLoader` by file extension, and `load_and_clean` reads and
 cleans a log in one call.
 """
 
@@ -18,7 +19,9 @@ from semanticlog.data.loading.classical_loader import (
     CLASSICAL_SUFFIXES,
     ClassicalLoader,
 )
-from semanticlog.data.loading.pm4py_loader import OCEL_SUFFIXES, PM4PyLoader
+from semanticlog.data.loading.ocel_frames import OCEL_SUFFIXES
+from semanticlog.data.loading.ocel_loader import OCELLoader
+from semanticlog.data.loading.pm4py_loader import PM4PyLoader
 from semanticlog.data.oced import OCEDStore
 
 LOG_SUFFIXES: frozenset[str] = OCEL_SUFFIXES | CLASSICAL_SUFFIXES
@@ -44,7 +47,7 @@ def loader_for(
     named = LoaderColumns.from_mapping(columns)
     suffix = Path(path).suffix.lower()
     if suffix in OCEL_SUFFIXES:
-        return PM4PyLoader(path, ocel_extensions=ocel_extensions)
+        return OCELLoader(path, ocel_extensions=ocel_extensions)
     if suffix in CLASSICAL_SUFFIXES:
         return ClassicalLoader(path, named)
     raise InputError(
@@ -87,6 +90,7 @@ __all__ = [
     "ClassicalLoader",
     "Loader",
     "LoaderColumns",
+    "OCELLoader",
     "PM4PyLoader",
     "load_and_clean",
     "loader_for",

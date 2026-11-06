@@ -24,7 +24,7 @@ from pathlib import Path
 import pandas as pd
 
 from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.loading.pm4py_loader import PM4PyLoader
+from semanticlog.data.loading.ocel_loader import OCELLoader
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, RelationKind
 
@@ -74,12 +74,12 @@ def tiny() -> OCEDStore:
 
 def pipeline() -> OCEDStore:
     """The committed OCEL 2.0 log, loaded and cleaned."""
-    return clean_oced_data(PM4PyLoader(str(PIPELINE_OCEL)).get_oced())
+    return clean_oced_data(OCELLoader(str(PIPELINE_OCEL)).get_oced())
 
 
 def pipeline_raw() -> OCEDStore:
     """The committed OCEL 2.0 log as the loader produced it, before cleaning."""
-    return PM4PyLoader(str(PIPELINE_OCEL)).get_oced()
+    return OCELLoader(str(PIPELINE_OCEL)).get_oced()
 
 
 # Eleven prices, wide enough for distribution binning to fit, with one value at

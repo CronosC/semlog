@@ -96,6 +96,10 @@ uv run semlog build tests/fixtures/pipeline.jsonocel --case-concepts order --ord
 
 The paths a build wrote and the verdict of `reason --check` go to stdout. Progress and problems go to stderr, and `-q` limits stderr to warnings and errors. Exit codes are `0` for success, `1` when a build failed, a log could not be read or an ontology was inconsistent, `2` when the configuration was unusable or `mine-declare` or `reason` could not read its input, and `130` when the command was interrupted.
 
+### Reading an OCEL log
+
+A `.jsonocel`, `.json`, `.xmlocel`, `.xml` or `.sqlite` file is read as OCEL 2.0. An event time with an offset such as `-07:00` is converted to UTC, and a time without a time zone is read as UTC. A log with an event whose time is not an ISO 8601 timestamp is not read, and the message names such events. Events without objects and objects without events are kept. An event linked to one object under two qualifiers is in both relations. A link to an object the log does not contain is left out with a warning. `PM4PyLoader` in the Python API reads the same files through PM4Py instead.
+
 ### Reading a flat log
 
 A `.csv` or `.xes` log has one case notion and no objects. The case column becomes an object type and every event relates to its case. Each column named in `object_cols` becomes another object type the same way. A column named in `object_attribute_cols` becomes an attribute of the case, or of the first object column within whose objects it does not vary. The other columns become attributes of the events.

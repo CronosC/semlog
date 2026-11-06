@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from semanticlog.data.loading.classical_loader import (
         ClassicalLoader as ClassicalLoader,
     )
+    from semanticlog.data.loading.ocel_loader import OCELLoader as OCELLoader
     from semanticlog.data.loading.pm4py_loader import PM4PyLoader as PM4PyLoader
     from semanticlog.data.oced import OCEDStore as OCEDStore
     from semanticlog.data.readable import ReadableStore as ReadableStore
@@ -69,6 +70,7 @@ _EXPORTS: dict[str, str] = {
     "OCEDOntoBuilder": "semanticlog.onto.builder",
     "OCEDStore": "semanticlog.data.oced",
     "OCELExtension": "semanticlog.core.enums",
+    "OCELLoader": "semanticlog.data.loading.ocel_loader",
     "OWLProfile": "semanticlog.core.enums",
     "OntoBuildSettings": "semanticlog.onto.settings",
     "PM4PyLoader": "semanticlog.data.loading.pm4py_loader",

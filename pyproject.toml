@@ -16,6 +16,7 @@ dependencies = [
     "owlready2>=0.40,<0.51",
     "scipy<2",
     "pandas>=2.2",
+    "ijson>=3.6.0",
 ]
 
 [project.scripts]

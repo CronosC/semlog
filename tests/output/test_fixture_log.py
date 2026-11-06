@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from semanticlog.data.cleaning import clean_oced_data
+from semanticlog.data.loading.ocel_loader import OCELLoader
+from semanticlog.data.loading.pm4py_loader import PM4PyLoader
 from semanticlog.data.tables import EntityKind, RelationKind
+from tests.support.build import emit
+from tests.support.settings import settings
+from tests.support.stores import PIPELINE_OCEL
 
 
 def test_the_log_holds_three_activities_two_object_types_and_their_relations(
@@ -46,3 +52,14 @@ def test_each_type_keeps_the_attributes_the_readme_lists(pipeline_raw_store):
     assert {"carrier", "weight"} <= columns(EntityKind.EVENT, "ship_order")
     assert "status" in columns(EntityKind.OBJECT, "order")
     assert "weight" in columns(EntityKind.OBJECT, "item")
+
+
+def test_the_log_gives_the_same_ontology_through_both_ocel_loaders(tmp_path):
+    written = {}
+    for loader in (OCELLoader, PM4PyLoader):
+        data = clean_oced_data(loader(str(PIPELINE_OCEL)).get_oced())
+        path = tmp_path / f"{loader.__name__}.ofn"
+        emit(settings(), path, data=data)
+        written[loader] = path.read_text()
+
+    assert written[OCELLoader] == written[PM4PyLoader]

@@ -11,7 +11,7 @@ uv run semlog inspect tests/fixtures/pipeline.jsonocel
 ## Shape the tests depend on
 
 - **Timestamps.** Day *N* is `2024-01-01 + (N-1) days`, one event per day.
-- **Three activities.** `place_order`, `pay`, `ship_order`. `place_order` and `pay` share the attributes `amount` and `resource`. `ship_order` has `carrier` and `weight`. `PM4PyLoader` drops a column that is null for a whole type, so no activity carries the other pair's attributes.
+- **Three activities.** `place_order`, `pay`, `ship_order`. `place_order` and `pay` share the attributes `amount` and `resource`. `ship_order` has `carrier` and `weight`. The OCEL loaders drop a column that is null for a whole type, so no activity carries the other pair's attributes.
 - **Two object types.** `order` with attribute `status`, and `item` with attribute `weight`. The same per-type null dropping applies.
 - **E2O.** `place_order` and `pay` relate to `order`, `ship_order` to `item`.
 - **O2O.** `contains`, from `order` to `item`.

@@ -57,8 +57,18 @@ def declared_types(path: str, file_format: str) -> DeclaredTypes:
         mapped to one of `DECLARED_TYPES`. An attribute whose declared type is
         not recognized is left out and its column is inferred.
     """
-    readers = {"json": _from_json, "xml": _from_xml, "sqlite": _from_sqlite}
-    raw = readers[file_format](path)
+    readers = {"json": _from_json, "xml": _from_xml, "sqlite": sqlite_types}
+    return normalize_declared(readers[file_format](path))
+
+
+def normalize_declared(
+    raw: dict[tuple[EntityKind, str], dict[str, str]],
+) -> DeclaredTypes:
+    """Return the declared types with each type name mapped to one of `DECLARED_TYPES`.
+
+    An attribute whose type name is not recognized is left out, with a warning
+    naming the type.
+    """
     declared: DeclaredTypes = {}
     unknown: set[str] = set()
     for key, attributes in raw.items():
@@ -116,7 +126,7 @@ def _from_xml(path: str) -> dict[tuple[EntityKind, str], dict[str, str]]:
     return raw
 
 
-def _from_sqlite(path: str) -> dict[tuple[EntityKind, str], dict[str, str]]:
+def sqlite_types(path: str) -> dict[tuple[EntityKind, str], dict[str, str]]:
     """Return the raw declared types of a SQLite log, from its column types."""
     raw: dict[tuple[EntityKind, str], dict[str, str]] = {}
     connection = sqlite3.connect(path)

@@ -3,13 +3,13 @@
 import pytest
 
 from semanticlog.core.errors import InputError
-from semanticlog.data.loading import ClassicalLoader, PM4PyLoader, loader_for
+from semanticlog.data.loading import ClassicalLoader, OCELLoader, loader_for
 
 
 @pytest.mark.parametrize(
     ("name", "loader"),
     [
-        ("log.jsonocel", PM4PyLoader),
+        ("log.jsonocel", OCELLoader),
         ("log.xes", ClassicalLoader),
         ("log.CSV", ClassicalLoader),
     ],

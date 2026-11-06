@@ -12,11 +12,8 @@ from pm4py.objects.ocel.obj import OCEL
 from semanticlog.core.enums import OCELExtension
 from semanticlog.core.errors import InputError
 from semanticlog.data.loading import pm4py_loader
-from semanticlog.data.loading.pm4py_loader import (
-    PM4PyLoader,
-    _normalize_qualifiers,
-    _relation_names,
-)
+from semanticlog.data.loading.ocel_frames import normalize_qualifiers, relation_names
+from semanticlog.data.loading.pm4py_loader import PM4PyLoader
 from semanticlog.data.tables import EntityKind, RelationKind
 
 HISTORY = [OCELExtension.ATTRIBUTE_HISTORY]
@@ -191,7 +188,7 @@ def test_a_qualifier_both_families_use_is_suffixed_on_both_sides(tmp_path):
 
 
 def test_a_suffixed_name_the_log_uses_is_numbered_past():
-    e2o, o2o = _relation_names(
+    e2o, o2o = relation_names(
         pd.Series(["contains", "contains_e2o"]), pd.Series(["contains"])
     )
 
@@ -203,7 +200,7 @@ def test_a_word_read_as_no_qualifier_is_warned_about_apart_from_an_empty_one(cap
     rows = pd.DataFrame({"ocel:qualifier": ["modifies", None, "NA"]})
 
     with caplog.at_level(logging.WARNING):
-        normalized = _normalize_qualifiers(rows, "e2o")
+        normalized = normalize_qualifiers(rows, "e2o")
 
     assert list(normalized["ocel:qualifier"]) == ["modifies", "involves", "involves"]
     assert "2 e2o relation(s) had no qualifier" in caplog.text
@@ -216,7 +213,7 @@ def test_a_word_on_every_relation_of_a_family_is_not_warned_about_as_a_merge(cap
     rows = pd.DataFrame({"ocel:qualifier": ["None", "None"]})
 
     with caplog.at_level(logging.WARNING):
-        _normalize_qualifiers(rows, "e2o")
+        normalize_qualifiers(rows, "e2o")
 
     assert "2 e2o relation(s) had no qualifier" in caplog.text
     assert "carry the text" not in caplog.text
