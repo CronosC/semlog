@@ -62,7 +62,8 @@ class OCELLoader(Loader):
             A store, in OCEL mode when attribute history was requested.
 
         Raises:
-            InputError: If the suffix names no OCEL form, the file uses one id
+            InputError: If the suffix names no OCEL form, the file does not
+                parse in it, the log has no events, the file uses one id
                 twice, or an event time is not an ISO 8601 timestamp.
         """
         logger.info("Loading OCEL data from file %s", self.path)

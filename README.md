@@ -98,7 +98,7 @@ The paths a build wrote and the verdict of `reason --check` go to stdout. Progre
 
 ### Reading an OCEL log
 
-A `.jsonocel`, `.json`, `.xmlocel`, `.xml` or `.sqlite` file is read as OCEL 2.0. An event time with an offset such as `-07:00` is converted to UTC, and a time without a time zone is read as UTC. A log with an event whose time is not an ISO 8601 timestamp is not read, and the message names such events. Events without objects and objects without events are kept. An event linked to one object under two qualifiers is in both relations. A link to an object the log does not contain is left out with a warning. `PM4PyLoader` in the Python API reads the same files through PM4Py instead.
+A `.jsonocel`, `.json`, `.xmlocel`, `.xml` or `.sqlite` file is read as OCEL 2.0. An event time with an offset such as `-07:00` is converted to UTC, and a time without a time zone is read as UTC. A log with an event whose time is not an ISO 8601 timestamp is not read, and the message names such events. Events without objects and objects without events are kept, but a log without events is not read. A list or object attribute value is read as JSON text, such as `["a", "b"]`, with a warning. An event linked to one object under two qualifiers is in both relations. A link to an object the log does not contain is left out with a warning. `PM4PyLoader` in the Python API reads the same files through PM4Py instead.
 
 ### Reading a flat log
 

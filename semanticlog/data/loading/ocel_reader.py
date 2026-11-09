@@ -4,9 +4,11 @@
 specification, sections 6 and 7.
 """
 
+import json
 import logging
 import sqlite3
 import xml.etree.ElementTree as ElementTree
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +35,8 @@ from semanticlog.data.tables import EntityKind
 logger = logging.getLogger(__name__)
 
 _SAMPLE = 3
+
+_FORM_NAMES = {"json": "JSON", "xml": "XML", "sqlite": "SQLite"}
 
 RawTypes = dict[tuple[EntityKind, str], dict[str, str]]
 
@@ -77,9 +81,10 @@ def read_ocel(path: str) -> OCELStore:
     """Read an OCEL 2.0 log in the form its suffix names.
 
     Raises:
-        InputError: If the suffix names no OCEL form, the file uses one id
-            for two objects or two events, or an event time is not an ISO
-            8601 timestamp.
+        InputError: If the suffix names no OCEL form, the file does not parse
+            in that form or lacks a part the standard requires, the log has
+            no events, the file uses one id for two objects or two events, or
+            an event time is not an ISO 8601 timestamp.
     """
     file_format = OCEL_FORMATS.get(Path(path).suffix.lower())
     if file_format is None:
@@ -88,16 +93,68 @@ def read_ocel(path: str) -> OCELStore:
             f"{', '.join(sorted(OCEL_FORMATS))}."
         )
     readers = {"json": _read_json, "xml": _read_xml, "sqlite": _read_sqlite}
-    return _store(path, readers[file_format](path))
+    try:
+        rows = readers[file_format](path)
+    except (ijson.JSONError, ElementTree.ParseError, UnicodeDecodeError) as exc:
+        detail = (
+            str(exc).splitlines()[0].rstrip(".") if str(exc) else type(exc).__name__
+        )
+        raise InputError(
+            f"{path} is not well-formed {file_format.upper()}: {detail}. Fix "
+            "the file or export the log again."
+        ) from exc
+    except sqlite3.DatabaseError as exc:
+        raise InputError(
+            f"{path} is not an OCEL 2.0 SQLite database: {_sqlite_problem(exc)}. "
+            "Export the log again as OCEL 2.0 SQLite, JSON or XML."
+        ) from exc
+    except KeyError as exc:
+        part = "column" if file_format == "sqlite" else "field"
+        kind = "a table" if file_format == "sqlite" else "an entry"
+        raise InputError(
+            f"{path} is not an OCEL 2.0 {_FORM_NAMES[file_format]} log: {kind} "
+            f"has no {exc.args[0]!r} {part}. Add it as the OCEL 2.0 standard "
+            "describes, or export the log again."
+        ) from exc
+    except (TypeError, AttributeError) as exc:
+        if file_format != "json":
+            raise
+        raise InputError(
+            f"{path} is not an OCEL 2.0 JSON log: an entry is not shaped as the "
+            f"OCEL 2.0 standard describes ({exc}). Export the log again."
+        ) from exc
+    return _store(path, rows)
+
+
+def _sqlite_problem(exc: sqlite3.DatabaseError) -> str:
+    """Return what a SQLite error says about the file, in words a user reads."""
+    text = str(exc)
+    if text.startswith("no such table: "):
+        return f"it has no table {text.removeprefix('no such table: ')}"
+    if text == "file is not a database":
+        return "it is not a SQLite database"
+    return text
 
 
 def _read_json(path: str) -> _Rows:
-    """Return the entries of a JSON log, streaming one top-level array at a time."""
+    """Return the entries of a JSON log, streaming one top-level array at a time.
+
+    A list or object attribute value is kept as JSON text, with one warning
+    per attribute.
+    """
     rows = _Rows()
+    nested: Counter[str] = Counter()
 
     def items(prefix: str) -> Iterable[dict[str, Any]]:
         with open(path, "rb") as handle:
             yield from ijson.items(handle, f"{prefix}.item", use_float=True)
+
+    def scalar(attribute: dict[str, Any]) -> object:
+        value = attribute.get("value")
+        if isinstance(value, list | dict):
+            nested[str(attribute.get("name"))] += 1
+            return json.dumps(value, ensure_ascii=False)
+        return value
 
     for kind, section in (
         (EntityKind.OBJECT, "objectTypes"),
@@ -113,7 +170,7 @@ def _read_json(path: str) -> _Rows:
         rows.add_object(object_id, obj.get("type"))
         for a in obj.get("attributes") or []:
             rows.object_values.append(
-                (object_id, _text(a.get("name")), a.get("time"), a.get("value"))
+                (object_id, _text(a.get("name")), a.get("time"), scalar(a))
             )
         for r in obj.get("relationships") or []:
             rows.o2o.append((object_id, _text(r.get("objectId")), r.get("qualifier")))
@@ -121,9 +178,17 @@ def _read_json(path: str) -> _Rows:
         event_id = _text(event.get("id"))
         rows.add_event(event_id, event.get("type"), event.get("time"))
         for a in event.get("attributes") or []:
-            rows.event_values.append((event_id, _text(a.get("name")), a.get("value")))
+            rows.event_values.append((event_id, _text(a.get("name")), scalar(a)))
         for r in event.get("relationships") or []:
             rows.e2o.append((event_id, _text(r.get("objectId")), r.get("qualifier")))
+    for name, count in nested.items():
+        logger.warning(
+            "Attribute '%s' has %d list or object value(s) in %s. They are read "
+            "as JSON text.",
+            name,
+            count,
+            path,
+        )
     return rows
 
 
@@ -281,7 +346,7 @@ def _entities(
     Raises:
         InputError: If an id repeats.
     """
-    frame = pd.DataFrame({"id": ids, "type": types})
+    frame = pd.DataFrame({"id": ids, "type": types}, dtype=object)
     missing = _blank(frame["id"]) | _blank(frame["type"])
     if missing.any():
         logger.warning(
@@ -393,12 +458,17 @@ def _store(path: str, rows: _Rows) -> OCELStore:
     """Return the entries of a log as an `OCELStore`.
 
     Raises:
-        InputError: If an id repeats, or an event time is not an ISO 8601
-            timestamp.
+        InputError: If no event has an id and a type, an id repeats, or an
+            event time is not an ISO 8601 timestamp.
     """
     events = _entities(path, "event", rows.event_ids, rows.event_types).assign(
         time=pd.Series(rows.event_times, dtype=object)
     )
+    if events.empty:
+        raise InputError(
+            f"{path} has no events. Check that the file is the log to build "
+            "and that every event has an id and a type."
+        )
     objects = _entities(path, "object", rows.object_ids, rows.object_types)
     reject_repeated_ids(
         path, {"object": repeated(objects["id"]), "event": repeated(events["id"])}

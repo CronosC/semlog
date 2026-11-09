@@ -1,6 +1,7 @@
 """Reading the three forms of an OCEL 2.0 log into an OCEL store."""
 
 import logging
+import sqlite3
 from dataclasses import fields
 
 import pandas as pd
@@ -9,7 +10,7 @@ import pytest
 from semanticlog.core.errors import InputError
 from semanticlog.data.loading.ocel_reader import read_ocel
 from semanticlog.data.loading.ocel_store import OCELStore
-from tests.support.ocel_files import small_log, write_log, write_sqlite
+from tests.support.ocel_files import EPOCH, small_log, write_log, write_sqlite
 
 
 def test_the_json_xml_and_sqlite_forms_of_one_log_give_equal_stores(tmp_path):
@@ -126,3 +127,77 @@ def test_an_undeclared_attribute_value_is_kept_as_read(tmp_path):
     store = read_ocel(write_log(tmp_path, log, ".xmlocel"))
 
     assert store.event_values.set_index("name")["value"]["note"] == "late"
+
+
+@pytest.mark.parametrize(
+    ("suffix", "text", "message"),
+    [
+        (".jsonocel", "{ not json", r"log\.jsonocel is not well-formed JSON: "),
+        (".xmlocel", "<log><events>", r"log\.xmlocel is not well-formed XML: "),
+    ],
+)
+def test_a_file_that_does_not_parse_is_rejected_naming_it(
+    tmp_path, suffix, text, message
+):
+    path = tmp_path / f"log{suffix}"
+    path.write_text(text)
+
+    with pytest.raises(InputError, match=message):
+        read_ocel(str(path))
+
+
+def test_a_type_entry_without_a_name_is_rejected_naming_the_field(tmp_path):
+    log = small_log()
+    del log["objectTypes"][0]["name"]
+
+    with pytest.raises(
+        InputError, match=r"is not an OCEL 2\.0 JSON log: an entry has no 'name' field"
+    ):
+        read_ocel(write_log(tmp_path, log))
+
+
+def test_a_sqlite_database_without_the_ocel_tables_is_rejected_naming_one(tmp_path):
+    path = tmp_path / "log.sqlite"
+    sqlite3.connect(path).execute("CREATE TABLE other (x TEXT)").connection.close()
+
+    with pytest.raises(
+        InputError,
+        match=r"log\.sqlite is not an OCEL 2\.0 SQLite database: it has no table "
+        r"event_map_type\.",
+    ):
+        read_ocel(str(path))
+
+
+def test_a_sqlite_file_that_is_not_a_database_is_rejected(tmp_path):
+    path = tmp_path / "log.sqlite"
+    path.write_text("hello, not a database")
+
+    with pytest.raises(
+        InputError, match=r"log\.sqlite is not an OCEL 2\.0 SQLite database: "
+    ):
+        read_ocel(str(path))
+
+
+@pytest.mark.parametrize("suffix", [".jsonocel", ".xmlocel", ".sqlite"])
+def test_a_log_without_events_is_rejected(tmp_path, suffix):
+    log = small_log()
+    log["events"] = []
+
+    with pytest.raises(InputError, match=r"log\.\w+ has no events\. "):
+        read_ocel(write_log(tmp_path, log, suffix))
+
+
+def test_a_list_or_object_value_is_read_as_json_text_with_one_warning(tmp_path, caplog):
+    log = small_log()
+    log["events"][1]["attributes"] = [{"name": "tags", "value": ["a", "b"]}]
+    log["objects"][1]["attributes"].append(
+        {"name": "size", "time": EPOCH, "value": {"w": "é"}}
+    )
+
+    with caplog.at_level(logging.WARNING):
+        store = read_ocel(write_log(tmp_path, log))
+
+    assert store.event_values.set_index("name")["value"]["tags"] == '["a", "b"]'
+    assert store.object_values.set_index("name")["value"]["size"] == '{"w": "é"}'
+    assert "Attribute 'tags' has 1 list or object value(s)" in caplog.text
+    assert "Attribute 'size' has 1 list or object value(s)" in caplog.text

@@ -133,3 +133,16 @@ def test_a_relation_to_an_object_the_log_lacks_is_left_out_with_a_warning(
 
     assert "x" not in oced.get_relation_types()
     assert "1 e2o relation(s) of" in caplog.text
+
+
+def test_a_log_without_objects_keeps_its_events(tmp_path):
+    log = small_log()
+    log["objectTypes"] = []
+    log["objects"] = []
+    for event in log["events"]:
+        event["relationships"] = []
+
+    oced = OCELLoader(write_log(tmp_path, log)).get_oced()
+
+    assert sorted(_positions(oced)) == ["e1", "e2"]
+    assert oced.types(EntityKind.OBJECT) == []

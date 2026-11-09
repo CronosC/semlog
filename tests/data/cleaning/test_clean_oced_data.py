@@ -6,7 +6,11 @@ import pytest
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.errors import InputError
 from semanticlog.core.vocabulary import is_safe_local_name
-from semanticlog.data.cleaning import clean_oced_data, object_type_renames
+from semanticlog.data.cleaning import (
+    clean_oced_data,
+    object_type_renames,
+    verify_unique_names,
+)
 from semanticlog.data.integrity import check_integrity
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, RelationKind
@@ -224,3 +228,20 @@ def test_the_source_names_are_kept_per_kind(make_store, events):
     cleaned = clean_oced_data(oced)
 
     assert cleaned.backmap == {"activity": {"pay_order": "pay order"}}
+
+
+def test_a_name_claimed_twice_after_cleaning_is_a_programming_error():
+    oced = OCEDStore()
+    oced.add(EntityKind.OBJECT, "order", pd.DataFrame({"oid": ["o1"]}), id_col="oid")
+    oced.add(
+        EntityKind.EVENT,
+        "order",
+        pd.DataFrame({"eid": ["e1"], "t": pd.to_datetime(["2024-01-01"], utc=True)}),
+        id_col="eid",
+        time_col="t",
+    )
+
+    with pytest.raises(ValueError, match="'order' is claimed 2 times") as excinfo:
+        verify_unique_names(oced)
+
+    assert excinfo.type is ValueError

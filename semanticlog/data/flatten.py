@@ -89,6 +89,17 @@ def case_concept_candidates(data: ReadableStore) -> list[str]:
     return [t for t in data.types(EntityKind.OBJECT) if t in reached]
 
 
+def projection_advice(data: ReadableStore) -> str:
+    """Return the sentence that tells a user which object types `case_concepts` can name."""
+    candidates = case_concept_candidates(data)
+    if not candidates:
+        return (
+            "No event-to-object relation of this log names an object type, so "
+            "case_concepts cannot name one."
+        )
+    return f"Set case_concepts to one of: {', '.join(sorted(candidates))}."
+
+
 def _rank_case_concepts(data: ReadableStore, n: int) -> list[str]:
     """Return the n `case_concept_candidates` with the most instances."""
     reachable = set(case_concept_candidates(data))
@@ -145,8 +156,8 @@ def _case_relations(data: ReadableStore, case_concept: str) -> pd.DataFrame:
     """Return the distinct event-object pairs of relations reaching a case concept."""
     if case_concept not in data.types(EntityKind.OBJECT):
         raise InputError(
-            f"Unknown object type {case_concept!r}. This store holds "
-            f"{sorted(data.types(EntityKind.OBJECT))}."
+            f"case_concepts names {case_concept!r}, which is not an object type "
+            f"of this log. {projection_advice(data)}"
         )
 
     relations = data.relations_of(RelationKind.E2O)
@@ -159,8 +170,8 @@ def _case_relations(data: ReadableStore, case_concept: str) -> pd.DataFrame:
     ]
     if not data_list:
         raise InputError(
-            f"No event-to-object relation names object type {case_concept!r}. "
-            f"The relations name {sorted({t for r in relations.values() for t in r.to_type})}."
+            f"case_concepts names {case_concept!r}, but no event-to-object "
+            f"relation reaches it. {projection_advice(data)}"
         )
 
     rel_data = pd.concat(data_list, ignore_index=True)
@@ -208,7 +219,10 @@ def _event_frame(data: ReadableStore) -> pd.DataFrame:
         events_data_list.append(event_data)
 
     if not events_data_list:
-        raise InputError("No event data available.")
+        raise InputError(
+            "The log has no events. Check that the input is the log to build "
+            "and that it holds events."
+        )
     if zoned[True] and zoned[False]:
         raise InputError(
             "The activities of this log mix zoned and unzoned timestamps:\n"

@@ -57,4 +57,4 @@ def test_the_history_schema_is_left_out_for_a_store_without_history(tiny_store, 
     builder.build_ontology(tiny_store)
 
     assert "AttributeChange" not in _declared(builder)
-    assert "not created with ocel_mode=True" in caplog.text
+    assert "only an OCEL 2.0 log has an attribute history" in caplog.text

@@ -8,6 +8,7 @@ columns become attributes of the events.
 
 import csv
 import logging
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -26,6 +27,8 @@ CLASSICAL_SUFFIXES: frozenset[str] = frozenset({".csv", ".xes"})
 EVENT_ID = "event_id"
 
 _SAMPLE = 5
+
+_UNCLOSED_QUOTE = re.compile(r"EOF inside string starting at row (\d+)")
 
 
 def _free_column(log: pd.DataFrame, name: str) -> str:
@@ -49,11 +52,24 @@ def _read_csv(path: str, text_cols: list[str]) -> pd.DataFrame:
     Args:
         text_cols: Columns read as text, such as id columns. A column the
             file does not have is ignored.
+
+    Raises:
+        InputError: If the file is not UTF-8, is empty, or does not parse as
+            CSV.
     """
-    with open(path, newline="", encoding="utf-8") as handle:
-        header = next(csv.reader(handle), [])
+    try:
+        with open(path, newline="", encoding="utf-8") as handle:
+            header = next(csv.reader(handle), [])
+        log = pd.read_csv(path, dtype=dict.fromkeys(text_cols, str))
+    except UnicodeDecodeError as exc:
+        raise InputError(f"{path} is not UTF-8 text. Save it as UTF-8.") from exc
+    except pd.errors.EmptyDataError as exc:
+        raise InputError(
+            f"{path} is empty. Give it a header line and one line per event."
+        ) from exc
+    except pd.errors.ParserError as exc:
+        raise InputError(_parser_problem(path, exc)) from exc
     blank = [i for i, name in enumerate(header) if not name.strip()]
-    log = pd.read_csv(path, dtype=dict.fromkeys(text_cols, str))
     if blank:
         logger.warning(
             "Dropped %d column(s) of %s with no header, at position(s) %s.",
@@ -63,6 +79,37 @@ def _read_csv(path: str, text_cols: list[str]) -> pd.DataFrame:
         )
         log = log.drop(columns=log.columns[blank])
     return log
+
+
+def _parser_problem(path: str, exc: pd.errors.ParserError) -> str:
+    """Return the message for a CSV that pandas cannot tokenize, naming the line."""
+    unclosed = _UNCLOSED_QUOTE.search(str(exc))
+    if unclosed is not None:
+        # pandas counts the lines of the file from 0.
+        line = int(unclosed.group(1)) + 1
+        return (
+            f"{path} has a quote opened on line {line} that is never closed. "
+            "Close the quote or remove it."
+        )
+    detail = str(exc).splitlines()[0].removeprefix("Error tokenizing data. C error: ")
+    return f"{path} is not well-formed CSV: {detail.rstrip('.')}. Fix that line."
+
+
+def _read_xes(path: str) -> pd.DataFrame:
+    """Read an XES log into one row per event.
+
+    Raises:
+        InputError: If the file is not well-formed XML.
+    """
+    # lxml's XMLSyntaxError, which pm4py raises, subclasses SyntaxError.
+    try:
+        return pm.read_xes(path)
+    except SyntaxError as exc:
+        # str(exc) appends the file name, which the message already gives.
+        raise InputError(
+            f"{path} is not well-formed XES: {exc.msg}. Fix the file or export "
+            "the log again."
+        ) from exc
 
 
 class ClassicalLoader(Loader):
@@ -100,13 +147,14 @@ class ClassicalLoader(Loader):
 
         Raises:
             ConfigError: If a configured column is not in the file.
-            InputError: If a row has no case id or no activity, if the time
+            InputError: If the file cannot be read, a row has no case id or
+                no activity, if the time
                 column holds a value that is not a timestamp, or if an object
                 attribute column varies within every object type.
         """
         logger.info("Loading classical data from file %s", self.path)
         log = (
-            pm.read_xes(self.path)
+            _read_xes(self.path)
             if Path(self.path).suffix.lower() == ".xes"
             else _read_csv(
                 self.path, [self.columns.case_col, *self.columns.object_cols]
@@ -225,12 +273,19 @@ class ClassicalLoader(Loader):
             values = log[column]
             blank = values.isna() | values.astype(str).str.strip().eq("")
             if blank.any():
-                rows = list(log.index[blank][:_SAMPLE])
                 raise InputError(
                     f"{int(blank.sum())} row(s) of {self.path} have no value in "
-                    f"{setting} {column!r} (rows {rows}). Every row needs a case "
-                    "id and an activity. Fill them in or drop the rows."
+                    f"{setting} {column!r} ({self._places(log.index[blank])}). "
+                    "Every row needs a case id and an activity. Fill them in or "
+                    "drop the rows."
                 )
+
+    def _places(self, index: pd.Index) -> str:
+        """Return where the first rows of `index` are in the file, as CSV lines or XES events."""
+        if Path(self.path).suffix.lower() == ".csv":
+            # Line 1 holds the header.
+            return "lines " + ", ".join(str(i + 2) for i in index[:_SAMPLE])
+        return "events " + ", ".join(str(i + 1) for i in index[:_SAMPLE])
 
     def _timestamps(self, values: pd.Series) -> pd.Series:
         """Return the time column as timestamps.

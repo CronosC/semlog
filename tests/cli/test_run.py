@@ -9,7 +9,7 @@ import re
 
 import pytest
 
-from semanticlog.cli import EXIT_OK, EXIT_USAGE, main
+from semanticlog.cli import EXIT_FAILED, EXIT_OK, EXIT_USAGE, main
 from semanticlog.cli.config import resolve_run_config
 from semanticlog.cli.run import (
     build_all,
@@ -23,6 +23,7 @@ from semanticlog.data.loading import load_and_clean
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.pipeline import build_log
 from semanticlog.onto.settings import OntoBuildSettings
+from tests.support.ocel_files import small_log, write_log
 from tests.support.owlapi import load
 from tests.support.rdf import read_rdf
 from tests.support.written import read_built, record
@@ -299,6 +300,21 @@ def test_a_broken_input_does_not_stop_the_batch(ocel, tmp_path):
     assert [p.name for p in report.built] == ["good.jsonocel"]
     assert [p.name for p, _ in report.failed] == ["broken.jsonocel"]
     assert report.summary() == "1 built, 1 failed"
+
+
+def test_a_log_build_cannot_read_is_reported_once_naming_its_path_once(
+    tmp_path, capsys
+):
+    broken = tmp_path / "broken.jsonocel"
+    broken.write_text("{ not json")
+
+    code = main(["build", str(broken), "--output", str(tmp_path / "onto"), "-q"])
+
+    lines = capsys.readouterr().err.splitlines()
+    assert code == EXIT_FAILED
+    assert len(lines) == 1
+    assert lines[0].count("broken.jsonocel") == 1
+    assert "is not well-formed JSON" in lines[0]
 
 
 def test_a_semlog_error_in_one_input_is_logged_without_a_traceback(
@@ -694,3 +710,59 @@ def test_reason_on_an_unreadable_ontology_exits_two(tmp_path, capsys):
 
     assert main(["reason", str(path), "--check", "-q"]) == EXIT_USAGE
     assert "cannot read" in capsys.readouterr().err
+
+
+def _never_mined(_data):
+    raise AssertionError("the log was mined despite unusable case concepts")
+
+
+def test_mine_declare_rejects_an_unknown_case_concept_naming_the_choices(
+    ocel, tmp_path, monkeypatch, capsys
+):
+    import semanticlog.enrich.declare as declare
+
+    monkeypatch.setattr(declare, "DeclareEnricher", _never_mined)
+
+    code = main(
+        [
+            "mine-declare",
+            str(ocel),
+            "--case-concepts",
+            "nosuch",
+            "--output",
+            str(tmp_path / "c.declare.json"),
+            "-q",
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == EXIT_USAGE
+    assert "'nosuch' is not an object type of this log" in err
+    assert re.search(r"Set case_concepts to one of: \w+", err) is not None
+
+
+def test_mine_declare_on_a_log_without_event_to_object_relations_names_none(
+    tmp_path, monkeypatch, capsys
+):
+    import semanticlog.enrich.declare as declare
+
+    monkeypatch.setattr(declare, "DeclareEnricher", _never_mined)
+    log = small_log()
+    for event in log["events"]:
+        event["relationships"] = []
+
+    code = main(
+        [
+            "mine-declare",
+            write_log(tmp_path, log),
+            "--output",
+            str(tmp_path / "c.declare.json"),
+            "-q",
+        ]
+    )
+
+    assert code == EXIT_USAGE
+    assert (
+        "No event-to-object relation of this log names an object type, so "
+        "case_concepts cannot name one." in capsys.readouterr().err
+    )

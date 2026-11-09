@@ -251,14 +251,47 @@ def test_a_configured_column_the_log_does_not_have_is_rejected(
         ClassicalLoader(path, LoaderColumns(**columns)).get_oced()
 
 
-def test_rows_with_no_case_id_are_rejected_naming_them(tmp_path):
+def test_rows_with_no_case_id_are_rejected_naming_their_lines(tmp_path):
     path = _write(tmp_path, **{CASE: [None, "  "]})
 
     with pytest.raises(
         InputError,
-        match=r"2 row\(s\) of .* have no value in case_col .* \(rows \[0, 1\]\)",
+        match=r"2 row\(s\) of .* have no value in case_col .* \(lines 2, 3\)",
     ):
         ClassicalLoader(path).get_oced()
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (
+            "case:concept:name,concept:name\nc1,caf\xe9\n".encode("latin-1"),
+            r"log\.csv is not UTF-8 text\. Save it as UTF-8\.",
+        ),
+        (b"", r"log\.csv is empty\. "),
+        (
+            b'case:concept:name,concept:name\nc1,a\n"c2,b\n',
+            r"log\.csv has a quote opened on line 3 that is never closed\. ",
+        ),
+    ],
+    ids=["not_utf8", "empty", "unclosed_quote"],
+)
+def test_a_csv_that_cannot_be_read_is_rejected_naming_it(tmp_path, content, message):
+    path = tmp_path / "log.csv"
+    path.write_bytes(content)
+
+    with pytest.raises(InputError, match=message):
+        ClassicalLoader(str(path)).get_oced()
+
+
+def test_an_xes_file_that_does_not_parse_is_rejected_naming_it(tmp_path):
+    path = tmp_path / "log.xes"
+    path.write_text("<log><trace>")
+
+    with pytest.raises(InputError, match=r"log\.xes is not well-formed XES: ") as e:
+        ClassicalLoader(str(path)).get_oced()
+
+    assert str(e.value).count("log.xes") == 1
 
 
 def test_a_time_value_that_is_not_iso_8601_is_rejected(tmp_path):

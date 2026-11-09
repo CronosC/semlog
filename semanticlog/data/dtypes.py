@@ -21,6 +21,8 @@ DECLARED_TYPES: tuple[str, ...] = ("string", "integer", "float", "boolean", "tim
 
 _SAMPLE = 3
 
+_INT64_MIN = -(2**63)
+
 
 _BOOLEAN_STRINGS = frozenset({"true", "false", "yes", "no", "t", "f", "y", "n"})
 
@@ -103,7 +105,8 @@ def _as_declared(series: pd.Series, declared: str) -> pd.Series:
         return _parse_boolean(series)
     num = pd.to_numeric(series, errors="coerce")
     if declared == "integer":
-        return num.where(num % 1 == 0).astype("Int64")
+        fits = (num % 1 == 0) & (num >= _INT64_MIN) & (num < -_INT64_MIN)
+        return num.where(fits).astype("Int64")
     return num.astype("float64")
 
 

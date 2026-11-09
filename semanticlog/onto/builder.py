@@ -415,9 +415,8 @@ class OCEDOntoBuilder:
         attribute_history = self.settings.emits_attribute_history
         if attribute_history and not data.ocel_mode:
             logger.warning(
-                "ocel_extensions includes attribute_history, but the store was "
-                "not created with ocel_mode=True. The attribute history is "
-                "skipped."
+                "ocel_extensions includes attribute_history, but only an OCEL "
+                "2.0 log has an attribute history. It is skipped for this log."
             )
             attribute_history = False
 

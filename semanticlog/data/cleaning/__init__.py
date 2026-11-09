@@ -13,7 +13,6 @@ from collections.abc import Collection
 import pandas as pd
 
 from semanticlog.core.checks import raise_reports
-from semanticlog.core.errors import InputError
 from semanticlog.core.summary import report_by_kind
 from semanticlog.data.cleaning.allocate import allocate_schema_names
 from semanticlog.data.cleaning.merged import resolve_merged_names
@@ -69,8 +68,9 @@ def clean_oced_data(
         The same store.
 
     Raises:
-        InputError: If an event or object has no id, or if two schema names
-            are the same after every rename has run.
+        InputError: If an event or object has no id.
+        ValueError: If two schema names are the same after every rename has
+            run, which only a defect in cleaning causes.
     """
     logger.info("Cleaning data")
     raise_reports([check_missing_ids(data)])
@@ -129,7 +129,8 @@ def verify_unique_names(data: OCEDStore) -> None:
     """Raise if two schema names in the store are the same after every rename has run.
 
     Raises:
-        InputError: Listing every name claimed more than once.
+        ValueError: Listing every name claimed more than once, which only a
+            defect in cleaning causes.
     """
     claims: dict[str, list[str]] = {}
 
@@ -152,10 +153,10 @@ def verify_unique_names(data: OCEDStore) -> None:
     ]
     if not errors:
         return
-    raise InputError(
-        "These names are claimed more than once:\n"
-        + "\n".join(errors)
-        + "\n\nRename the duplicate in the input data."
+    # allocate_schema_names gives every schema name a distinct name, so a
+    # repeat here is a defect in cleaning, not in the log.
+    raise ValueError(
+        "These names are claimed more than once after cleaning:\n" + "\n".join(errors)
     )
 
 

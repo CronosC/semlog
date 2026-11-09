@@ -109,6 +109,7 @@ def test_a_declared_string_of_digits_stays_text():
     ("declared", "values", "expected"),
     [
         ("integer", ["1", "2.5"], [1, None]),
+        ("integer", ["1", "99999999999999999999999"], [1, None]),
         ("float", ["1.5", "abc"], [1.5, None]),
         ("boolean", ["yes", "maybe"], [True, None]),
     ],

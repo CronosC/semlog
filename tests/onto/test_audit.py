@@ -19,8 +19,8 @@ DF = OntoBuildSettings(order_representations=[EventOrderRepresentation.DF])
 DECLARE = OntoBuildSettings(order_representations=[EventOrderRepresentation.DECLARE])
 
 
-def _store(object_type: str = "order", relation_eid: str = "e1") -> OCEDStore:
-    """One event and one object, linked by one relation row."""
+def _store(object_type: str = "order", relation_eid: str | None = "e1") -> OCEDStore:
+    """One event and one object, linked by one relation row unless `relation_eid` is None."""
     data = OCEDStore()
     data.add(
         EntityKind.EVENT,
@@ -33,6 +33,8 @@ def _store(object_type: str = "order", relation_eid: str = "e1") -> OCEDStore:
         EntityKind.OBJECT, object_type, pd.DataFrame({"oid": ["o1"]}), id_col="oid"
     )
     data.add(EntityKind.OBJECT, "pallet", pd.DataFrame({"oid": ["p1"]}), id_col="oid")
+    if relation_eid is None:
+        return data
     data.add_relation(
         RelationKind.E2O,
         "rel",
@@ -85,6 +87,23 @@ def test_a_case_concept_the_log_cannot_be_projected_onto_is_rejected(
         audit_build(
             clean_oced_data(store), DF, BuildInputs(case_concepts=[case_concept])
         )
+
+
+def test_a_rejected_case_concept_is_answered_with_the_types_the_setting_takes():
+    with pytest.raises(ConfigError, match=r"Set case_concepts to one of: order\. "):
+        audit_build(clean_oced_data(_store()), DF, BuildInputs(case_concepts=["x"]))
+
+
+def test_a_log_without_event_to_object_relations_is_answered_with_no_types():
+    store = _store(relation_eid=None)
+
+    with pytest.raises(
+        ConfigError,
+        match=r"No event-to-object relation of this log names an object type, so "
+        r"case_concepts cannot name one\. Add event-to-object relations to the "
+        r"log, or remove df, ef and ef_explicit from order_representations\.",
+    ):
+        audit_build(clean_oced_data(store), DF, BuildInputs(case_concepts=["order"]))
 
 
 # --------------------------------------------------------------------------

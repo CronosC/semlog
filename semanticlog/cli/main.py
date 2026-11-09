@@ -58,8 +58,6 @@ def _cmd_build(args: argparse.Namespace) -> int:
         for path in cfg.converted_paths(input_path).values():
             print(path)
     logger.info("Done: %s", report.summary())
-    for path, message in report.failed:
-        logger.error("%s: %s", path, message)
     return EXIT_OK if report.ok else EXIT_FAILED
 
 

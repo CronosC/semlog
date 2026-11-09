@@ -4,17 +4,21 @@ import logging
 
 import pytest
 
+from semanticlog.cli import logs
 from semanticlog.cli.logs import PACKAGE_LOGGER, FileLog, setup_console_logging
 
 
 @pytest.fixture
 def restore_logging():
-    """Put the root and package loggers back as the suite had them."""
+    """Put the root and package loggers and the console handler back as the suite had them."""
     root = logging.getLogger()
     package = logging.getLogger(PACKAGE_LOGGER)
     handlers, root_level, package_level = list(root.handlers), root.level, package.level
+    console = logs._console_handler
     yield
     root.handlers[:] = handlers
+    # A later setup_console_logging must replace the restored handler.
+    logs._console_handler = console
     root.setLevel(root_level)
     package.setLevel(package_level)
 

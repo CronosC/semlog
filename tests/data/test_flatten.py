@@ -191,11 +191,21 @@ def test_iterating_gives_each_case_concept_the_log_get_log_gives_it(store):
 @pytest.mark.parametrize(
     ("case_concept", "message"),
     [
-        ("nope", r"Unknown object type 'nope'\. This store holds \['item', 'order'\]"),
-        ("item", "No event-to-object relation names object type 'item'"),
+        (
+            "nope",
+            r"case_concepts names 'nope', which is not an object type of this "
+            r"log\. Set case_concepts to one of: order\.",
+        ),
+        (
+            "item",
+            r"case_concepts names 'item', but no event-to-object relation reaches "
+            r"it\. Set case_concepts to one of: order\.",
+        ),
     ],
 )
-def test_a_case_concept_no_relation_reaches_is_rejected(case_concept, message):
+def test_a_case_concept_no_relation_reaches_is_rejected_naming_the_setting(
+    case_concept, message
+):
     store = _store(
         ("act", ["e1"], _utc(1)), relations=[("on", ["e1"], ["o1"], ["order"])]
     )
@@ -204,10 +214,21 @@ def test_a_case_concept_no_relation_reaches_is_rejected(case_concept, message):
         get_log(store, case_concept)
 
 
+def test_a_case_concept_of_a_store_without_relations_is_rejected_naming_none():
+    store = _store(("act", ["e1"], _utc(1)))
+
+    with pytest.raises(
+        InputError,
+        match=r"No event-to-object relation of this log names an object type, so "
+        r"case_concepts cannot name one\.",
+    ):
+        get_log(store, "order")
+
+
 def test_a_store_with_no_events_cannot_be_flattened():
     store = _store(relations=[("on", ["e1"], ["o1"], ["order"])])
 
-    with pytest.raises(InputError, match="No event data available"):
+    with pytest.raises(InputError, match=r"The log has no events\. "):
         get_log(store, "order")
 
 

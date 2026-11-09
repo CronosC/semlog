@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from semanticlog.core.checks import CheckReport, Fixed, raise_reports
 from semanticlog.data.cleaning import object_type_renames
 from semanticlog.data.declare import DeclareResult
-from semanticlog.data.flatten import case_concept_candidates
+from semanticlog.data.flatten import case_concept_candidates, projection_advice
 from semanticlog.data.integrity import check_integrity
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind
@@ -62,13 +62,30 @@ def check_case_concepts(
     """
     if not settings.emits_traces:
         return None
+    return case_concept_report(
+        data,
+        case_concepts,
+        or_instead="remove df, ef and ef_explicit from order_representations",
+    )
 
+
+def case_concept_report(
+    data: ReadableStore, case_concepts: Sequence[str], or_instead: str = ""
+) -> CheckReport | None:
+    """Return every case concept the log cannot be projected onto, or None if there is none.
+
+    Names are compared as cleaning left them. A log no event-to-object
+    relation reaches is reported even without case concepts.
+
+    Args:
+        or_instead: The other change that fixes a log without event-to-object
+            relations, as a clause starting with a verb.
+    """
     object_types = set(data.types(EntityKind.OBJECT))
-    candidates = case_concept_candidates(data)
-    reachable = set(candidates)
+    reachable = set(case_concept_candidates(data))
     unknown = [c for c in case_concepts if c not in object_types]
     unreachable = [c for c in case_concepts if c in object_types and c not in reachable]
-    if not unknown and not unreachable:
+    if reachable and not unknown and not unreachable:
         return None
 
     renames = object_type_renames(data)
@@ -87,16 +104,20 @@ def check_case_concepts(
             "event-to-object relation reaches it"
         )
 
+    if reachable:
+        fix = (
+            "'semlog inspect' lists the object types along with what each one "
+            "was called in the source."
+        )
+    else:
+        fix = "Add event-to-object relations to the log"
+        fix += f", or {or_instead}." if or_instead else "."
     return CheckReport(
         header=(
             "The case concepts do not name object types this log can be projected onto:"
         ),
         problems=tuple(problems),
-        advice=(
-            f"This log can be projected onto: {', '.join(sorted(reachable))}. "
-            "Set the case concepts to types it holds. 'semlog inspect' lists "
-            "them along with what each one was called in the source."
-        ),
+        advice=f"{projection_advice(data)} {fix}",
         about=Fixed.CONFIG,
     )
 

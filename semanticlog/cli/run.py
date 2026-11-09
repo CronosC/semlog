@@ -18,11 +18,13 @@ from typing import Any
 from semanticlog.cli.config import RunConfig
 from semanticlog.cli.logs import FileLog
 from semanticlog.core import vocabulary as vocab
+from semanticlog.core.checks import raise_reports
 from semanticlog.core.enums import OCELExtension, OutputFormat
 from semanticlog.core.errors import SemlogError
 from semanticlog.data.flatten import choose_case_concepts
 from semanticlog.data.loading import load_and_clean
 from semanticlog.data.readable import ReadableStore
+from semanticlog.onto.audit import case_concept_report
 from semanticlog.onto.convert import convert
 from semanticlog.onto.emitters.provenance import build_configuration
 from semanticlog.onto.pipeline import build_log
@@ -188,8 +190,8 @@ def build_all(cfg: RunConfig) -> BuildReport:
     """Build every input of a run and return what happened to each.
 
     A failed input is recorded and the next one is built. A `SemlogError` or
-    `OSError` is logged as one line. Any other exception is logged with its
-    traceback.
+    `OSError` is logged as one line that names the input once. Any other
+    exception is logged with its traceback.
     """
     for message in cfg.warnings:
         logger.warning(message)
@@ -220,7 +222,10 @@ def build_all(cfg: RunConfig) -> BuildReport:
                 logger.info("=== Finished %s ===", input_path.name)
             except (SemlogError, OSError) as exc:
                 report.failed.append((input_path, str(exc)))
-                logger.error("Failed while processing %s: %s", input_path.name, exc)
+                if str(input_path) in str(exc):
+                    logger.error("%s", exc)
+                else:
+                    logger.error("Failed while processing %s: %s", input_path.name, exc)
             except Exception as exc:
                 report.failed.append((input_path, str(exc)))
                 logger.exception("Failed while processing %s: %s", input_path.name, exc)
@@ -260,7 +265,8 @@ def mine_declare(
 
     Raises:
         DependencyError: If Declare4Py or its solver is not installed.
-        ConfigError: If a constraint template is not one Declare4Py knows.
+        ConfigError: If a constraint template is not one Declare4Py knows, or
+            a case concept is not an object type the log can be projected onto.
     """
     from semanticlog.enrich.declare import DeclareEnricher, check_templates
 
@@ -273,6 +279,7 @@ def mine_declare(
 
     chosen, _ = choose_case_concepts(data, case_concepts, auto_case_concepts)
     logger.info("Case concepts: %s", chosen)
+    raise_reports([case_concept_report(data, chosen)])
 
     logger.info("Mining DECLARE constraints via discovery..")
     result = DeclareEnricher(data).get_constraints_via_discovery(
