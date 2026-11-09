@@ -19,11 +19,11 @@ from semanticlog.onto.settings import OntoBuildSettings
 from tests.support.build import emit
 
 CHANGES = {
-    "AttrChange_o1_channel_20240102T090000_000000",
-    "AttrChange_o1_channel_20240106T090000_000000",
-    "AttrChange_o2_channel_20240102T090000_000000",
-    "AttrChange_o1_price_20240104T090000_000000",
-    "AttrChange_o2_price_20240105T090000_000000",
+    "channel.o1.20240102T090000_000000",
+    "channel.o1.20240106T090000_000000",
+    "channel.o2.20240102T090000_000000",
+    "price.o1.20240104T090000_000000",
+    "price.o2.20240105T090000_000000",
 }
 
 
@@ -145,8 +145,8 @@ def test_literals_puts_the_new_value_on_the_change_record(awkward_store, tmp_pat
     carriers = {s for p, s, _v, _t in onto.data_values if p == "has_value_price"}
 
     assert {
-        "AttrChange_o1_price_20240104T090000_000000",
-        "AttrChange_o2_price_20240105T090000_000000",
+        "price.o1.20240104T090000_000000",
+        "price.o2.20240105T090000_000000",
     } <= carriers
     assert "change_value_price" not in onto.declared
 
@@ -164,6 +164,23 @@ def test_the_value_property_domain_includes_the_change_class_under_literals(
     )
 
     assert onto.domains["has_value_price"] == {"order", "priceChange"}
+
+
+def test_an_object_attribute_without_changes_gets_no_change_class(
+    awkward_store, tmp_path
+):
+    """The matrix store records no change of `weight`."""
+    onto = emit(
+        history_settings(
+            profile=OWLProfile.OWL2DL,
+            attribute_representations=[AttributeRepresentation.LITERALS],
+        ),
+        tmp_path / "domain.ofn",
+        data=awkward_store,
+    )
+
+    assert onto.domains["has_value_weight"] == {"item"}
+    assert "weightChange" not in onto.declared
 
 
 def test_a_numeric_change_is_binned_like_a_current_value(awkward_store, tmp_path):
@@ -223,7 +240,7 @@ def test_a_change_record_is_labeled_with_the_object_id_the_log_wrote(tmp_path):
     labels = [
         text
         for name, kind, text in onto.annotations
-        if kind == "label" and name.startswith("AttrChange_")
+        if kind == "label" and " change for " in text
     ]
     assert labels == ["status change for order (ORD#123) at 2024-01-02 00:00:00"]
 
@@ -277,14 +294,14 @@ def _store_with_causes() -> OCEDStore:
 def test_a_change_at_the_time_of_one_event_of_its_object_is_caused_by_it(history):
     causes = {(s, o) for p, s, o in history.relations if p == vocab.CAUSED_BY}
 
-    assert causes == {("AttrChange_o2_channel_20240102T090000_000000", "e2")}
+    assert causes == {("channel.o2.20240102T090000_000000", "e2")}
 
 
 def test_a_change_with_no_event_or_several_events_at_its_time_has_no_cause(tmp_path):
     onto = emit(history_settings(), tmp_path / "causes.ofn", data=_store_with_causes())
 
     causes = {(s, o) for p, s, o in onto.relations if p == vocab.CAUSED_BY}
-    assert causes == {("AttrChange_o1_status_20240101T000000_000000", "e1")}
+    assert causes == {("status.o1.20240101T000000_000000", "e1")}
 
 
 def test_the_build_reports_the_changes_left_without_a_cause(tmp_path, caplog):

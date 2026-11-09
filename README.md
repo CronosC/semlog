@@ -152,7 +152,7 @@ The ontology header holds three annotations: `buildTool` with the semlog version
 | `reasoner_backend` | `HermiT` | Reasoner `materialize` runs: `HermiT`, `Pellet`, `ELK`. |
 | `streaming` | `true` | Write OWL functional syntax to disk as `<name>.ofn`. Off builds the ontology in memory and writes `<name>.owl` in RDF/XML, which rdflib reads. |
 | `output_formats` | none | Further formats to write the ontology in, each as `<name>.<format>`: `ofn` (functional syntax), `owl` (RDF/XML), `owx` (OWL/XML), `ttl` (Turtle), `omn` (Manchester syntax). They are written after `materialize`. The format the build writes itself is skipped. Needs a JVM. |
-| `save_backmap` | `false` | Also write the map from cleaned names to source names as JSON. |
+| `save_backmap` | `false` | Also write the maps from cleaned names to source names as JSON, one map per kind of name: `activity`, `object_type`, `relation`, `attribute`, `id` and `value`. A value is keyed by its individual name. |
 | `log_dir` | none | Directory for a log file per input. |
 
 `semlog build --help` documents every flag.

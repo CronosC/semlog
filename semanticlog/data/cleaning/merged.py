@@ -7,12 +7,17 @@ that clean to one string, one is given a clean name of its own.
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable
 
 import pandas as pd
 
 from semanticlog.data.cleaning.allocate import KIND_PREFIX, VALUE_PREFIX
-from semanticlog.data.cleaning.names import clean_series, cleaned, free_name
+from semanticlog.data.cleaning.names import (
+    clean_attribute_series,
+    clean_series,
+    cleaned,
+    free_name,
+)
 from semanticlog.data.cleaning.renames import RenameKind, RenameLog
 from semanticlog.data.cleaning.rewrite import (
     apply_attribute_renames,
@@ -28,7 +33,10 @@ logger = logging.getLogger(__name__)
 
 
 def merged_names(
-    names: Iterable[str] | pd.Series, prefix: str, fixed: Collection[str] = ()
+    names: Iterable[str] | pd.Series,
+    prefix: str,
+    fixed: Collection[str] = (),
+    clean: Callable[[pd.Series], pd.Series] = clean_series,
 ) -> dict[str, str]:
     """Return a replacement source name for each name that cleaning would merge into another.
 
@@ -38,6 +46,7 @@ def merged_names(
     Args:
         names: Source names that share one namespace in the ontology.
         fixed: Names that keep their name in every collision.
+        clean: How cleaning rewrites a Series of these names.
 
     Returns:
         Source name to replacement, for the names that need one.
@@ -50,14 +59,17 @@ def merged_names(
     if fixed:
         held = distinct.isin(set(fixed))
         distinct = pd.concat([distinct[held], distinct[~held]])
-    colliding = clean_series(distinct).duplicated()
+    clean_names = clean(distinct)
+    colliding = clean_names.duplicated()
     if not colliding.any():
         return {}
 
-    taken = set(clean_series(distinct))
+    taken = set(clean_names)
     renames: dict[str, str] = {}
-    for name in distinct[colliding]:
-        free = free_name(cleaned(name), taken, prefix)
+    for name, clean_name in zip(
+        distinct[colliding], clean_names[colliding], strict=True
+    ):
+        free = free_name(clean_name, taken, prefix)
         taken.add(free)
         renames[name] = free
     return renames
@@ -94,7 +106,10 @@ def resolve_merged_names(data: OCEDStore, log: RenameLog) -> None:
     for view in data.tables():
         fixed = view.key_columns if view.kind is not None else ()
         renames = merged_names(
-            [*fixed, *view.attributes], KIND_PREFIX[RenameKind.ATTRIBUTE], fixed
+            [*fixed, *view.attributes],
+            KIND_PREFIX[RenameKind.ATTRIBUTE],
+            fixed,
+            clean_attribute_series,
         )
         if renames:
             apply_attribute_renames(data, renames)

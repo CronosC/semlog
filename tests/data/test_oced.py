@@ -194,21 +194,21 @@ def test_a_negative_count_of_common_object_types_is_a_programming_error(oced):
 
 def test_an_iri_under_the_base_maps_back_to_its_source_name():
     store = OCEDStore()
-    store.backmap = {"o__1": "o #1"}
+    store.backmap = {"id": {"o__1": "o #1"}}
 
-    assert store.get_original(f"{DEFAULT_IRI}o__1") == "o #1"
-    assert store.get_original("https://x.org/#o__1", base_iri="https://x.org/#") == (
-        "o #1"
-    )
-    assert store.get_original("o_2") is None
+    assert store.get_original("id", f"{DEFAULT_IRI}o__1") == "o #1"
+    assert store.get_original(
+        "id", "https://x.org/#o__1", base_iri="https://x.org/#"
+    ) == ("o #1")
+    assert store.get_original("id", "o_2") is None
 
 
 def test_get_original_strips_a_kind_path():
     store = OCEDStore()
-    store.backmap = {"o__1": "o #1"}
+    store.backmap = {"id": {"o__1": "o #1"}}
 
-    assert store.get_original(f"{DEFAULT_IRI}object/o__1") == "o #1"
-    assert store.get_original("object/o__1") == "o #1"
+    assert store.get_original("id", f"{DEFAULT_IRI}object/o__1") == "o #1"
+    assert store.get_original("id", "object/o__1") == "o #1"
 
 
 # --------------------------------------------------------------------------

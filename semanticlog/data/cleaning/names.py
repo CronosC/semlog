@@ -34,10 +34,24 @@ def cleaned(name: object) -> str:
     return clean_string(str(name))
 
 
+def clean_attribute(name: object) -> str:
+    """Return the cleaned form of an attribute name, with each `.` replaced too.
+
+    A value individual is named `<attribute>.<value>`, so the first `.` of
+    the name ends the attribute.
+    """
+    return cleaned(name).replace(".", "_")
+
+
 def clean_series(values: pd.Series) -> pd.Series:
     """Clean every value of a Series, as `clean_string` does one string."""
     replaced = values.str.replace(_UNSAFE_CHARS, "_", regex=True)
     return replaced.str.replace(_UNSAFE_EDGES, "_", regex=True)
+
+
+def clean_attribute_series(values: pd.Series) -> pd.Series:
+    """Clean every value of a Series, as `clean_attribute` does one name."""
+    return clean_series(values).str.replace(".", "_", regex=False)
 
 
 def free_name(name: str, taken: Collection[str], prefix: str = "") -> str:

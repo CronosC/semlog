@@ -187,7 +187,7 @@ class RunConfig:
         itemset_support: Share of traces an activity set has to occur in.
         materialize: Run a reasoner after writing.
         reasoner_backend: Reasoner for `materialize`.
-        save_backmap: Write the map of cleaned names to source names.
+        save_backmap: Write the maps of cleaned names to source names, one per kind of name.
         streaming: Write functional syntax to disk as the build runs. Off
             builds in memory and writes RDF/XML.
         output_formats: Further formats to write each ontology in.

@@ -41,3 +41,20 @@ def test_a_union_domain_falls_back_to_event_under_el(tmp_path):
     onto = emit(settings(profile=OWLProfile.OWL2EL), tmp_path / "matrix.ofn")
 
     assert onto.domains["handles"] == {"Event"}
+
+
+def test_an_e2o_comment_names_its_domain_classes(tiny_store):
+    sink = RecordingSink(OWLProfile.OWL2DL, DEFAULT_IRI)
+    settings = OntoBuildSettings(derive_annotations=True)
+    emitter = RelationEmitter(
+        sink, settings, AnnotationWriter(sink, settings, {}), EmittedIndividuals()
+    )
+
+    emitter.emit(tiny_store, RelationKind.E2O)
+
+    comments = {
+        name: text
+        for _, name, kind, text in sink.of_kind("annotate")
+        if kind == "comment"
+    }
+    assert comments["concerns"] == "Relation 'concerns' from step to order."

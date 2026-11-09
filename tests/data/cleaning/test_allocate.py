@@ -28,7 +28,7 @@ def test_a_log_name_equal_to_a_schema_name_keeps_the_name(make_store, activity):
     cleaned = clean_oced_data(make_store(activity=activity))
 
     assert cleaned.types(EntityKind.EVENT) == [activity]
-    assert activity not in cleaned.backmap
+    assert activity not in cleaned.backmap.get("activity", {})
 
 
 @pytest.mark.parametrize(
@@ -109,7 +109,7 @@ def test_a_prefixed_name_the_log_holds_is_numbered_past(make_store):
         "object_order",
         "object_order_2",
     ]
-    assert cleaned.backmap["object_order_2"] == "order"
+    assert cleaned.backmap["object_type"]["object_order_2"] == "order"
 
 
 def test_a_rename_never_discards_a_type_already_in_the_store(make_store):
@@ -130,20 +130,20 @@ def test_a_rename_never_discards_a_type_already_in_the_store(make_store):
 def test_the_names_derived_from_a_renamed_type_are_claimed_under_its_new_name(
     make_store,
 ):
-    """`object_o.x` derives `df_object_o.x`, which the log holds as an attribute.
+    """`object_o_x` derives `df_object_o_x`, which the log holds as an attribute.
 
-    Its prefixed name derives `has_attribute_df_object_o.x`, which another attribute holds.
+    Its prefixed name derives `has_attribute_df_object_o_x`, which another attribute holds.
     """
-    oced = _with_object_type(make_store(obj_type="o.x"), "df_o.x")
+    oced = _with_object_type(make_store(obj_type="o_x"), "df_o_x")
     oced.add(
         EntityKind.OBJECT,
         "t",
         pd.DataFrame(
             {
                 "id": ["t1"],
-                "df_object_o.x": ["v"],
-                "has_df_object_o.x": ["v"],
-                "has_attribute_df_object_o.x": ["v"],
+                "df_object_o_x": ["v"],
+                "has_df_object_o_x": ["v"],
+                "has_attribute_df_object_o_x": ["v"],
             }
         ),
         id_col="id",
@@ -151,12 +151,12 @@ def test_the_names_derived_from_a_renamed_type_are_claimed_under_its_new_name(
 
     cleaned = clean_oced_data(oced)
 
-    assert "object_o.x" in cleaned.types(EntityKind.OBJECT)
+    assert "object_o_x" in cleaned.types(EntityKind.OBJECT)
     assert _columns(cleaned, "t") == [
         "id",
-        "attribute_df_object_o.x_2",
-        "has_df_object_o.x",
-        "has_attribute_df_object_o.x",
+        "attribute_df_object_o_x_2",
+        "has_df_object_o_x",
+        "has_attribute_df_object_o_x",
     ]
 
 
@@ -197,7 +197,7 @@ def test_a_value_of_a_renamed_attribute_is_recorded_under_the_new_column(
     """Attribute `obj` is the name of an object type, and is renamed."""
     oced = make_store(events=events("e1", obj=["by hand"]))
 
-    backmap = clean_oced_data(oced).backmap
+    backmap = clean_oced_data(oced).backmap["value"]
 
     assert backmap["attribute_obj.by_hand"] == "by hand"
     assert "obj.by_hand" not in backmap

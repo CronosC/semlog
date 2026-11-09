@@ -24,14 +24,16 @@ class ReadableStore(Protocol):
     """The read methods a build, an enrichment or a check calls on a store."""
 
     @property
-    def backmap(self) -> Mapping[str, str]:
-        """Cleaned name to original name, for everything cleaning renamed."""
+    def backmap(self) -> Mapping[str, Mapping[str, str]]:
+        """Cleaned name to original name, for everything cleaning renamed, one map per kind of name."""
 
     @property
     def ocel_mode(self) -> bool:
         """Whether this store may hold attribute change history."""
 
-    def get_original(self, iri_or_local_name: str, base_iri: str = ...) -> str | None:
+    def get_original(
+        self, kind: str, iri_or_local_name: str, base_iri: str = ...
+    ) -> str | None:
         """Look up what a name in the store was called in the source log."""
 
     def tables(self, *, changes: bool = True) -> Iterator[TableView]:

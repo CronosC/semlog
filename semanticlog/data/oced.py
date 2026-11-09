@@ -47,24 +47,29 @@ class OCEDStore:
         self._relations = Relations()
         self._used_ids: set[object] = set()
         self._ocel_mode = ocel_mode
-        self._backmap: dict[str, str] = {}
+        self._backmap: dict[str, dict[str, str]] = {}
         self._object_changes: dict[str, pd.DataFrame] = {}
 
     @property
-    def backmap(self) -> dict[str, str]:
-        """Cleaned name to original name, for everything cleaning renamed."""
+    def backmap(self) -> dict[str, dict[str, str]]:
+        """Cleaned name to original name, for everything cleaning renamed.
+
+        One map per kind of name, keyed by the kind, such as `activity`,
+        `object_type`, `id` or `value`.
+        """
         return self._backmap
 
     @backmap.setter
-    def backmap(self, mapping: dict[str, str]) -> None:
+    def backmap(self, mapping: dict[str, dict[str, str]]) -> None:
         self._backmap = mapping
 
     def get_original(
-        self, iri_or_local_name: str, base_iri: str = _DEFAULT_IRI
+        self, kind: str, iri_or_local_name: str, base_iri: str = _DEFAULT_IRI
     ) -> str | None:
         """Look up what a name in the store was called in the source log.
 
         Args:
+            kind: The kind of name, a key of `backmap`.
             iri_or_local_name: A local name, or a full IRI to strip first. The
                 path of an individual kind below the base is stripped too.
 
@@ -72,11 +77,11 @@ class OCEDStore:
             The original name, or None if the name was never changed.
         """
         local_name = iri_or_local_name.removeprefix(base_iri)
-        for kind in IndividualKind:
-            if local_name.startswith(kind.path):
-                local_name = local_name.removeprefix(kind.path)
+        for individual in IndividualKind:
+            if local_name.startswith(individual.path):
+                local_name = local_name.removeprefix(individual.path)
                 break
-        return self._backmap.get(local_name)
+        return self._backmap.get(kind, {}).get(local_name)
 
     @property
     def ocel_mode(self) -> bool:

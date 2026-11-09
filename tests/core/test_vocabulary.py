@@ -111,11 +111,17 @@ def test_change_records_of_one_object_attribute_and_instant_are_numbered_from_tw
         pd.Series(["o1", "o1", "o2"]), "price", pd.Series(["T1", "T1", "T1"])
     )
 
-    assert list(ids) == [
-        "AttrChange_o1_price_T1",
-        "AttrChange_o1_price_T1_2",
-        "AttrChange_o2_price_T1",
-    ]
+    assert list(ids) == ["price.o1.T1", "price.o1.T1_2", "price.o2.T1"]
+
+
+def test_change_records_whose_parts_join_alike_get_two_names():
+    """Object `o` with `x_y` and object `o_x` with `y` both joined to `o_x_y`."""
+    stamp = pd.Series(["20240102T000000_000000"])
+
+    first = vocab.attribute_change_ids(pd.Series(["o"]), "x_y", stamp)
+    second = vocab.attribute_change_ids(pd.Series(["o_x"]), "y", stamp)
+
+    assert first[0] != second[0]
 
 
 def test_every_schema_name_builder_is_registered_for_the_reserved_set():

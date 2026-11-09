@@ -19,6 +19,8 @@ import pandas as pd
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import IndividualKind
+from semanticlog.data.cleaning.renames import VALUE_KIND, RenameKind
+from semanticlog.data.declare import template_name
 from semanticlog.data.tables import EntityKind
 from semanticlog.onto.settings import OntoBuildSettings
 
@@ -26,6 +28,11 @@ TBOX_ANNOTATION_DOCUMENT = "tbox_annotations.json"
 DERIVED_ANNOTATION_DOCUMENT = "derived_annotations.json"
 
 _FIELD = re.compile(r"\{(\w+)\}")
+
+_TYPE_KIND = {
+    EntityKind.EVENT: RenameKind.ACTIVITY,
+    EntityKind.OBJECT: RenameKind.OBJECT_TYPE,
+}
 
 
 def _document(name: str) -> dict[str, dict[str, str]]:
@@ -212,9 +219,11 @@ def _declare_label(
         known: Activity names of the log, used to split the name.
 
     Returns:
-        The constraint written out, such as `Response (place order, ship)`.
+        The constraint written out with the template as Declare4Py spells
+        it, such as `Alternate Response (place order, pay)`.
     """
-    template, parts = split_constraint(constraint, known)
+    compact, parts = split_constraint(constraint, known)
+    template = template_name(compact)
     activities = [original(part) for part in parts]
     if not activities:
         return template
@@ -253,7 +262,8 @@ class AnnotationWriter:
     Args:
         sink: Where the annotations go.
         settings: Settings of the build.
-        backmap: Cleaned name to the name in the log.
+        backmap: Cleaned name to the name in the log, one map per kind of
+            name as `OCEDStore.backmap` holds them.
         document: Entity name to the label and comment that replace the
             derived ones.
     """
@@ -262,7 +272,7 @@ class AnnotationWriter:
         self,
         sink: AnnotationSink,
         settings: OntoBuildSettings,
-        backmap: Mapping[str, str],
+        backmap: Mapping[str, Mapping[str, str]],
         document: Mapping[str, Mapping[str, str]] | None = None,
     ) -> None:
         self.sink = sink
@@ -280,12 +290,18 @@ class AnnotationWriter:
         """Whether the build declares inverse properties."""
         return self.settings.has_inverses
 
-    def original(self, name: str) -> str:
-        """Return the name as the log wrote it.
+    def original(self, name: str, kind: RenameKind) -> str:
+        """Return a name of one kind as the log wrote it.
 
         A name cleaning did not change is returned as is.
         """
-        return self._backmap.get(name, name)
+        return self._backmap.get(kind.value, {}).get(name, name)
+
+    def _original_id(self, name: str) -> str:
+        return self.original(name, RenameKind.ID)
+
+    def _original_activity(self, name: str) -> str:
+        return self.original(name, RenameKind.ACTIVITY)
 
     def write(self, template: str, name: str, **fields: Any) -> None:
         """Annotate one class or property, and its inverse where it has one.
@@ -353,7 +369,7 @@ class AnnotationWriter:
 
     def entity_class(self, name: str, kind: EntityKind) -> None:
         """Label an activity or object type class with its name from the log."""
-        original = self.original(name)
+        original = self.original(name, _TYPE_KIND[kind])
         if kind is EntityKind.EVENT:
             self.write("entity.event", name, original=original)
         else:
@@ -373,8 +389,8 @@ class AnnotationWriter:
             "entity.individual",
             kept,
             kind.individual,
-            type=self.original(entity_type),
-            id=kept.map(self.original),
+            type=self.original(entity_type, _TYPE_KIND[kind]),
+            id=kept.map(self._original_id),
         )
 
     def order_superproperties(self, include_df: bool, include_ef: bool) -> None:
@@ -388,17 +404,25 @@ class AnnotationWriter:
         self, case_concept: str, start_cls: str, end_cls: str
     ) -> None:
         """Annotate the start and end event classes of one case concept."""
-        case = self.original(case_concept)
+        case = self.original(case_concept, RenameKind.OBJECT_TYPE)
         self.write("order.start", start_cls, case=case)
         self.write("order.end", end_cls, case=case)
 
     def df_property(self, case_concept: str, prop: str) -> None:
         """Annotate the directly-follows property of one case concept."""
-        self.write("order.df_case", prop, case=self.original(case_concept))
+        self.write(
+            "order.df_case",
+            prop,
+            case=self.original(case_concept, RenameKind.OBJECT_TYPE),
+        )
 
     def ef_property(self, case_concept: str, prop: str) -> None:
         """Annotate the eventually-follows property of one case concept."""
-        self.write("order.ef_case", prop, case=self.original(case_concept))
+        self.write(
+            "order.ef_case",
+            prop,
+            case=self.original(case_concept, RenameKind.OBJECT_TYPE),
+        )
 
     def time_individuals(self, ids: pd.Series, labels: pd.Series) -> None:
         """Label time individuals with a readable timestamp."""
@@ -464,14 +488,19 @@ class AnnotationWriter:
         self, attr: str, owners: Mapping[EntityKind, Sequence[str]]
     ) -> dict[str, str]:
         """Return the template fields that name an attribute and the types carrying it."""
-        types = [self.original(t) for kind in EntityKind for t in owners.get(kind, [])]
+        types = [
+            self.original(t, _TYPE_KIND[kind])
+            for kind in EntityKind
+            for t in owners.get(kind, [])
+        ]
         phrases = [
-            f"{_joined([self.original(t) for t in owners[kind]])} {kind.value}s"
+            f"{_joined([self.original(t, _TYPE_KIND[kind]) for t in owners[kind]])} "
+            f"{kind.value}s"
             for kind in EntityKind
             if owners.get(kind)
         ]
         return {
-            "original": self.original(attr),
+            "original": self.original(attr, RenameKind.ATTRIBUTE),
             "types": ", ".join(types),
             "owners": " and ".join(phrases),
         }
@@ -480,24 +509,42 @@ class AnnotationWriter:
         """Label value individuals with the value as the log wrote it."""
         if not self.enabled:
             return
+        values = self._backmap.get(VALUE_KIND, {})
         self.sink.annotate_individuals_bulk(
             [
-                (name, self._backmap.get(name, _format_value(value)))
+                (name, values.get(name, _format_value(value)))
                 for value, name in value_to_name.items()
             ],
             IndividualKind.VALUE,
         )
 
     def relation(
-        self, relation: str, from_types: Sequence[str], to_types: Sequence[str]
+        self,
+        relation: str,
+        from_types: Sequence[str],
+        to_types: Sequence[str],
+        source_kind: EntityKind = EntityKind.OBJECT,
     ) -> None:
-        """Annotate a relation property with the types it connects."""
+        """Annotate a relation property with the types it connects.
+
+        Args:
+            relation: The relation property.
+            from_types: The activities or object types of its domain.
+            to_types: The object types of its range.
+            source_kind: The kind of type `from_types` names.
+        """
         self.write(
             "relation",
             relation,
-            original=self.original(relation),
-            source=" or ".join(self.original(t) for t in from_types) or "event",
-            target=" or ".join(self.original(t) for t in to_types) or "object",
+            original=self.original(relation, RenameKind.RELATION),
+            source=" or ".join(
+                self.original(t, _TYPE_KIND[source_kind]) for t in from_types
+            )
+            or "event",
+            target=" or ".join(
+                self.original(t, RenameKind.OBJECT_TYPE) for t in to_types
+            )
+            or "object",
         )
 
     def declare_constraints(
@@ -523,14 +570,16 @@ class AnnotationWriter:
             self.write(
                 "declare.constraint",
                 constraint,
-                constraint=_declare_label(constraint, self.original, activities),
+                constraint=_declare_label(
+                    constraint, self._original_activity, activities
+                ),
             )
 
     def attribute_change_schema(
         self, attr: str, change_class: str, change_prop: str | None = None
     ) -> None:
         """Annotate the change class of one attribute, and its change property if given."""
-        original = self.original(attr)
+        original = self.original(attr, RenameKind.ATTRIBUTE)
         self.write("change.class", change_class, original=original)
         if change_prop is not None:
             self.write("change.property", change_prop, original=original)
@@ -548,8 +597,8 @@ class AnnotationWriter:
             "change.individual",
             change_ids,
             IndividualKind.CHANGE,
-            attribute=self.original(attr),
-            type=self.original(obj_type),
-            id=object_ids.astype(str).map(self.original),
+            attribute=self.original(attr, RenameKind.ATTRIBUTE),
+            type=self.original(obj_type, RenameKind.OBJECT_TYPE),
+            id=object_ids.astype(str).map(self._original_id),
             time=timestamp_labels(timestamps),
         )

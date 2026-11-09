@@ -122,18 +122,18 @@ EXPECTED: dict[str, Shape] = {
         transitive=frozenset({"ef_order"}),
     ),
     "el_history_literals": Shape(
-        classes=16,
+        classes=15,
         object_properties=13,
         data_properties=8,
         individuals=56,
-        axioms=467,
+        axioms=466,
         must_contain=_DF | _HISTORY | frozenset({"has_value_price"}),
         must_not_contain=_EF
         | _INVERSES
         | _DECLARE
         | _EQUAL_BINS
         | _DIST_BINS
-        | frozenset({"price", "has_price", "change_value_price"}),
+        | frozenset({"price", "has_price", "change_value_price", "weightChange"}),
     ),
     "dl_declare_multi_cc": Shape(
         classes=23,

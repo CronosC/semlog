@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -89,7 +90,9 @@ def writer(recording_sink):
     """Return a factory for a writer and the recording sink it writes to."""
 
     def make(
-        inverses: bool = False, backmap: dict[str, str] | None = None, **overrides
+        inverses: bool = False,
+        backmap: dict[str, dict[str, str]] | None = None,
+        **overrides,
     ):
         overrides.setdefault("derive_annotations", True)
         settings = OntoBuildSettings(
@@ -120,7 +123,7 @@ def test_nothing_is_written_without_derive_annotations(writer):
 
 
 def test_an_entity_class_is_labeled_with_the_name_the_log_used(writer):
-    annotations, sink = writer(backmap={"place_order": "place order"})
+    annotations, sink = writer(backmap={"activity": {"place_order": "place order"}})
     for name in ("place_order", "order"):
         sink.add_class(name, source="a test")
 
@@ -136,7 +139,9 @@ def test_an_entity_class_is_labeled_with_the_name_the_log_used(writer):
 
 
 def test_an_entity_individual_is_labeled_with_its_type_and_its_original_id(writer):
-    annotations, sink = writer(backmap={"place_order": "place order", "e_1": "e 1"})
+    annotations, sink = writer(
+        backmap={"activity": {"place_order": "place order"}, "id": {"e_1": "e 1"}}
+    )
 
     annotations.entity_individuals("place_order", ["e_1", None, "e2"], EntityKind.EVENT)
 
@@ -171,7 +176,9 @@ def test_only_the_order_super_property_a_build_emits_is_annotated(writer):
 
 
 def test_the_trace_boundary_classes_name_their_case_concept(writer):
-    annotations, sink = writer(backmap={"purchase_order": "purchase order"})
+    annotations, sink = writer(
+        backmap={"object_type": {"purchase_order": "purchase order"}}
+    )
     start, end = vocab.start_class("purchase_order"), vocab.end_class("purchase_order")
     for name in (start, end):
         sink.add_class(name, source="a test")
@@ -185,7 +192,7 @@ def test_the_trace_boundary_classes_name_their_case_concept(writer):
 
 def test_a_case_order_property_and_its_inverse_name_their_case_concept(writer):
     annotations, sink = writer(
-        inverses=True, backmap={"purchase_order": "purchase order"}
+        inverses=True, backmap={"object_type": {"purchase_order": "purchase order"}}
     )
     df, ef = vocab.df_property("purchase_order"), vocab.ef_property("purchase_order")
     for prop in (df, ef):
@@ -215,7 +222,10 @@ def test_an_inverse_is_not_annotated_when_the_build_has_none(writer):
 def test_an_attribute_annotates_its_class_its_property_and_the_inverse(writer):
     annotations, sink = writer(
         inverses=True,
-        backmap={"order_unit_price": "unit price", "purchase_order": "purchase order"},
+        backmap={
+            "attribute": {"order_unit_price": "unit price"},
+            "object_type": {"purchase_order": "purchase order"},
+        },
     )
     sink.add_class("order_unit_price", source="a test")
     sink.add_property("has_order_unit_price", create_inverse=True, source="a test")
@@ -237,7 +247,7 @@ def test_an_attribute_annotates_its_class_its_property_and_the_inverse(writer):
         ),
         ("inv_has_order_unit_price", "label"): "is unit price of",
         ("inv_has_order_unit_price", "comment"): (
-            "Inverse of has unit price. Relates a 'unit price' value to the "
+            "Inverse of has unit price. Relates each 'unit price' value to the "
             "purchase order objects carrying it."
         ),
     }
@@ -286,7 +296,7 @@ def test_a_bin_class_is_annotated_with_the_values_it_holds(
 
 
 def test_an_attribute_value_is_labeled_as_the_log_wrote_it(writer):
-    annotations, sink = writer(backmap={"by_hand": "by hand"})
+    annotations, sink = writer(backmap={"value": {"by_hand": "by hand"}})
 
     annotations.attribute_values(
         {
@@ -306,7 +316,9 @@ def test_an_attribute_value_is_labeled_as_the_log_wrote_it(writer):
 
 
 def test_a_relation_is_annotated_with_the_types_it_connects(writer):
-    annotations, sink = writer(inverses=True, backmap={"is_part_of": "is part of"})
+    annotations, sink = writer(
+        inverses=True, backmap={"relation": {"is_part_of": "is part of"}}
+    )
     sink.add_property("is_part_of", create_inverse=True, source="a test")
 
     annotations.relation("is_part_of", ["order", "item"], ["shipment"])
@@ -337,7 +349,7 @@ def test_a_relation_with_no_types_reads_as_from_an_event_to_an_object(writer):
 
 
 def test_a_mined_constraint_is_labeled_with_its_template_and_activities(writer):
-    annotations, sink = writer(backmap={"place_order": "place order"})
+    annotations, sink = writer(backmap={"activity": {"place_order": "place order"}})
     for name in ("DeclareConstraint", "Response__place_order__ship__"):
         sink.add_class(name, source="a test")
 
@@ -373,7 +385,9 @@ def test_a_constraint_label_splits_on_known_activities_first(
 
 
 def test_the_attribute_change_schema_names_the_attribute(writer):
-    annotations, sink = writer(inverses=True, backmap={"unit_price": "unit price"})
+    annotations, sink = writer(
+        inverses=True, backmap={"attribute": {"unit_price": "unit price"}}
+    )
     change_class = vocab.attribute_change_class("unit_price")
     sink.add_class(change_class, source="a test")
     sink.add_property("changes_unit_price", create_inverse=True, source="a test")
@@ -389,7 +403,7 @@ def test_the_attribute_change_schema_names_the_attribute(writer):
 
 
 def test_a_change_record_label_pairs_each_record_with_its_own_row(writer):
-    annotations, sink = writer(backmap={"unit_price": "unit price"})
+    annotations, sink = writer(backmap={"attribute": {"unit_price": "unit price"}})
 
     annotations.attribute_change_individuals(
         change_ids=pd.Series(["c1", "c2"]),
@@ -452,3 +466,34 @@ def test_an_unknown_template_or_a_missing_field_is_rejected(
 
     with pytest.raises(ValueError, match=match):
         annotations.write(template, "df_order", **fields)
+
+
+def test_an_id_equal_to_the_cleaned_form_of_an_activity_keeps_its_own_label(
+    writer,
+):
+    """The activity `pay order` cleans to `pay_order`, the event id already is `pay_order`."""
+    annotations, sink = writer(backmap={"activity": {"pay_order": "pay order"}})
+
+    annotations.entity_individuals("pay_order", ["pay_order"], EntityKind.EVENT)
+
+    assert texts(sink) == {("pay_order", "label"): "pay order (pay_order)"}
+
+
+def test_a_constraint_label_writes_the_template_as_declare4py_spells_it():
+    label = _declare_label(
+        "AlternateResponse__place_order__pay__", lambda part: part, []
+    )
+
+    assert label == "Alternate Response (place_order, pay)"
+
+
+def test_no_template_puts_the_article_a_before_a_name_from_the_log():
+    """A name such as `amount` would read "a 'amount' value"."""
+    texts_with_article = [
+        (key, part)
+        for key, entry in derived_annotations().items()
+        for part, text in entry.items()
+        if re.search(r"\ba '\{", text)
+    ]
+
+    assert texts_with_article == []

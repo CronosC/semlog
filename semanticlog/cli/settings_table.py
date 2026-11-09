@@ -587,7 +587,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         False,
         _as_bool,
         "run",
-        help="Write the map of cleaned names to source names as JSON (default: off).",
+        help="Write the maps of cleaned names to source names as JSON, one per kind of name (default: off).",
         argparse={"action": argparse.BooleanOptionalAction},
     ),
     Setting(

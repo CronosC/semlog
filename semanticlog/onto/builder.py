@@ -33,6 +33,7 @@ from semanticlog.onto.emitters.attributes import (
     attribute_binnings,
     attribute_datatypes,
 )
+from semanticlog.onto.emitters.history import changed_attributes
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.result import BuildResult
 from semanticlog.onto.settings import OntoBuildSettings
@@ -244,7 +245,7 @@ class OCEDOntoBuilder:
             owners,
             attribute_binnings(data, self.settings),
             attribute_datatypes(data, self.settings),
-            attribute_history=attribute_history,
+            changed=changed_attributes(data) if attribute_history else (),
         )
         times = TimeEmitter(*parts)
         return Emitters(

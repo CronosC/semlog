@@ -50,11 +50,11 @@
     "label": "has {original}",
     "comment": "Relates {owners} to their '{original}' value.",
     "inverse_label": "is {original} of",
-    "inverse_comment": "Inverse of has {original}. Relates a '{original}' value to the {owners} carrying it."
+    "inverse_comment": "Inverse of has {original}. Relates each '{original}' value to the {owners} carrying it."
   },
   "attribute.value": {
     "label": "{original} value",
-    "comment": "Carries the literal of a '{original}' value of {owners}."
+    "comment": "Carries the literal of each '{original}' value of {owners}."
   },
   "attribute.bin_lowest": {
     "label": "{original} ({types}): {bin}",
@@ -102,7 +102,7 @@
     "label": "changes {original} to",
     "comment": "Relates a change record to the new '{original}' value.",
     "inverse_label": "is new {original} in change",
-    "inverse_comment": "Inverse of changes {original} to. Relates a '{original}' value to the change records that set it."
+    "inverse_comment": "Inverse of changes {original} to. Relates each '{original}' value to the change records that set it."
   },
   "change.individual": {
     "label": "{attribute} change for {type} ({id}) at {time}"

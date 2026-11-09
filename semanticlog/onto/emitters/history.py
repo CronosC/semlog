@@ -30,6 +30,18 @@ from semanticlog.onto.sinks import AxiomSink
 logger = logging.getLogger(__name__)
 
 
+def changed_attributes(data: ReadableStore) -> frozenset[str]:
+    """Return the attributes that have at least one recorded change with a value."""
+    changed = set()
+    for obj_type in data.get_object_change_types():
+        changes = data.get_object_changes(obj_type)
+        for field, rows in changes.groupby("ocel:field"):
+            name = str(field)
+            if name in rows.columns and rows[name].notna().any():
+                changed.add(name)
+    return frozenset(changed)
+
+
 @dataclass
 class _CauseCounts:
     """How many change records a build emitted, and how many got no cause."""

@@ -3,6 +3,7 @@
 import pandas as pd
 import pytest
 
+from semanticlog.core import vocabulary as vocab
 from semanticlog.core.errors import InputError
 from semanticlog.core.vocabulary import is_safe_local_name
 from semanticlog.data.cleaning import clean_oced_data, object_type_renames
@@ -51,12 +52,12 @@ def test_every_name_in_the_store_is_made_safe_and_mapped_to_its_source():
     cleaned = clean_oced_data(oced)
 
     assert cleaned.backmap == {
-        "act_type_": "act type!",
-        "obj_type": "obj type",
-        "rel_name": "rel name",
-        "total_cost": "total cost",
-        "e_1": "e 1",
-        "total_cost.2023-03-15_12_45": "2023-03-15 12:45",
+        "activity": {"act_type_": "act type!"},
+        "object_type": {"obj_type": "obj type"},
+        "relation": {"rel_name": "rel name"},
+        "attribute": {"total_cost": "total cost"},
+        "id": {"e_1": "e 1"},
+        "value": {"total_cost.2023-03-15_12_45": "2023-03-15 12:45"},
     }
     assert cleaned.get_relation("rel_name").data.values.tolist() == [["e_1", "o1"]]
 
@@ -133,7 +134,7 @@ def test_a_value_equal_to_an_object_type_name_is_kept(make_store, events):
     cleaned = clean_oced_data(make_store(events=events("e1", channel=["obj"])))
 
     assert list(cleaned.table(EntityKind.EVENT, "act").data["channel"]) == ["obj"]
-    assert "channel.obj" not in cleaned.backmap
+    assert "channel.obj" not in cleaned.backmap.get("value", {})
 
 
 def test_an_attribute_of_two_types_keeps_one_name(make_store, events):
@@ -174,7 +175,7 @@ def test_an_empty_text_value_becomes_an_underscore_mapped_to_the_empty_string(
     cleaned = clean_oced_data(oced)
 
     assert list(cleaned.table(EntityKind.OBJECT, "obj").data["flag"]) == ["_", "X"]
-    assert cleaned.backmap["flag._"] == ""
+    assert cleaned.backmap["value"]["flag._"] == ""
 
 
 def test_only_a_moved_object_type_is_listed_with_its_new_name(make_store):
@@ -185,3 +186,41 @@ def test_only_a_moved_object_type_is_listed_with_its_new_name(make_store):
     cleaned = clean_oced_data(oced)
 
     assert object_type_renames(cleaned) == {"order": "object_order"}
+
+
+def test_a_dot_in_an_attribute_name_becomes_an_underscore_so_values_stay_apart(
+    make_store, events
+):
+    """`a.b = c` and `a = b.c` named one value individual `a.b.c`."""
+    cleaned = clean_oced_data(
+        make_store(events=events("e1", **{"a.b": ["c"], "a": ["b.c"]}))
+    )
+
+    data = cleaned.table(EntityKind.EVENT, "act").data
+    assert list(data.columns) == ["eid", "ts", "a_b", "a"]
+    assert vocab.attribute_value("a_b", data["a_b"][0]) != vocab.attribute_value(
+        "a", data["a"][0]
+    )
+    assert cleaned.backmap["attribute"]["a_b"] == "a.b"
+
+
+def test_a_dotted_attribute_is_renamed_in_the_change_rows(make_store):
+    oced = make_store(
+        objects=pd.DataFrame({"oid": ["o1"], "unit.price": [1]}), ocel_mode=True
+    )
+    oced.add_object_changes(
+        "obj", _changes("obj", field="unit.price", **{"unit.price": [2]})
+    )
+
+    changes = clean_oced_data(oced).get_object_changes("obj")
+
+    assert list(changes["ocel:field"]) == ["unit_price"]
+    assert "unit_price" in changes.columns
+
+
+def test_the_source_names_are_kept_per_kind(make_store, events):
+    oced = make_store(activity="pay order", events=events("pay_order"))
+
+    cleaned = clean_oced_data(oced)
+
+    assert cleaned.backmap == {"activity": {"pay_order": "pay order"}}

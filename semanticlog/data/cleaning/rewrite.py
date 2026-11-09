@@ -10,7 +10,7 @@ from collections.abc import Iterable, Mapping
 
 import pandas as pd
 
-from semanticlog.data.cleaning.names import cleaned, is_cleaned_column
+from semanticlog.data.cleaning.names import clean_attribute, is_cleaned_column
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import TableView
 
@@ -50,7 +50,9 @@ def value_groups(data: OCEDStore) -> dict[str, list[str]]:
     groups: dict[str, list[str]] = {}
     for view in data.tables():
         for column in view.attributes:
-            groups.setdefault(cleaned(column), []).extend(text_values(view, column))
+            groups.setdefault(clean_attribute(column), []).extend(
+                text_values(view, column)
+            )
     return groups
 
 
@@ -108,7 +110,7 @@ def apply_value_renames(
 ) -> None:
     """Rewrite values in every column that carries the attribute, change tables included."""
     for view in data.tables():
-        columns = [c for c in view.attributes if cleaned(c) == attribute]
+        columns = [c for c in view.attributes if clean_attribute(c) == attribute]
         if columns:
             view.replace(remap(view.frame, columns, renames))
 

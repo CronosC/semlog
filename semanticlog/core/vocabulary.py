@@ -94,8 +94,6 @@ CAUSED_BY = Term("caused_by")
 DF = Term("df")
 EF = Term("ef")
 
-ATTRIBUTE_CHANGE_RECORD = "AttrChange"
-
 SCHEMA_CLASSES: frozenset[str] = frozenset(
     {
         OBJECT,
@@ -252,8 +250,8 @@ def attribute_value(attribute: str, value: Any) -> str:
 
     Values are qualified by their attribute, so the same literal under two
     attributes stays two individuals. The name is the attribute and the value
-    joined by a dot, so two attributes whose names and values differ only in
-    where the dot falls name one individual.
+    joined by a dot. Cleaning removes every dot from an attribute name, so
+    the first dot ends the attribute and two values never share a name.
 
     A float with no fraction names the same individual as the integer.
 
@@ -282,21 +280,15 @@ def attribute_change_ids(
 ) -> pd.Series:
     """Return individual names for attribute change records.
 
-    A name is the object id, the attribute and the timestamp id. Repeats of
-    one name are numbered from 2.
+    A name is the attribute, the object id and the timestamp id, joined by
+    dots. Neither a cleaned attribute name nor a timestamp id holds a dot,
+    so the first and the last dot delimit the parts. Repeats of one name
+    are numbered from 2.
 
     Returns:
         One name per row, aligned with the inputs.
     """
-    base = (
-        ATTRIBUTE_CHANGE_RECORD
-        + "_"
-        + object_ids.astype(str)
-        + "_"
-        + attribute
-        + "_"
-        + timestamp_ids.astype(str)
-    )
+    base = attribute + "." + object_ids.astype(str) + "." + timestamp_ids.astype(str)
     repeat = base.groupby(base).cumcount()
     return base.where(repeat == 0, base + "_" + (repeat + 1).astype(str))
 

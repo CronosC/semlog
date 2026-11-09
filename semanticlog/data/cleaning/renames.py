@@ -1,7 +1,8 @@
 """The record of the source name behind each cleaned name.
 
 `RenameLog` holds it, and `clean_oced_data` sets it on the store as the
-backmap. The ontology is annotated with the source names.
+backmap, one map per kind of name. The ontology is annotated with the source
+names.
 """
 
 from __future__ import annotations
@@ -10,11 +11,14 @@ from enum import Enum
 
 from semanticlog.core import vocabulary as vocab
 
+VALUE_KIND = "value"
+
 
 class RenameKind(str, Enum):
     """What sort of name a rename applies to.
 
-    Attribute values are no kind. `RenameLog` keys them by column.
+    Attribute values are no kind. `RenameLog` keys them by column, and the
+    backmap holds them under `VALUE_KIND`.
     """
 
     ACTIVITY = "activity"
@@ -35,7 +39,7 @@ WORDS: dict[str, tuple[str, str]] = {
     RenameKind.RELATION.value: ("relation", "relations"),
     RenameKind.ATTRIBUTE.value: ("attribute", "attributes"),
     RenameKind.ID.value: ("id", "ids"),
-    "value": ("value", "values"),
+    VALUE_KIND: ("value", "values"),
 }
 
 
@@ -86,13 +90,15 @@ class RenameLog:
             self._original[kind][new] = root
         self._current[kind][new] = root
 
-    def flat(self) -> dict[str, str]:
-        """Return every rename in one map, as current name to source name."""
-        merged: dict[str, str] = {}
-        for kind in RenameKind:
-            merged.update(self._original[kind])
-        merged.update(self.value_renames())
-        return merged
+    def backmap(self) -> dict[str, dict[str, str]]:
+        """Return the renames as current name to source name, keyed by kind value and `value`.
+
+        A value is keyed by its individual name. A kind that renamed nothing
+        is left out.
+        """
+        maps = {kind.value: dict(self._original[kind]) for kind in RenameKind}
+        maps[VALUE_KIND] = self.value_renames()
+        return {kind: names for kind, names in maps.items() if names}
 
     def by_kind(self) -> dict[str, list[str]]:
         """Return the renames as `source -> current`, keyed by kind value and `value`.
@@ -110,5 +116,5 @@ class RenameLog:
             f"{source} -> {name}" for name, source in self.value_renames().items()
         ]
         if values:
-            grouped["value"] = values
+            grouped[VALUE_KIND] = values
         return grouped

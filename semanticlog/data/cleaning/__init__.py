@@ -18,6 +18,7 @@ from semanticlog.core.summary import report_by_kind
 from semanticlog.data.cleaning.allocate import allocate_schema_names
 from semanticlog.data.cleaning.merged import resolve_merged_names
 from semanticlog.data.cleaning.names import (
+    clean_attribute,
     clean_dataframe,
     clean_series,
     clean_string,
@@ -57,7 +58,7 @@ def clean_oced_data(
 ) -> OCEDStore:
     """Make every name in a store safe to emit, and record what changed.
 
-    Sets `data.backmap` to the map of new name to source name.
+    Sets `data.backmap` to the map of new name to source name of each kind.
 
     Args:
         data: Store to clean, modified in place.
@@ -78,7 +79,7 @@ def clean_oced_data(
 
     _record_id_renames(data, log)
     _record_value_renames(data, log)
-    _record_attribute_renames(data, log)
+    _clean_attribute_names(data, log)
 
     data.replace_tables(
         entities={kind: _clean_entities(data, kind, log) for kind in EntityKind},
@@ -95,7 +96,7 @@ def clean_oced_data(
         )
     fix_duplicate_names(data, log, bin_labels)
     verify_unique_names(data)
-    data.backmap = log.flat()
+    data.backmap = log.backmap()
     _report_renames(log)
     return data
 
@@ -174,23 +175,33 @@ def _record_value_renames(data: OCEDStore, log: RenameLog) -> None:
     """Record the attribute values that cleaning is about to rewrite."""
     for view in data.tables():
         for column in view.attributes:
-            cleaned_column = cleaned(column)
+            cleaned_column = clean_attribute(column)
             for value in text_values(view, column):
                 cleaned_value = clean_string(value)
                 if cleaned_value != value:
                     log.record_value(cleaned_column, cleaned_value, value)
 
 
-def _record_attribute_renames(data: OCEDStore, log: RenameLog) -> None:
-    """Record the attribute columns that cleaning is about to rename.
+def _clean_attribute_names(data: OCEDStore, log: RenameLog) -> None:
+    """Rename every attribute column to its clean name, and record the source names.
 
-    An attribute spelled two ways gets no source name.
+    The `ocel:field` of each change row is renamed too. An attribute spelled
+    two ways gets no source name.
     """
     spellings: dict[str, dict[str, list[str]]] = {}
     for view in data.tables(changes=False):
         for column in view.attributes:
-            by_source = spellings.setdefault(cleaned(column), {})
+            by_source = spellings.setdefault(clean_attribute(column), {})
             by_source.setdefault(column, []).append(view.origin)
+    for view in data.tables():
+        frame = view.frame.rename(
+            columns={column: clean_attribute(column) for column in view.attributes}
+        )
+        if "ocel:field" in frame.columns:
+            frame["ocel:field"] = frame["ocel:field"].map(
+                lambda v: clean_attribute(v) if isinstance(v, str) else v
+            )
+        view.replace(frame)
     for name, by_source in spellings.items():
         if len(by_source) > 1:
             continue
@@ -206,10 +217,8 @@ def _report_renames(log: RenameLog) -> None:
 
 def object_type_renames(data: ReadableStore) -> dict[str, str]:
     """Return source name to current name for every renamed object type."""
-    current = set(data.types(EntityKind.OBJECT))
-    return {
-        original: name for name, original in data.backmap.items() if name in current
-    }
+    renamed = data.backmap.get(RenameKind.OBJECT_TYPE.value, {})
+    return {original: name for name, original in renamed.items()}
 
 
 def _clean_changes(changes: pd.DataFrame) -> pd.DataFrame:

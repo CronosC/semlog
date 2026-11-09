@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from semanticlog.core.enums import OCELExtension
+from semanticlog.data.cleaning.renames import RenameKind
 from semanticlog.data.loading import load_and_clean
 from semanticlog.data.stats import rows_by_kind
 from semanticlog.data.tables import EntityKind
@@ -106,11 +107,14 @@ def inspect_input(
         else None
     )
 
-    schema_names = [a for a, _ in activities] + [t for t, _ in object_types]
+    schema_names = [(a, RenameKind.ACTIVITY) for a, _ in activities] + [
+        (t, RenameKind.OBJECT_TYPE) for t, _ in object_types
+    ]
     renamed = {
         name: original
-        for name in schema_names
-        if (original := data.get_original(name)) is not None and original != name
+        for name, kind in schema_names
+        if (original := data.get_original(kind.value, name)) is not None
+        and original != name
     }
 
     return InspectReport(

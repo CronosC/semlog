@@ -9,7 +9,7 @@ def test_successive_renames_map_the_last_name_to_the_source_name():
     log.record(RenameKind.ACTIVITY, "Has_Price", "Has_Price_")
     log.record(RenameKind.OBJECT_TYPE, "item", "item")
 
-    assert log.flat() == {"Has_Price_": "Has Price"}
+    assert log.backmap() == {"activity": {"Has_Price_": "Has Price"}}
 
 
 def test_renames_are_listed_by_kind_with_one_name_kept_apart_per_kind():
@@ -32,7 +32,7 @@ def test_a_value_is_named_under_its_column_and_follows_the_column_when_renamed()
 
     log.rename_value_column("event", "attribute_event")
 
-    assert log.flat() == {"attribute_event.by_hand": "by hand"}
+    assert log.backmap() == {"value": {"attribute_event.by_hand": "by hand"}}
 
 
 def test_a_value_rewritten_again_keeps_its_source_form():
@@ -42,4 +42,6 @@ def test_a_value_rewritten_again_keeps_its_source_form():
     log.rename_value("status", "d_f", "value_d_f")
     log.rename_value("status", "df", "value_df")
 
-    assert log.flat() == {"status.value_d_f": "d f", "status.value_df": "df"}
+    assert log.backmap() == {
+        "value": {"status.value_d_f": "d f", "status.value_df": "df"}
+    }

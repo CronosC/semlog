@@ -31,8 +31,8 @@ def test_two_activities_cleaning_alike_are_kept_apart(make_store, events):
     cleaned = clean_oced_data(oced)
 
     assert cleaned.types(EntityKind.EVENT) == ["Place_Order", "event_Place_Order"]
-    assert cleaned.backmap["Place_Order"] == "Place Order"
-    assert cleaned.backmap["event_Place_Order"] == "Place_Order"
+    assert cleaned.backmap["activity"]["Place_Order"] == "Place Order"
+    assert cleaned.backmap["activity"]["event_Place_Order"] == "Place_Order"
 
 
 def test_two_object_types_cleaning_alike_are_kept_apart(make_store):
@@ -72,7 +72,7 @@ def test_two_relations_cleaning_alike_are_kept_apart_across_both_families(
     cleaned = clean_oced_data(oced)
 
     assert cleaned.get_relation_types() == ["contains_x", "relation_contains_x"]
-    assert cleaned.backmap["relation_contains_x"] == "contains_x"
+    assert cleaned.backmap["relation"]["relation_contains_x"] == "contains_x"
 
 
 def test_an_attribute_cleaning_to_the_id_column_name_moves_and_the_id_keeps_it():
@@ -94,7 +94,7 @@ def test_an_attribute_cleaning_to_the_id_column_name_moves_and_the_id_keeps_it()
         "a_b",
         "attribute_a_b",
     ]
-    assert cleaned.backmap["attribute_a_b"] == "a_b"
+    assert cleaned.backmap["attribute"]["attribute_a_b"] == "a_b"
 
 
 def test_two_ids_cleaning_alike_are_kept_apart_across_the_store(make_store, events):
@@ -131,8 +131,8 @@ def test_values_of_one_attribute_cleaning_alike_are_kept_apart_across_tables():
 
     assert list(cleaned.table(EntityKind.OBJECT, "order").data["status"]) == ["a_b"]
     assert list(cleaned.get_object_changes("order")["status"]) == ["value_a_b"]
-    assert cleaned.backmap["status.a_b"] == "a b"
-    assert cleaned.backmap["status.value_a_b"] == "a_b"
+    assert cleaned.backmap["value"]["status.a_b"] == "a b"
+    assert cleaned.backmap["value"]["status.value_a_b"] == "a_b"
 
 
 def test_one_value_under_two_attributes_is_not_a_collision(make_store, events):
@@ -143,7 +143,7 @@ def test_one_value_under_two_attributes_is_not_a_collision(make_store, events):
 
     cleaned = clean_oced_data(oced)
 
-    assert cleaned.backmap == {"clerk.a_b": "a b", "channel.a_b": "a b"}
+    assert cleaned.backmap == {"value": {"clerk.a_b": "a b", "channel.a_b": "a b"}}
 
 
 def test_values_of_one_attribute_cleaning_alike_on_two_types_are_kept_apart(
@@ -158,4 +158,17 @@ def test_values_of_one_attribute_cleaning_alike_on_two_types_are_kept_apart(
 
     assert list(cleaned.table(EntityKind.EVENT, "act").data["status"]) == ["a_b"]
     assert list(cleaned.table(EntityKind.OBJECT, "obj").data["status"]) == ["value_a_b"]
-    assert cleaned.backmap == {"status.a_b": "a b", "status.value_a_b": "a_b"}
+    assert cleaned.backmap == {
+        "value": {"status.a_b": "a b", "status.value_a_b": "a_b"}
+    }
+
+
+def test_a_dotted_attribute_and_its_underscore_form_are_kept_apart(make_store, events):
+    cleaned = clean_oced_data(
+        make_store(events=events("e1", **{"a.b": [1], "a_b": [2]}))
+    )
+
+    data = cleaned.table(EntityKind.EVENT, "act").data
+    assert list(data.columns) == ["eid", "ts", "a_b", "attribute_a_b"]
+    assert cleaned.backmap["attribute"]["a_b"] == "a.b"
+    assert cleaned.backmap["attribute"]["attribute_a_b"] == "a_b"

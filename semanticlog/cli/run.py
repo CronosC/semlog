@@ -37,7 +37,7 @@ _MB = 1024 * 1024
 
 
 def _save_backmap(data: ReadableStore, path: Path) -> None:
-    """Write the map of cleaned names to source names as JSON."""
+    """Write the maps of cleaned names to source names as JSON, one per kind of name."""
     path.write_text(
         json.dumps(data.backmap, ensure_ascii=False, indent=2), encoding="utf-8"
     )

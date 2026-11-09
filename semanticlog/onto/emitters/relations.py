@@ -42,20 +42,21 @@ class RelationEmitter(Emitter):
             )
         for relation in data.get_relation_types(kind):
             table = data.get_relation(relation)
-            from_types = table.from_type or []
             if kind is RelationKind.O2O:
                 parent = vocab.OBJECT
-                domain = from_types or [parent]
+                source_kind = EntityKind.OBJECT
+                source_types = table.from_type or []
                 kinds = (IndividualKind.OBJECT, IndividualKind.OBJECT)
             else:
                 parent = vocab.EVENT
-                kinds = (IndividualKind.EVENT, IndividualKind.OBJECT)
+                source_kind = EntityKind.EVENT
                 sources = table.data[table.from_id].dropna().unique()
-                domain = data.types_holding(EntityKind.EVENT, sources) or [parent]
+                source_types = data.types_holding(EntityKind.EVENT, sources)
+                kinds = (IndividualKind.EVENT, IndividualKind.OBJECT)
             self.sink.add_property(
                 relation,
                 superprop=superprop,
-                domain_class=domain,
+                domain_class=source_types or [parent],
                 range_class=list(table.to_type),
                 create_inverse=self.settings.has_inverses,
                 axiomatic_inverse=self.settings.axiomatic_inverses,
@@ -63,7 +64,9 @@ class RelationEmitter(Emitter):
                 range_fallback=vocab.OBJECT,
                 source=f"relation {relation!r}",
             )
-            self.annotations.relation(relation, from_types, table.to_type)
+            self.annotations.relation(
+                relation, source_types, table.to_type, source_kind
+            )
             self.assert_relations(
                 relation, table.data, table.from_id, table.to_id, kinds
             )

@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import math
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 
 import pandas as pd
 
@@ -200,9 +200,9 @@ class AttributeEmitter(Emitter):
         binnings: The cut of each attribute the build bins.
         datatypes: The datatype of each attribute's literals. An attribute
             without one gets a value property with no range.
-        attribute_history: Whether the build emits the attribute change
-            history. A change record then carries a literal under `literals`,
-            so the change class joins the domain of the value property.
+        changed: The attributes the build emits change records of. A change
+            record carries a literal under `literals`, so the change class of
+            each joins the domain of its value property.
     """
 
     def __init__(
@@ -214,13 +214,13 @@ class AttributeEmitter(Emitter):
         owners: Mapping[str, Mapping[EntityKind, list[str]]],
         binnings: Mapping[str, Binning],
         datatypes: Mapping[str, str] | None = None,
-        attribute_history: bool = False,
+        changed: Collection[str] = (),
     ) -> None:
         super().__init__(sink, settings, annotations, emitted)
         self._owners = owners
         self._binnings = binnings
         self._datatypes = datatypes or {}
-        self._attribute_history = attribute_history
+        self._changed = frozenset(changed)
         self._warned_unbinnable: set[str] = set()
         self._annotated: set[str] = set()
         self._classes: dict[str, None] = {}
@@ -252,8 +252,7 @@ class AttributeEmitter(Emitter):
             domain.append(attr)
         if self.settings.emits_entity_literals:
             domain.extend(self._owner_types(attr))
-            carried_by_objects = EntityKind.OBJECT in self._owners.get(attr, {})
-            if self._attribute_history and carried_by_objects:
+            if attr in self._changed:
                 domain.append(vocab.attribute_change_class(attr))
         return domain
 
@@ -261,9 +260,9 @@ class AttributeEmitter(Emitter):
         """Declare the data property that carries the literal of a value of `attr`.
 
         Its domain is the attribute class under `individuals`, the owner
-        types under `literals`, and both under both. The change class of an
-        attribute an object type carries joins the domain when the build
-        emits the history, and is declared here so the domain can name it.
+        types under `literals`, and both under both. Under `literals`, the
+        change class of an attribute with change records joins the domain,
+        and is declared here so the domain can name it.
 
         Returns:
             The property name.
