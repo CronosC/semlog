@@ -126,57 +126,55 @@ def _disjoint_attribute_classes(emitters: Emitters) -> None:
 
 BUILD_STEPS: tuple[BuildStep, ...] = (
     BuildStep(
-        message="Instantiating the upper schema..",
+        message="Instantiating the upper schema",
         run=_upper_schema,
     ),
     BuildStep(
-        message="Instantiating event data ({count} activities)..",
-        absent="No event data in the log..",
+        message="Instantiating event data ({count} activities)",
+        absent="No event data in the log.",
         count=lambda c: len(c.data.types(EntityKind.EVENT)),
         run=lambda e, c: e.entities.emit(c.data, EntityKind.EVENT),
     ),
     BuildStep(
-        message="Instantiating event order ({detail})..",
-        absent="No event order to instantiate..",
+        message="Instantiating event order ({detail})",
+        absent="No event order to instantiate.",
         count=lambda c: len(c.settings.order_representations),
         detail=lambda c: ", ".join(r.value for r in c.settings.order_representations),
         run=lambda e, c: e.order.emit(c.data, c.inputs),
     ),
     BuildStep(
-        message="Instantiating time data..",
-        absent="No time data in the log..",
+        message="Instantiating time data",
+        absent="No time data in the log.",
         count=lambda c: len(c.data.types(EntityKind.EVENT)),
         run=lambda e, c: e.times.emit(c.data),
     ),
     BuildStep(
-        message="Instantiating object data ({count} object types)..",
-        absent="No object data in the log..",
+        message="Instantiating object data ({count} object types)",
+        absent="No object data in the log.",
         count=lambda c: len(c.data.types(EntityKind.OBJECT)),
         run=lambda e, c: e.entities.emit(c.data, EntityKind.OBJECT),
     ),
     BuildStep(
-        message="Instantiating event to object relation data "
-        "({count} relation types)..",
-        absent="No event to object relations in the data..",
+        message="Instantiating event to object relation data ({count} relation types)",
+        absent="No event to object relations in the data.",
         count=lambda c: len(c.data.get_relation_types(RelationKind.E2O)),
         run=lambda e, c: e.relations.emit(c.data, RelationKind.E2O),
     ),
     BuildStep(
-        message="Instantiating object to object relation data "
-        "({count} relation types)..",
-        absent="No object to object relations in the data..",
+        message="Instantiating object to object relation data ({count} relation types)",
+        absent="No object to object relations in the data.",
         count=lambda c: len(c.data.get_relation_types(RelationKind.O2O)),
         run=lambda e, c: e.relations.emit(c.data, RelationKind.O2O),
     ),
     BuildStep(
-        message="Instantiating object attribute change history..",
-        absent="No object attribute changes in the data..",
+        message="Instantiating object attribute change history",
+        absent="No object attribute changes in the data.",
         count=lambda c: len(c.data.get_object_change_types()),
         when=lambda c: c.attribute_history,
         run=lambda e, c: e.history.emit(c.data),
     ),
     BuildStep(
-        message="Declaring disjoint attribute classes..",
+        message="Declaring disjoint attribute classes",
         run=lambda e, c: _disjoint_attribute_classes(e),
     ),
 )

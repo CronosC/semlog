@@ -48,7 +48,7 @@ Without `--case-concepts`, the three most common object types are chosen. Withou
 
 ### Config files
 
-Every setting is a TOML key and a flag. `input` is positional on the command line. `reason` spells the backend flag `--backend`. A flag wins over the file.
+Every setting is a TOML key and a flag. `input` is positional on the command line. A flag wins over the file.
 
 Keep your own configs in `runs/`, which git ignores:
 
@@ -83,10 +83,10 @@ uv run semlog build --config runs/el-explicit.toml
 
 ### Mining DECLARE constraints
 
-`mine-declare` needs Lydia, see [DECLARE support](#declare-support). It writes to `--output`, else to the config's `declare_file`, else to `<input stem>.declare.json` in the current directory. The file holds, per case concept, the traces checked and the traces that satisfy each constraint, with the templates and thresholds it was mined with. Pass it to a build with `--declare-file`:
+`mine-declare` needs Lydia, see [DECLARE support](#declare-support). It writes to `--declare-file`, else to the config's `declare_file`, else to `<input stem>.declare.json` in the current directory. The file holds, per case concept, the traces checked and the traces that satisfy each constraint, with the templates and thresholds it was mined with. Pass it to a build with `--declare-file`:
 
 ```bash
-uv run semlog mine-declare tests/fixtures/pipeline.jsonocel --case-concepts order --output runs/pipeline.declare.json
+uv run semlog mine-declare tests/fixtures/pipeline.jsonocel --case-concepts order --declare-file runs/pipeline.declare.json
 uv run semlog build tests/fixtures/pipeline.jsonocel --case-concepts order --order-representations df declare --declare-file runs/pipeline.declare.json
 ```
 

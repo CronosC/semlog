@@ -166,7 +166,7 @@ def test_a_blank_id_is_rejected_before_cleaning_rewrites_it(make_store):
 
     with pytest.raises(
         InputError,
-        match=r"no id:\n  object type 'obj': 1 object\(s\) have no 'oid'\n\nGive every event and object an id",
+        match=r"no id: object type 'obj': 1 object\(s\) have no 'oid'\. Give every event and object an id",
     ):
         clean_oced_data(oced)
 
@@ -245,3 +245,26 @@ def test_a_name_claimed_twice_after_cleaning_is_a_programming_error():
         verify_unique_names(oced)
 
     assert excinfo.type is ValueError
+
+
+def test_names_claimed_twice_are_listed_on_one_line_up_to_five():
+    oced = OCEDStore()
+    for name in ("a", "b", "c", "d", "e", "f"):
+        oced.add(
+            EntityKind.OBJECT, name, pd.DataFrame({"oid": [f"o_{name}"]}), id_col="oid"
+        )
+        oced.add(
+            EntityKind.EVENT,
+            name,
+            pd.DataFrame(
+                {"eid": [f"e_{name}"], "t": pd.to_datetime(["2024-01-01"], utc=True)}
+            ),
+            id_col="eid",
+            time_col="t",
+        )
+
+    with pytest.raises(ValueError, match="and 1 more") as excinfo:
+        verify_unique_names(oced)
+
+    assert "\n" not in str(excinfo.value)
+    assert "'f' is claimed" not in str(excinfo.value)

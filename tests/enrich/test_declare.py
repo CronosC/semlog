@@ -204,6 +204,28 @@ def test_discovery_checks_the_model_the_miner_found_with_its_thresholds(enricher
     assert result.mining == MiningSettings("discovery", None, 0.7, 0.3)
 
 
+class PrintingMiner(FakeMiner):
+    """Fake `DeclareMiner` that prints its progress, as Declare4Py does."""
+
+    def run(self) -> FakeModel:
+        print("Computing discovery ...")
+        return super().run()
+
+
+def test_what_declare4py_prints_is_logged_at_info_and_kept_off_stdout(
+    enricher, monkeypatch, capsys, caplog
+):
+    monkeypatch.setattr(declare_module, "DeclareMiner", PrintingMiner)
+
+    with caplog.at_level(logging.INFO, logger="semanticlog"):
+        enricher.get_constraints_via_discovery(["order"])
+
+    assert capsys.readouterr().out == ""
+    assert [r.getMessage() for r in caplog.records if r.levelno == logging.INFO] == [
+        "Computing discovery"
+    ]
+
+
 def test_discovery_keeps_only_the_templates_it_was_restricted_to(enricher):
     """The miner proposes whatever the log supports."""
     result = enricher.get_constraints_via_discovery(["order"], constraint_set=["Init"])

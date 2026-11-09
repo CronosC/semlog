@@ -249,7 +249,7 @@ def test_activities_mixing_zoned_and_unzoned_timestamps_are_rejected_by_name(unz
 
     with pytest.raises(
         InputError,
-        match=r"mix zoned and unzoned timestamps:\n  with a zone: aware\n  without one: naive",
+        match=r"mix zoned and unzoned timestamps\. With a zone: aware\. Without one: naive\.",
     ):
         get_log(store, "order")
 

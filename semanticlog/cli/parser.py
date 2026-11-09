@@ -11,7 +11,6 @@ import argparse
 import logging
 import textwrap
 from collections.abc import Iterable
-from typing import Any
 
 from semanticlog.cli.settings_table import (
     BUILD_DEFAULTS,
@@ -45,33 +44,32 @@ _EPILOG = textwrap.dedent("""\
     examples:
       semlog inspect log.jsonocel
       semlog build log.jsonocel --case-concepts Candidate Recruiter
-      semlog build --config runs/hiring.toml
-      semlog build --config runs/hiring.toml --dry-run > runs/resolved.toml
+      semlog build --config datasets/runs/hiring.toml
+      semlog build --config datasets/runs/hiring.toml --dry-run > resolved.toml
       semlog mine-declare log.jsonocel --constraints Response Precedence
       semlog reason hiring.ofn --check
 
-    a build writes one file, <name>.ofn in functional syntax, or <name>.owl in
-    RDF/XML under --no-streaming. The semlog version, the resolved settings and
-    the case concepts are annotated onto the ontology.
+    a build writes one ontology per input into --output: <name>.ofn in
+    functional syntax, or <name>.owl in RDF/XML under --no-streaming. Each
+    format in output_formats adds <name>.<format>, save_backmap adds
+    <name>.backmap.json, and --log-dir receives one log file per input. The
+    semlog version, the resolved settings and the case concepts are annotated
+    onto the ontology.
     """)
 
 
 def _add_setting_flag(
-    parser: argparse.ArgumentParser,
-    key: str,
-    *,
-    flag: str | None = None,
-    default: Any = None,
+    parser: argparse.ArgumentParser, key: str, *, help: str | None = None
 ) -> None:
-    """Add the flag of one setting, under its own spelling unless `flag` is given."""
+    """Add the flag of one setting, with its own help unless `help` is given."""
     declared = setting(key)
     if declared.argparse is None:
         return
     parser.add_argument(
-        flag or declared.flag,
+        declared.flag,
         dest=key,
-        default=default,
-        help=declared.help,
+        default=None,
+        help=help or declared.help,
         **declared.argparse,
     )
 
@@ -143,7 +141,6 @@ def _add_build_parser(
             "config, from flags, or from both. A flag overrides the config. "
             "Relative paths in a config resolve against the current directory."
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     build.add_argument(
         "--dry-run",
@@ -166,7 +163,7 @@ def _add_inspect_parser(
             "Print the activities, object types, relations and time range of an "
             "event log. Names are shown as the build emits them. An activity "
             "or object type name that cleaning changed is listed with its "
-            "source spelling. --case-concepts takes the source spelling."
+            "source spelling."
         ),
     )
     _add_log_input_flags(inspect, exclude=_INSPECT_EXCLUDED)
@@ -186,10 +183,9 @@ def _add_mine_declare_parser(
             "extra and the Lydia solver."
         ),
     )
-    mine.add_argument(
-        "--output",
-        dest="declare_output",
-        metavar="FILE",
+    _add_setting_flag(
+        mine,
+        "declare_file",
         help=(
             "Where to write the constraints (default: the declare_file of "
             "--config, or <input stem>.declare.json)."
@@ -218,12 +214,9 @@ def _add_reason_parser(
     reason_parser.add_argument(
         "onto", metavar="PATH", help="Ontology file to reason over."
     )
-    _add_setting_flag(
-        reason_parser,
-        "reasoner_backend",
-        flag="--backend",
-        default=BUILD_DEFAULTS["reasoner_backend"],
-    )
+    _add_setting_flag(reason_parser, "reasoner_backend")
+    # `reason` reads no config, so its flag holds the default itself.
+    reason_parser.set_defaults(reasoner_backend=BUILD_DEFAULTS["reasoner_backend"])
     reason_parser.add_argument(
         "--output",
         metavar="PATH",

@@ -20,7 +20,7 @@ from semanticlog.cli.logs import FileLog
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.checks import raise_reports
 from semanticlog.core.enums import OCELExtension, OutputFormat
-from semanticlog.core.errors import SemlogError
+from semanticlog.core.errors import ConfigError, SemlogError
 from semanticlog.data.flatten import choose_case_concepts
 from semanticlog.data.loading import load_and_clean
 from semanticlog.data.readable import ReadableStore
@@ -129,7 +129,7 @@ def build_one(cfg: RunConfig, input_path: Path) -> None:
     logger.info("Input:  %s", input_path)
     logger.info("Output: %s", onto_path)
 
-    logger.info("Loading event data..")
+    logger.info("Loading event data")
     with _timed(timings, "load"):
         data = load_and_clean(
             input_path,
@@ -148,7 +148,7 @@ def build_one(cfg: RunConfig, input_path: Path) -> None:
     settings = cfg.settings
     _warn_on_changed_settings(onto_path, settings, case_concepts)
 
-    logger.info("Building ontology..")
+    logger.info("Building ontology")
     with _timed(timings, "build"):
         result = build_log(
             data,
@@ -165,7 +165,7 @@ def build_one(cfg: RunConfig, input_path: Path) -> None:
         logger.info("Name backmap saved: %s", backmap_path)
 
     if cfg.materialize:
-        logger.info("Materializing with %s..", cfg.reasoner_backend)
+        logger.info("Materializing with %s", cfg.reasoner_backend)
         with _timed(timings, "reason"):
             added = Reasoner(str(onto_path), backend=cfg.reasoner_backend).materialize()
         logger.info("Materialization complete: %s axiom(s) added.", f"{added:,}")
@@ -177,7 +177,7 @@ def build_one(cfg: RunConfig, input_path: Path) -> None:
         )
     converted = cfg.converted_paths(input_path)
     if converted:
-        logger.info("Converting to %s..", ", ".join(f.value for f in converted))
+        logger.info("Converting to %s", ", ".join(f.value for f in converted))
         with _timed(timings, "convert"):
             convert(onto_path, converted)
 
@@ -274,14 +274,14 @@ def mine_declare(
     if output_path is None:
         output_path = Path(f"{input_path.stem}.declare.json")
 
-    logger.info("Loading event data from %s..", input_path)
+    logger.info("Loading event data from %s", input_path)
     data = load_and_clean(input_path, extensions, columns=columns)
 
     chosen, _ = choose_case_concepts(data, case_concepts, auto_case_concepts)
     logger.info("Case concepts: %s", chosen)
     raise_reports([case_concept_report(data, chosen)])
 
-    logger.info("Mining DECLARE constraints via discovery..")
+    logger.info("Mining DECLARE constraints via discovery")
     result = DeclareEnricher(data).get_constraints_via_discovery(
         case_concepts=chosen,
         constraint_set=list(constraints) if constraints else None,
@@ -326,15 +326,20 @@ def reason(
         Whether the ontology is consistent under `check_only`, otherwise True.
 
     Raises:
-        ConfigError: If the suffix of `output_path` names no format.
+        ConfigError: If `output_path` is given with `check_only`, or its suffix
+            names no format.
     """
-    if output_path is not None and not check_only:
+    if output_path is not None and check_only:
+        raise ConfigError(
+            "--check writes nothing, so --output has no effect. Drop one of them."
+        )
+    if output_path is not None:
         OutputFormat.of_path(output_path)
     reasoner = Reasoner(str(onto_path), backend=backend)
     if check_only:
         return reasoner.check()
 
-    logger.info("Materializing %s with %s..", onto_path, backend)
+    logger.info("Materializing %s with %s", onto_path, backend)
     added = reasoner.materialize(overwrite_old=output_path is None)
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)

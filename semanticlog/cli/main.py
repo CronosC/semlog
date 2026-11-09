@@ -80,7 +80,10 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
             )
         except (SemlogError, OSError) as exc:
             failed += 1
-            logger.error("Failed while reading %s: %s", path.name, exc)
+            if str(path) in str(exc):
+                logger.error("%s", exc)
+            else:
+                logger.error("Failed while reading %s: %s", path.name, exc)
             continue
         except Exception as exc:
             failed += 1
@@ -96,14 +99,14 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
 def _cmd_mine_declare(args: argparse.Namespace) -> int:
     """Mine DECLARE constraints into a JSON file.
 
-    Without --output the file goes to `declare_file`, or to
-    `<input stem>.declare.json` in the current directory.
+    Without a declare_file the file goes to `<input stem>.declare.json` in the
+    current directory.
     """
     inputs = resolve_log_inputs(flag_overrides(args), config_file=args.config)
     for message in inputs.warnings:
         logger.warning(message)
 
-    output = args.declare_output or inputs.declare_file
+    output = inputs.declare_file
     written = mine_declare(
         input_path=inputs.one_input(),
         output_path=Path(output) if output else None,
@@ -125,7 +128,9 @@ def _cmd_reason(args: argparse.Namespace) -> int:
     output_path = Path(args.output) if args.output else None
     consistent = reason(
         onto_path=onto_path,
-        backend=setting("reasoner_backend").read(args.reasoner_backend, "--backend"),
+        backend=setting("reasoner_backend").read(
+            args.reasoner_backend, "--reasoner-backend"
+        ),
         output_path=output_path,
         check_only=args.check,
     )

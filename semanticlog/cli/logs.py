@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 import logging
 import os
 from datetime import datetime
@@ -81,7 +82,8 @@ class FileLog:
         self._handler.setFormatter(_formatter())
         logging.getLogger().addHandler(self._handler)
 
-        existing = sorted(self.log_dir.glob(f"*_{stem}.log"))
+        # The timestamp width is fixed, so stem `rich` leaves `hiring_rich` alone.
+        existing = sorted(self.log_dir.glob(f"????????_??????_{glob.escape(stem)}.log"))
         for old in existing[: max(0, len(existing) - self.keep)]:
             old.unlink()
 

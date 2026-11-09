@@ -24,16 +24,23 @@ def test_checks_that_found_nothing_raise_nothing():
     raise_reports([None, None])
 
 
-def test_one_report_is_its_header_then_indented_problems_then_advice():
+def test_one_report_is_one_line_of_its_header_then_problems_then_advice():
     with pytest.raises(ConfigError, match="^The case concepts are wrong:") as excinfo:
         raise_reports([None, CONFIG, None])
 
     assert str(excinfo.value) == (
-        "The case concepts are wrong:\n"
-        "  'a' is not an object type\n"
-        "  'b' is not an object type\n"
-        "\n"
-        "Name types the log holds."
+        "The case concepts are wrong: 'a' is not an object type. "
+        "'b' is not an object type. Name types the log holds."
+    )
+
+
+def test_a_report_names_its_first_five_problems_and_counts_the_rest():
+    report = CheckReport(
+        header="Rows are wrong:", problems=tuple(f"row {i}" for i in range(1, 9))
+    )
+
+    assert report.render() == (
+        "Rows are wrong: row 1. row 2. row 3. row 4. row 5. 3 more not listed."
     )
 
 
@@ -50,4 +57,4 @@ def test_one_input_finding_among_several_reports_makes_an_input_error_in_run_ord
     with pytest.raises(InputError, match="^The case concepts are wrong:") as excinfo:
         raise_reports([CONFIG, INPUT])
 
-    assert str(excinfo.value) == f"{CONFIG.render()}\n\n{INPUT.render()}"
+    assert str(excinfo.value) == f"{CONFIG.render()} {INPUT.render()}"

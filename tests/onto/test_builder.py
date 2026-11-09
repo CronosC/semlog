@@ -163,13 +163,13 @@ def test_the_steps_of_a_build_are_announced_in_order(pipeline_store, caplog):
         if record.message.startswith(("Instantiating", "No "))
     ]
     assert announced == [
-        "Instantiating the upper schema..",
-        "Instantiating event data (3 activities)..",
-        "No event order to instantiate..",
-        "Instantiating time data..",
-        "Instantiating object data (2 object types)..",
-        "Instantiating event to object relation data (2 relation types)..",
-        "Instantiating object to object relation data (1 relation types)..",
+        "Instantiating the upper schema",
+        "Instantiating event data (3 activities)",
+        "No event order to instantiate.",
+        "Instantiating time data",
+        "Instantiating object data (2 object types)",
+        "Instantiating event to object relation data (2 relation types)",
+        "Instantiating object to object relation data (1 relation types)",
     ]
 
 
@@ -197,7 +197,7 @@ def test_the_history_step_runs_only_when_the_settings_ask_for_it(caplog):
             }
         ),
     )
-    history = "Instantiating object attribute change history.."
+    history = "Instantiating object attribute change history"
     with_history = NO_ORDER.replace(ocel_extensions=[OCELExtension.ATTRIBUTE_HISTORY])
 
     with caplog.at_level(logging.INFO, logger="semanticlog.onto.builder"):

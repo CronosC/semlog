@@ -12,7 +12,7 @@ from collections.abc import Collection
 
 import pandas as pd
 
-from semanticlog.core.checks import raise_reports
+from semanticlog.core.checks import first_five, raise_reports
 from semanticlog.core.summary import report_by_kind
 from semanticlog.data.cleaning.allocate import allocate_schema_names
 from semanticlog.data.cleaning.merged import resolve_merged_names
@@ -147,7 +147,7 @@ def verify_unique_names(data: OCEDStore) -> None:
         claim(relation, f"relation {relation!r}")
 
     errors = [
-        f"  {name!r} is claimed {len(owners)} times: {', '.join(sorted(owners))}"
+        f"{name!r} is claimed {len(owners)} times ({', '.join(sorted(owners))})"
         for name, owners in claims.items()
         if len(owners) > 1
     ]
@@ -156,7 +156,7 @@ def verify_unique_names(data: OCEDStore) -> None:
     # allocate_schema_names gives every schema name a distinct name, so a
     # repeat here is a defect in cleaning, not in the log.
     raise ValueError(
-        "These names are claimed more than once after cleaning:\n" + "\n".join(errors)
+        f"These names are claimed more than once after cleaning: {first_five(errors)}."
     )
 
 

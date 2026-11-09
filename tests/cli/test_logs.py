@@ -82,3 +82,15 @@ def test_leaving_a_file_log_detaches_its_handler_and_closing_again_changes_nothi
     log.close()
 
     assert len(root.handlers) == before
+
+
+def test_rotating_one_input_keeps_the_logs_of_an_input_whose_name_ends_in_it(
+    tmp_path,
+):
+    (tmp_path / "20000101_000000_hiring_rich.log").write_text("")
+    with FileLog(tmp_path, keep=1) as log:
+        log.switch_to("rich")
+        log.switch_to("rich")
+
+    assert (tmp_path / "20000101_000000_hiring_rich.log").exists()
+    assert len(list(tmp_path.glob("*_rich.log"))) == 2

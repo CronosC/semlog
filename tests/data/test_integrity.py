@@ -149,6 +149,6 @@ def test_a_store_with_violations_is_rejected_listing_them_with_advice(store):
 
     with pytest.raises(
         InputError,
-        match=r"could not emit an individual for:\n  e2o 'stray': 1 event id.*\n\nFix the source data",
+        match=r"could not emit an individual for: e2o 'stray': 1 event id[^\n]*\. Fix the source data",
     ):
         require_integrity(store)

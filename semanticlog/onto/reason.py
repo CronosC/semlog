@@ -305,7 +305,7 @@ class Reasoner:
         Raises:
             InputError: If the backend fails.
         """
-        logger.info("  asking %s for entailed property assertions..", self.backend)
+        logger.info("  asking %s for entailed property assertions", self.backend)
         self._register_property_assertions()
         with self._reporting("asking for entailed property assertions"):
             axioms = [

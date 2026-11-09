@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from semanticlog.core.enums import OWLProfile
+from semanticlog.core.errors import SemlogError
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.oced import OCEDStore
 from tests.support import stores
@@ -25,6 +26,25 @@ warnings.filterwarnings(
     message="pkg_resources is deprecated as an API",
     category=UserWarning,
 )
+
+
+@pytest.fixture(autouse=True, scope="session")
+def semlog_errors_are_one_line():
+    """Fail every test that raises a `SemlogError` whose message holds a line break.
+
+    The CLI prints such an error as one line.
+    """
+    original = SemlogError.__init__
+
+    def one_line(self, *args):
+        assert not any("\n" in str(arg) for arg in args), (
+            f"{type(self).__name__} message holds a line break: {args!r}"
+        )
+        original(self, *args)
+
+    SemlogError.__init__ = one_line
+    yield
+    SemlogError.__init__ = original
 
 
 # --------------------------------------------------------------------------

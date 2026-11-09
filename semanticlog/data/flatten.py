@@ -11,6 +11,7 @@ from collections.abc import Iterable, Iterator, Sequence
 
 import pandas as pd
 
+from semanticlog.core.checks import first_five
 from semanticlog.core.errors import InputError
 from semanticlog.core.summary import count_phrase
 from semanticlog.data.cleaning import object_type_renames
@@ -225,9 +226,9 @@ def _event_frame(data: ReadableStore) -> pd.DataFrame:
         )
     if zoned[True] and zoned[False]:
         raise InputError(
-            "The activities of this log mix zoned and unzoned timestamps:\n"
-            f"  with a zone: {', '.join(sorted(zoned[True])[:5])}\n"
-            f"  without one: {', '.join(sorted(zoned[False])[:5])}\n\n"
+            "The activities of this log mix zoned and unzoned timestamps. "
+            f"With a zone: {first_five(sorted(zoned[True]))}. "
+            f"Without one: {first_five(sorted(zoned[False]))}. "
             "Give every event table the same kind of timestamp before flattening."
         )
     events = pd.concat(events_data_list, ignore_index=True)

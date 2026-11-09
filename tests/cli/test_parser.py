@@ -24,11 +24,15 @@ def parse(*argv: str):
     return build_parser().parse_args(list(argv))
 
 
-def _help(command: str) -> str:
+def _subparser(command: str) -> argparse.ArgumentParser:
     sub = next(
         a for a in build_parser()._actions if isinstance(a, argparse._SubParsersAction)
     )
-    return sub.choices[command].format_help()
+    return sub.choices[command]
+
+
+def _help(command: str) -> str:
+    return _subparser(command).format_help()
 
 
 def test_every_subcommand_renders_its_help(capsys):
@@ -89,11 +93,32 @@ def test_reason_takes_its_backend_default_from_the_table():
     assert not hasattr(args, "profile")
 
 
-def test_mine_declare_output_is_not_a_build_setting():
-    args = parse("mine-declare", "log.json", "--output", "x.declare.json")
+def test_mine_declare_writes_to_the_declare_file_flag():
+    args = parse("mine-declare", "log.json", "--declare-file", "x.declare.json")
 
-    assert args.declare_output == "x.declare.json"
+    assert flag_overrides(args)["declare_file"] == "x.declare.json"
     assert "output" not in flag_overrides(args)
+
+
+def test_reason_takes_the_backend_flag_build_takes():
+    assert parse("reason", "o.owl", "--reasoner-backend", "ELK").reasoner_backend == (
+        "ELK"
+    )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("mine-declare", "log.json", "--output", "x.declare.json"),
+        ("reason", "o.owl", "--backend", "ELK"),
+    ],
+)
+def test_a_superseded_flag_is_rejected(argv, capsys):
+    with pytest.raises(SystemExit) as exit_code:
+        parse(*argv)
+
+    assert exit_code.value.code == 2
+    assert "unrecognized arguments" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -151,3 +176,23 @@ def test_every_configurable_setting_has_a_flag_on_the_command_that_reads_it():
     )
 
     assert set(BUILD_DEFAULTS) - flags == set()
+
+
+def test_the_inspect_description_names_only_flags_inspect_takes():
+    inspect = _subparser("inspect")
+    taken = {flag for action in inspect._actions for flag in action.option_strings}
+
+    assert set(re.findall(r"--[a-z-]+", inspect.description)) <= taken
+
+
+def test_the_build_description_wraps_to_the_terminal_width(monkeypatch):
+    monkeypatch.setenv("COLUMNS", "80")
+
+    assert max(len(line) for line in _help("build").splitlines()) <= 80
+
+
+def test_the_epilog_names_every_file_a_build_can_write():
+    epilog = build_parser().epilog
+
+    for written in (".ofn", ".owl", "output_formats", ".backmap.json", "--log-dir"):
+        assert written in epilog

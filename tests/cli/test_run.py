@@ -407,6 +407,17 @@ def test_the_converted_files_hold_what_the_reasoner_added(ocel, tmp_path):
     )
 
 
+def test_no_progress_line_of_a_build_ends_in_two_dots(ocel, tmp_path, caplog):
+    argv = ["build", str(ocel), "--output", str(tmp_path / "onto")]
+    with caplog.at_level(logging.INFO, logger="semanticlog"):
+        main([*argv, "--save-backmap", "--output-formats", "ttl"])
+
+    assert len(caplog.records) > 10
+    assert [
+        r.getMessage() for r in caplog.records if r.getMessage().endswith("..")
+    ] == []
+
+
 # --------------------------------------------------------------------------
 # mine-declare
 # --------------------------------------------------------------------------
@@ -449,7 +460,9 @@ def test_mine_declare_writes_constraints_that_record_their_log(
 ):
     out = tmp_path / "constraints.declare.json"
 
-    assert main(["mine-declare", str(ocel), "--output", str(out), "-q"]) == EXIT_OK
+    assert (
+        main(["mine-declare", str(ocel), "--declare-file", str(out), "-q"]) == EXIT_OK
+    )
     result = DeclareResult.read(out)
     assert result.case_concepts == ["order"]
     assert result.source_log == str(ocel)
@@ -497,7 +510,7 @@ def test_mine_declare_passes_the_thresholds_and_templates_through(
         [
             "mine-declare",
             str(ocel),
-            "--output",
+            "--declare-file",
             str(tmp_path / "c.declare.json"),
             "--constraints",
             "Response",
@@ -529,7 +542,7 @@ def test_mine_declare_writes_into_the_current_directory_without_an_output(
     assert (tmp_path / "pipeline.declare.json").is_file()
 
 
-def test_mine_declare_writes_to_the_output_flag_over_the_declare_file(
+def test_mine_declare_writes_to_the_declare_file_flag_over_the_config(
     ocel, tmp_path, write_config, fake_enricher
 ):
     from_config = tmp_path / "declare" / "config.declare.json"
@@ -546,7 +559,7 @@ def test_mine_declare_writes_to_the_output_flag_over_the_declare_file(
             "mine-declare",
             "--config",
             str(config),
-            "--output",
+            "--declare-file",
             str(tmp_path / "named.declare.json"),
             "-q",
         ]
@@ -569,7 +582,7 @@ def test_mine_declare_rejects_an_unknown_template_before_reading_the_log(
             str(ocel),
             "--constraints",
             "Responce",
-            "--output",
+            "--declare-file",
             str(tmp_path / "c.declare.json"),
             "-q",
         ]
@@ -592,7 +605,13 @@ def test_mine_declare_without_the_solver_exits_two_with_a_message(
     monkeypatch.setattr(declare, "DeclareEnricher", missing)
 
     code = main(
-        ["mine-declare", str(ocel), "--output", str(tmp_path / "c.declare.json"), "-q"]
+        [
+            "mine-declare",
+            str(ocel),
+            "--declare-file",
+            str(tmp_path / "c.declare.json"),
+            "-q",
+        ]
     )
 
     assert code == EXIT_USAGE
@@ -604,7 +623,7 @@ def test_a_build_reads_the_constraints_mine_declare_wrote(
     ocel, tmp_path, fake_enricher
 ):
     constraints = tmp_path / "constraints.declare.json"
-    main(["mine-declare", str(ocel), "--output", str(constraints), "-q"])
+    main(["mine-declare", str(ocel), "--declare-file", str(constraints), "-q"])
 
     code = main(
         [
@@ -691,16 +710,32 @@ def test_reason_into_an_output_of_no_format_exits_two_with_one_line(
     assert not target.exists()
 
 
+def test_reason_check_with_an_output_exits_two_with_one_line(tmp_path, capsys):
+    target = tmp_path / "materialized.ofn"
+
+    code = main(
+        ["reason", str(tmp_path / "x.ofn"), "--check", "--output", str(target), "-q"]
+    )
+
+    err = capsys.readouterr().err
+    assert code == EXIT_USAGE
+    assert len(err.strip().splitlines()) == 1
+    assert "--check writes nothing" in err
+    assert not target.exists()
+
+
 def test_reason_on_a_missing_file_exits_two(tmp_path, capsys):
     assert main(["reason", str(tmp_path / "absent.owl"), "--check", "-q"]) == EXIT_USAGE
     assert "not found" in capsys.readouterr().err
 
 
 def test_reason_rejects_an_unknown_backend_before_reading_the_file(tmp_path, capsys):
-    code = main(["reason", str(tmp_path / "absent.owl"), "--backend", "Konclude", "-q"])
+    code = main(
+        ["reason", str(tmp_path / "absent.owl"), "--reasoner-backend", "Konclude", "-q"]
+    )
 
     assert code == EXIT_USAGE
-    assert "--backend: unknown value 'Konclude'" in capsys.readouterr().err
+    assert "--reasoner-backend: unknown value 'Konclude'" in capsys.readouterr().err
 
 
 @pytest.mark.reasoner
@@ -729,7 +764,7 @@ def test_mine_declare_rejects_an_unknown_case_concept_naming_the_choices(
             str(ocel),
             "--case-concepts",
             "nosuch",
-            "--output",
+            "--declare-file",
             str(tmp_path / "c.declare.json"),
             "-q",
         ]
@@ -755,7 +790,7 @@ def test_mine_declare_on_a_log_without_event_to_object_relations_names_none(
         [
             "mine-declare",
             write_log(tmp_path, log),
-            "--output",
+            "--declare-file",
             str(tmp_path / "c.declare.json"),
             "-q",
         ]

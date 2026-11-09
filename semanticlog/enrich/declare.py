@@ -7,6 +7,8 @@ per case concept and returns a `DeclareResult`.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import logging
 import re
 import warnings
@@ -179,15 +181,47 @@ with _keep_logging_config():
         _DECLARE4PY_AVAILABLE = False
 
 
+class _InfoLines(io.TextIOBase):
+    """Text stream that logs each line written to it at INFO."""
+
+    def __init__(self) -> None:
+        self._pending = ""
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        *lines, self._pending = (self._pending + text).split("\n")
+        for line in lines:
+            # Declare4Py ends its progress lines in an ellipsis.
+            message = line.strip().rstrip(" .")
+            if message:
+                logger.info("%s", message)
+        return len(text)
+
+    def flush(self) -> None:
+        if self._pending:
+            self.write("\n")
+
+
 @contextmanager
 def _quiet_declare4py() -> Iterator[None]:
-    """Silence the warnings Declare4Py raises from inside pandas."""
-    with warnings.catch_warnings():
+    """Silence the warnings Declare4Py raises from inside pandas.
+
+    What it prints is logged at INFO, so stdout keeps only what semlog prints.
+    """
+    with (
+        warnings.catch_warnings(),
+        contextlib.redirect_stdout(_InfoLines()) as lines,
+    ):
         warnings.simplefilter("ignore", DeprecationWarning)
         warnings.simplefilter("ignore", UserWarning)
         if hasattr(pd.errors, "SettingWithCopyWarning"):
             warnings.simplefilter("ignore", pd.errors.SettingWithCopyWarning)
-        yield
+        try:
+            yield
+        finally:
+            lines.flush()
 
 
 class DeclareEnricher:

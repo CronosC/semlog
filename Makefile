@@ -33,7 +33,7 @@ check: lint typecheck test ## Lint, type check and run the whole suite
 
 verify: check ## Check, build examples/pipeline.toml and test it for consistency under HermiT
 	$(RUN) semlog build --config examples/pipeline.toml
-	$(RUN) semlog reason examples/out/pipeline.ofn --check --backend HermiT
+	$(RUN) semlog reason examples/out/pipeline.ofn --check --reasoner-backend HermiT
 
 example: ## Build examples/pipeline.toml
 	$(RUN) semlog build --config examples/pipeline.toml

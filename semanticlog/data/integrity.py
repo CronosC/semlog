@@ -9,18 +9,14 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from semanticlog.core.checks import CheckReport, Fixed, raise_reports
+from semanticlog.core.checks import CheckReport, Fixed, first_five, raise_reports
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind, RelationKind
-
-_SAMPLE = 5
 
 
 def _sample(ids: set[Any]) -> str:
     """Render a few ids for an error message, counting the rest."""
-    shown = sorted(str(i) for i in ids)[:_SAMPLE]
-    more = len(ids) - len(shown)
-    return ", ".join(shown) + (f" and {more} more" if more else "")
+    return first_five(sorted(str(i) for i in ids))
 
 
 def _missing_ids(data: ReadableStore) -> list[str]:

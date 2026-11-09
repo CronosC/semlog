@@ -32,7 +32,20 @@ def test_a_log_inspect_cannot_read_does_not_lose_the_others(
 
     assert code == EXIT_FAILED
     assert capsys.readouterr().out.count("object types") == 2
-    assert "Failed while reading b_broken.jsonocel" in caplog.text
+    assert "b_broken.jsonocel is not well-formed JSON" in caplog.text
+
+
+def test_a_log_inspect_cannot_read_is_reported_naming_its_path_once(tmp_path, capsys):
+    broken = tmp_path / "broken.jsonocel"
+    broken.write_text("{ not json")
+
+    code = main(["inspect", str(broken), "-q"])
+
+    lines = capsys.readouterr().err.splitlines()
+    assert code == EXIT_FAILED
+    assert len(lines) == 1
+    assert lines[0].count("broken.jsonocel") == 1
+    assert "is not well-formed JSON" in lines[0]
 
 
 def test_inspect_expands_a_directory_the_way_a_build_does(ocel, tmp_path, capsys):

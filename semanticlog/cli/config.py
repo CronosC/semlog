@@ -112,8 +112,7 @@ class LogInputs:
         case_concepts: Object types to use as cases, or None to choose them
             from the log.
         auto_case_concepts: How many to choose when choosing automatically.
-        declare_file: File of mined constraints. `mine-declare` writes here
-            without --output.
+        declare_file: File of mined constraints, which `mine-declare` writes.
         constraints: Constraint templates to keep, or None to keep every one
             discovery proposes.
         constraint_support: Share of traces a constraint has to hold in.

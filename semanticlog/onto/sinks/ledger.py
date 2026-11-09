@@ -94,10 +94,9 @@ class NameLedger:
         if prev_kind == kind and prev_source == source:
             return
         raise NameCollisionError(
-            f"{name!r} names two entities:\n"
-            f"  as {prev_kind.value} from {prev_source}\n"
-            f"  as {kind.value} from {source}\n\n"
-            "Rename one of them in the input data before building."
+            f"{name!r} names two entities, as {prev_kind.value} from "
+            f"{prev_source} and as {kind.value} from {source}. Rename one of "
+            "them in the input data before building."
         )
 
     def check_name(self, name: str, source: str) -> None:
@@ -291,9 +290,8 @@ class NameLedger:
         claimed_by = self._named_inverses.get(_key(inverse))
         if claimed_by is not None and _key(claimed_by) != _key(prop):
             raise NameCollisionError(
-                f"{inverse!r} is the inverse of {claimed_by!r} and cannot also "
-                f"be the inverse of {prop!r}.\n"
-                f"  from {source}\n\n"
+                f"{inverse!r} from {source} is the inverse of {claimed_by!r} "
+                f"and cannot also be the inverse of {prop!r}. "
                 "Pass a distinct inverse_name, or leave it unset to get "
                 f"{self.inverse_name(prop)!r}."
             )
