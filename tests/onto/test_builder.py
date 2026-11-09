@@ -421,5 +421,6 @@ def test_values_with_control_characters_are_reported_once_by_property(
 
     warnings = [r for r in caplog.records if "U+FFFD" in r.getMessage()]
     assert [r.getMessage() for r in warnings] == [
-        "Replaced the control characters in 1 value with U+FFFD: labels of note (1)."
+        "Replaced the control characters in 2 values with U+FFFD: "
+        "has_value_note (1), labels of note (1)."
     ]

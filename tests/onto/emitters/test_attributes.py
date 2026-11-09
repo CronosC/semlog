@@ -26,7 +26,7 @@ from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters.attributes import AttributeEmitter, attribute_datatypes
 from semanticlog.onto.reason import Reasoner
 from semanticlog.onto.settings import OntoBuildSettings
-from tests.support.build import emit
+from tests.support.build import BACKENDS, emit
 from tests.support.functional import read_functional
 
 INDIVIDUALS = [AttributeRepresentation.INDIVIDUALS]
@@ -394,6 +394,51 @@ def test_a_text_value_carries_a_string_literal(tmp_path):
     )
 
     assert ("has_value_channel", "channel.web", "web", "string") in onto.data_values
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_a_text_literal_holds_the_value_the_log_wrote(tmp_path, backend):
+    onto = emit(
+        OntoBuildSettings(attribute_representations=BOTH),
+        tmp_path / "source.owl",
+        backend=backend,
+        data=_order_store(unit=["unit price"]),
+    )
+
+    assert ("has_unit", "o1", "unit.unit_price") in onto.relations
+    assert {
+        (subject, value)
+        for prop, subject, value, _t in onto.data_values
+        if prop == "has_value_unit"
+    } == {("unit.unit_price", "unit price"), ("o1", "unit price")}
+
+
+def test_two_values_that_clean_to_one_name_keep_their_own_literals(tmp_path):
+    onto = emit(
+        OntoBuildSettings(),
+        tmp_path / "merged.ofn",
+        data=_order_store(channel=["a b", "a_b"]),
+    )
+
+    literals = {
+        subject: value
+        for prop, subject, value, _t in onto.data_values
+        if prop == "has_value_channel"
+    }
+    assert len(literals) == 2
+    assert sorted(literals.values()) == ["a b", "a_b"]
+
+
+def test_a_control_character_in_a_value_becomes_the_replacement_character(
+    tmp_path,
+):
+    onto = emit(
+        OntoBuildSettings(attribute_representations=LITERALS),
+        tmp_path / "control.ofn",
+        data=_order_store(note=["bad\x01note"]),
+    )
+
+    assert ("has_value_note", "o1", "bad�note", "string") in onto.data_values
 
 
 def test_an_attribute_value_property_is_below_has_data_value(tmp_path):

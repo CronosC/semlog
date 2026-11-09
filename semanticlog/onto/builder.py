@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from semanticlog.core.enums import SinkEntity
 from semanticlog.core.summary import counted, report_by_kind, report_names
+from semanticlog.data.cleaning.renames import VALUE_KIND
 from semanticlog.data.oced import attribute_owners_by_kind
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind, RelationKind
@@ -246,6 +247,7 @@ class OCEDOntoBuilder:
             attribute_binnings(data, self.settings),
             attribute_datatypes(data, self.settings),
             changed=changed_attributes(data) if attribute_history else (),
+            sources=data.backmap.get(VALUE_KIND, {}),
         )
         times = TimeEmitter(*parts)
         return Emitters(

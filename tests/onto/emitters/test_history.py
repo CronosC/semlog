@@ -228,6 +228,20 @@ def test_an_attribute_cleaning_renamed_keeps_its_history_under_the_new_name(
     assert {"attribute_status.x", "attribute_status.y"} <= onto.individuals
 
 
+def test_a_changed_text_value_carries_the_literal_the_log_wrote(tmp_path):
+    store = _store_with_changes("o1", "status", ["in transit"], {})
+
+    onto = emit(
+        history_settings(attribute_representations=[AttributeRepresentation.LITERALS]),
+        tmp_path / "history.ofn",
+        data=store,
+    )
+
+    assert {
+        value for prop, _s, value, _t in onto.data_values if prop == "has_value_status"
+    } == {"in transit"}
+
+
 def test_a_change_record_is_labeled_with_the_object_id_the_log_wrote(tmp_path):
     store = _store_with_changes("ORD#123", "status", ["shipped"], {})
 

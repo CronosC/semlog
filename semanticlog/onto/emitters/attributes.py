@@ -203,6 +203,8 @@ class AttributeEmitter(Emitter):
         changed: The attributes the build emits change records of. A change
             record carries a literal under `literals`, so the change class of
             each joins the domain of its value property.
+        sources: Value individual name to the value as the log wrote it, for
+            each text value cleaning rewrote. A text literal holds that value.
     """
 
     def __init__(
@@ -215,12 +217,14 @@ class AttributeEmitter(Emitter):
         binnings: Mapping[str, Binning],
         datatypes: Mapping[str, str] | None = None,
         changed: Collection[str] = (),
+        sources: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__(sink, settings, annotations, emitted)
         self._owners = owners
         self._binnings = binnings
         self._datatypes = datatypes or {}
         self._changed = frozenset(changed)
+        self._sources = sources or {}
         self._warned_unbinnable: set[str] = set()
         self._annotated: set[str] = set()
         self._classes: dict[str, None] = {}
@@ -395,7 +399,29 @@ class AttributeEmitter(Emitter):
         if self.settings.emits_value_individuals:
             self._emit_individuals(df, key_col, attr, prop, owner)
         if self.settings.emits_entity_literals:
-            self.assert_data(vocab.value_property(attr), df, key_col, attr, owner)
+            self.assert_data(
+                vocab.value_property(attr),
+                self._with_source_values(df, attr),
+                key_col,
+                attr,
+                owner,
+            )
+
+    def _with_source_values(self, df: pd.DataFrame, attr: str) -> pd.DataFrame:
+        """Return the table with each text value cleaning rewrote replaced by its source value."""
+        if not self._sources:
+            return df
+        sources = {
+            value: source
+            for value in df[attr].unique()
+            if isinstance(value, str)
+            and (source := self._sources.get(vocab.attribute_value(attr, value)))
+            is not None
+        }
+        if not sources:
+            return df
+        mapped = df[attr].map(sources)
+        return df.assign(**{attr: df[attr].where(mapped.isna(), mapped)})
 
     def _emit_individuals(
         self,
@@ -437,7 +463,11 @@ class AttributeEmitter(Emitter):
         if fresh_names:
             rows = tmp[tmp["attr_ind"].isin(fresh_names)].drop_duplicates("attr_ind")
             self.assert_data(
-                vocab.value_property(attr), rows, "attr_ind", attr, IndividualKind.VALUE
+                vocab.value_property(attr),
+                self._with_source_values(rows, attr),
+                "attr_ind",
+                attr,
+                IndividualKind.VALUE,
             )
 
     def _emit_bins(self, df_attr: pd.DataFrame, attr: str) -> None:
