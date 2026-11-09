@@ -63,11 +63,6 @@ markers = [
 ]
 filterwarnings = [
     "error::DeprecationWarning",
-    # Third-party.
-    "default::DeprecationWarning:pm4py.*",
-    "default::DeprecationWarning:owlready2.*",
-    "default::DeprecationWarning:pkg_resources.*",
-    "default::DeprecationWarning:importlib.*",
 ]
 
 [tool.coverage.run]
@@ -77,27 +72,22 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 # Coverage minimum CI enforces. Raise it, do not lower it.
-fail_under = 90
+fail_under = 95
 
 [tool.ruff]
 line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "N", "S", "B", "PT", "G"]
+select = ["E", "F", "W", "I", "UP", "N", "S", "B", "PT", "G", "RUF100"]
 ignore = [
     "E501",
-    "N802",
-    "N803",
     "N806",
     "UP042",
-    "S311",   # no cryptographic randomness here
-    "PT011",  # broad pytest.raises
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# S314: the tests parse ontology files they wrote themselves, not untrusted input.
-"tests/**" = ["S101", "S108", "S314"]
+"tests/**" = ["S101"]
 
 [tool.mypy]
 python_version = "3.12"

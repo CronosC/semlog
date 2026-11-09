@@ -49,7 +49,7 @@ def test_the_committed_example_builds(tmp_path):
 
 
 def test_the_module_runs_as_a_script():
-    finished = subprocess.run(  # noqa: S603
+    finished = subprocess.run(
         [sys.executable, "-m", "semanticlog.cli.main", "--version"],
         capture_output=True,
         text=True,

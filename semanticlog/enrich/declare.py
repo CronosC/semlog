@@ -170,7 +170,7 @@ def _keep_logging_config() -> Iterator[None]:
 with _keep_logging_config():
     try:
         from Declare4Py.D4PyEventLog import D4PyEventLog
-        from Declare4Py.ProcessMiningTasks.ConformanceChecking.MPDeclareAnalyzer import (  # noqa: E501
+        from Declare4Py.ProcessMiningTasks.ConformanceChecking.MPDeclareAnalyzer import (
             MPDeclareAnalyzer,
         )
         from Declare4Py.ProcessMiningTasks.Discovery.DeclareMiner import DeclareMiner

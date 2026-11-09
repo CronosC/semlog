@@ -51,6 +51,3 @@ components/RDFox/RDFox.lic
 # IDE
 .idea/
 .vscode/
-
-# Local run configs.
-runs/

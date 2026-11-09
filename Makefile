@@ -31,17 +31,11 @@ typecheck: ## Type check the package
 
 check: lint typecheck test ## Lint, type check and run the whole suite
 
-verify: check ## Check, build examples/pipeline.toml and test it for consistency under HermiT
-	$(RUN) semlog build --config examples/pipeline.toml
-	$(RUN) semlog reason examples/out/pipeline.ofn --check --reasoner-backend HermiT
+verify: check example ## Check, build examples/pipeline.toml and test it for consistency under HermiT
+	$(RUN) semlog reason examples/out/pipeline.ofn --check
 
 example: ## Build examples/pipeline.toml
 	$(RUN) semlog build --config examples/pipeline.toml
 
-# Builds every config not starting with _ through scripts/build_runs.sh, one at a
-# time under the memory cap SEMLOG_MEM (default 6G). Configs starting with _ hold
-# settings the others extend. Each build writes NAME.build.log and NAME.build.exit
-# into its output directory, and the script prints a summary line per config.
-build-all: ## Build every config in runs/
-	@test -d runs || { echo "No runs/ directory. Start from examples/pipeline.toml."; exit 2; }
-	@scripts/build_runs.sh runs/[!_]*.toml
+build-all: ## Build every config in datasets/runs/ not starting with _
+	@set -- datasets/runs/[!_]*.toml; [ -e "$$1" ] || { echo "No config in datasets/runs/. Start from examples/pipeline.toml." >&2; exit 2; }; scripts/build_runs.sh "$$@"

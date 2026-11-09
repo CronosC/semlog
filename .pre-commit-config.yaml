@@ -9,16 +9,18 @@ repos:
       - id: check-json
       - id: check-merge-conflict
 
-  # Keep this rev in step with the ruff version in uv.lock.
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.17
-    hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
-
   - repo: local
     hooks:
+      - id: ruff
+        name: ruff
+        entry: uv run ruff check --fix
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-format
+        name: ruff-format
+        entry: uv run ruff format
+        language: system
+        types_or: [python, pyi]
       - id: pytest
         name: pytest
         entry: uv run pytest -q -n auto -m "not reasoner and not slow"

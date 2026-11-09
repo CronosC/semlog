@@ -50,35 +50,35 @@ Without `--case-concepts`, the three most common object types are chosen. Withou
 
 Every setting is a TOML key and a flag. `input` is positional on the command line. A flag wins over the file.
 
-Keep your own configs in `runs/`, which git ignores:
+Keep your own configs in `datasets/runs/`, which git ignores:
 
 ```bash
-mkdir -p runs
+mkdir -p datasets/runs
 ```
 
-A config can extend another one. Create `runs/el.toml` with:
+A config can extend another one. Create `datasets/runs/el.toml` with:
 
 ```toml
-extends = "../examples/pipeline.toml"
+extends = "../../examples/pipeline.toml"
 profile = "OWL2EL"
 ```
 
 Then build it, or print what it resolves to:
 
 ```bash
-uv run semlog build --config runs/el.toml
-uv run semlog build --config runs/el.toml --dry-run
+uv run semlog build --config datasets/runs/el.toml
+uv run semlog build --config datasets/runs/el.toml --dry-run
 ```
 
-`extends` resolves relative to the config file. Other relative paths resolve against the current directory. A config with one input names the output after the config, so `runs/el.toml` writes `examples/out/el.ofn`. A config with several inputs names each output after its input. A build warns before it overwrites an ontology built from different settings.
+`extends` resolves relative to the config file. Other relative paths resolve against the current directory. A config with one input names the output after the config, so `datasets/runs/el.toml` writes `examples/out/el.ofn`. A config with several inputs names each output after its input. A build warns before it overwrites an ontology built from different settings.
 
 `build`, `inspect` and `mine-declare` all take `--config` and read `input`, `ocel_extensions` and the column keys from it. `build` and `mine-declare` also read `case_concepts` and `auto_case_concepts`.
 
 `--dry-run` prints the resolved run as TOML and builds nothing. To keep a run you put together with flags, redirect it to a file:
 
 ```bash
-uv run semlog build tests/fixtures/pipeline.jsonocel --case-concepts order --profile OWL2EL --order-representations df ef_explicit --dry-run > runs/el-explicit.toml
-uv run semlog build --config runs/el-explicit.toml
+uv run semlog build tests/fixtures/pipeline.jsonocel --case-concepts order --profile OWL2EL --order-representations df ef_explicit --dry-run > datasets/runs/el-explicit.toml
+uv run semlog build --config datasets/runs/el-explicit.toml
 ```
 
 ### Mining DECLARE constraints
@@ -86,8 +86,8 @@ uv run semlog build --config runs/el-explicit.toml
 `mine-declare` needs Lydia, see [DECLARE support](#declare-support). It writes to `--declare-file`, else to the config's `declare_file`, else to `<input stem>.declare.json` in the current directory. The file holds, per case concept, the traces checked and the traces that satisfy each constraint, with the templates and thresholds it was mined with. Pass it to a build with `--declare-file`:
 
 ```bash
-uv run semlog mine-declare tests/fixtures/pipeline.jsonocel --case-concepts order --declare-file runs/pipeline.declare.json
-uv run semlog build tests/fixtures/pipeline.jsonocel --case-concepts order --order-representations df declare --declare-file runs/pipeline.declare.json
+uv run semlog mine-declare tests/fixtures/pipeline.jsonocel --case-concepts order --declare-file datasets/runs/pipeline.declare.json
+uv run semlog build tests/fixtures/pipeline.jsonocel --case-concepts order --order-representations df declare --declare-file datasets/runs/pipeline.declare.json
 ```
 
 `mine-declare --config` and `build --config` read the same file. It can hold the mining settings `constraints`, `constraint_support` and `itemset_support` beside the build settings.
@@ -105,9 +105,9 @@ A `.jsonocel`, `.json`, `.xmlocel`, `.xml` or `.sqlite` file is read as OCEL 2.0
 A `.csv` or `.xes` log has one case notion and no objects. The case column becomes an object type and every event relates to its case. Each column named in `object_cols` becomes another object type the same way. A column named in `object_attribute_cols` becomes an attribute of the case, or of the first object column within whose objects it does not vary. The other columns become attributes of the events.
 
 ```bash
-printf 'case_id,activity,timestamp,resource\nc1,register,2024-01-01 09:00,ann\nc1,approve,2024-01-02 10:00,bo\n' > runs/claims.csv
-uv run semlog inspect runs/claims.csv --case-col case_id --act-col activity --time-col timestamp
-uv run semlog build runs/claims.csv --case-col case_id --act-col activity --time-col timestamp --object-cols resource --case-concepts case_id --order-representations df
+printf 'case_id,activity,timestamp,resource\nc1,register,2024-01-01 09:00,ann\nc1,approve,2024-01-02 10:00,bo\n' > datasets/runs/claims.csv
+uv run semlog inspect datasets/runs/claims.csv --case-col case_id --act-col activity --time-col timestamp
+uv run semlog build datasets/runs/claims.csv --case-col case_id --act-col activity --time-col timestamp --object-cols resource --case-concepts case_id --order-representations df
 ```
 
 A timestamp without a time zone is read as UTC. `case_col`, `act_col` and `time_col` default to the XES column names, so an `.xes` file needs none of them unless it renames those columns. `object_cols` and `object_attribute_cols` are empty by default. All five are TOML keys and flags.

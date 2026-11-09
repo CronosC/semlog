@@ -320,7 +320,7 @@ class Reasoner:
         """Put the missing generator in the mapping `infer_axioms` reads."""
         if _PROPERTY_ASSERTIONS in self.reasoner.inference_types_mapping:
             return
-        from org.semanticweb.owlapi.util import (  # noqa: PLC0415
+        from org.semanticweb.owlapi.util import (
             InferredPropertyAssertionGenerator,
         )
 

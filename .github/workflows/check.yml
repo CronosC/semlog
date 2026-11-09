@@ -15,13 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # uv sync installs the Python version in .python-version.
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-
-      - name: Set up Python
-        run: uv python install 3.12
 
       # The reasoner tests run HermiT through the OWL API, which needs a JVM.
       - name: Set up Java
@@ -31,7 +29,7 @@ jobs:
           java-version: "17"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
 
       - name: Lint and type check
         run: make lint typecheck
