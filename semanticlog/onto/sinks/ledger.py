@@ -82,9 +82,8 @@ class NameLedger:
         if kind in _PROPERTY_KINDS and not (name[0].isalpha() or name[0] == "_"):
             raise vocab.UnsafeLocalNameError(
                 f"{name!r} from {source} cannot be a property name. A property "
-                "name starts with a letter or an underscore. Run "
-                "clean_oced_data(store) before building, or rename it in the "
-                "input."
+                "name starts with a letter or an underscore. Rename it in the "
+                "input log."
             )
         key = _key(name)
         previous = self._declared.get(key)
@@ -109,9 +108,8 @@ class NameLedger:
         """
         if not vocab.is_safe_local_name(name):
             raise vocab.UnsafeLocalNameError(
-                f"{name!r} from {source} cannot be an IRI local name. Run "
-                "clean_oced_data(store) before building, or clean the input "
-                "that bypasses it, such as a DECLARE constraints CSV."
+                f"{name!r} from {source} cannot be an IRI local name. Rename it "
+                "in the input log or the declare_file."
             )
 
     def accepts_individual(self, name: str) -> bool:

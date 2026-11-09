@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 import pandas as pd
 
-from semanticlog.core.errors import InputError
+from semanticlog.core.errors import ConfigError, InputError
 
 TBOX_IRI: str = "https://example.org/oced#"
 TBOX_PREFIX = "oced"
@@ -30,6 +30,50 @@ DEFAULT_IRI: str = f"{_LOG_IRI_ROOT}log/"
 def default_iri(run: str) -> str:
     """Return the log base of a run that sets no `iri`, one path per run stem."""
     return f"{_LOG_IRI_ROOT}{quote(run, safe='')}/"
+
+
+# IRIREF in functional syntax and Turtle excludes these and every code point up
+# to the space.
+_IRI_FORBIDDEN = frozenset('<>"{}|^`\\')
+
+
+def check_iri(iri: str, name: str) -> None:
+    """Raise unless `iri` is non-empty and every character can stand in an IRI.
+
+    Args:
+        iri: The IRI to check.
+        name: The setting or flag it came from, quoted in the error.
+
+    Raises:
+        ConfigError: If it is empty or holds whitespace, a control character
+            or one of `<>"{}|^`\\`.
+    """
+    if not iri:
+        raise ConfigError(
+            f"{name}: an empty IRI cannot be written into an ontology. Set it to "
+            f"an IRI such as {DEFAULT_IRI}."
+        )
+    bad = sorted(
+        {c for c in iri if c in _IRI_FORBIDDEN or c.isspace() or not c.isprintable()}
+    )
+    if bad:
+        shown = ", ".join(repr(c) for c in bad)
+        raise ConfigError(
+            f"{name}: {iri!r} cannot be written into an ontology. Remove {shown}."
+        )
+
+
+def check_log_iri(iri: str, name: str) -> None:
+    """Raise unless `iri` can be the base of the names from a log.
+
+    Raises:
+        ConfigError: As `check_iri`, or if it ends in `#`.
+    """
+    check_iri(iri, name)
+    if iri.endswith("#"):
+        raise ConfigError(
+            f"{name}: must end in '/', got {iri!r}. Replace the trailing '#' with '/'."
+        )
 
 
 class Term(str):

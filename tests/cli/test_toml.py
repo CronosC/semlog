@@ -29,6 +29,15 @@ def test_an_unknown_key_is_rejected_with_the_nearest_setting(write_config):
         load_config_file(path)
 
 
+def test_an_unknown_key_is_reported_on_one_line(write_config):
+    path = write_config("run.toml", 'proflie = "OWL2EL"\n')
+
+    with pytest.raises(ConfigError, match="unknown setting") as failure:
+        load_config_file(path)
+
+    assert "\n" not in str(failure.value)
+
+
 def test_a_renamed_key_is_rejected_with_its_current_name(write_config):
     path = write_config("run.toml", "order = []\n")
 

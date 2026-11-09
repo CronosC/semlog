@@ -154,9 +154,11 @@ def test_both_sinks_write_a_float_as_a_decimal(tmp_path):
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("iri", ["", "http://example.org/a b#", "http://x>#"])
+@pytest.mark.parametrize(
+    "iri", ["", "http://example.org/a b#", "http://x>#", 'http://x.org/a"b/']
+)
 def test_a_base_iri_that_cannot_be_written_is_rejected(iri):
-    with pytest.raises(ConfigError, match="Base IRI"):
+    with pytest.raises(ConfigError, match="^iri: .*cannot be written"):
         InMemorySink(iri, OWLProfile.OWL2DL)
 
 
@@ -190,7 +192,7 @@ def test_a_term_is_written_under_the_configured_tbox_iri(backend, tmp_path, read
 
 
 def test_an_iri_ending_in_a_hash_is_rejected():
-    with pytest.raises(ConfigError, match="iri must end in '/'"):
+    with pytest.raises(ConfigError, match="^iri: must end in '/'"):
         InMemorySink("https://example.org/upper#", OWLProfile.OWL2DL)
 
 

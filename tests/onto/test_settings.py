@@ -136,3 +136,28 @@ def test_an_unknown_enum_value_is_rejected_on_construction():
 def test_settings_that_contradict_each_other_fail_validation(overrides, match):
     with pytest.raises(ConfigError, match=match):
         OntoBuildSettings(**overrides).validate()
+
+
+def test_every_contradiction_is_reported_on_one_line():
+    settings = OntoBuildSettings(profile=OWLProfile.OWL2EL, order_representations=[EF])
+
+    with pytest.raises(
+        ConfigError, match="^The settings contradict each other: "
+    ) as failure:
+        settings.validate()
+
+    assert "\n" not in str(failure.value)
+    assert "ef needs df" in str(failure.value)
+
+
+@pytest.mark.parametrize("char", ['"', "{", "|", "\\", "^", "`"])
+def test_a_tbox_iri_with_a_character_an_iri_cannot_hold_is_rejected(char):
+    with pytest.raises(ConfigError, match="^tbox_iri: .* cannot be written"):
+        OntoBuildSettings(tbox_iri=f"https://example.org/a{char}b#")
+
+
+def test_a_sequence_given_as_one_string_is_rejected_with_a_sentence():
+    with pytest.raises(
+        ConfigError, match="^The setting order_representations must be a list"
+    ):
+        OntoBuildSettings(order_representations="df")

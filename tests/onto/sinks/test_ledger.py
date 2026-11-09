@@ -23,6 +23,25 @@ def test_a_name_that_cannot_be_an_iri_local_name_is_rejected(ledger, name):
         ledger.declare(name, CLASS, "a test")
 
 
+def test_an_unsafe_name_is_reported_in_the_terms_a_user_types(ledger):
+    with pytest.raises(
+        UnsafeLocalNameError, match="Rename it in the input log or the declare_file"
+    ) as failure:
+        ledger.declare("bad name", CLASS, "a test")
+
+    assert "clean_oced_data" not in str(failure.value)
+    assert "CSV" not in str(failure.value)
+
+
+def test_a_property_name_starting_with_a_digit_is_reported_without_python_names(
+    ledger,
+):
+    with pytest.raises(UnsafeLocalNameError, match="Rename it") as failure:
+        ledger.declare("2modifies", OBJECT, "a test")
+
+    assert "clean_oced_data" not in str(failure.value)
+
+
 def test_a_hyphen_or_a_dot_is_accepted_in_a_name(ledger):
     ledger.declare("web-workers", CLASS, "a test")
     ledger.declare("has_unit.price", OBJECT, "a test")

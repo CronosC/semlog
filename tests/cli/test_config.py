@@ -37,6 +37,31 @@ def test_an_unknown_enum_value_names_the_setting(ocel):
         resolve(ocel, profile="OWL2QL")
 
 
+def test_an_unknown_value_given_as_a_flag_names_the_flag(ocel):
+    with pytest.raises(ConfigError, match="^--profile: unknown value 'foo'"):
+        resolve(ocel, profile="foo")
+
+
+def test_an_unknown_value_in_the_config_names_the_key(ocel, write_config):
+    path = write_config("run.toml", f'input = "{ocel}"\nprofile = "foo"\n')
+
+    with pytest.raises(ConfigError, match="^profile: unknown value 'foo'"):
+        resolve_run_config({}, config_file=path)
+
+
+def test_settings_that_contradict_each_other_are_reported_on_one_line(ocel):
+    with pytest.raises(ConfigError, match="contradict each other") as failure:
+        resolve(ocel, profile="OWL2EL", order_representations=["ef"])
+
+    assert "\n" not in str(failure.value)
+    assert "OntoBuildSettings" not in str(failure.value)
+
+
+def test_a_log_input_setting_given_as_a_flag_names_the_flag(ocel):
+    with pytest.raises(ConfigError, match="^--auto-case-concepts: expected"):
+        resolve_log_inputs({"input": [str(ocel)], "auto_case_concepts": 0})
+
+
 def test_settings_are_validated_against_each_other(ocel):
     with pytest.raises(ConfigError, match="ef is not available under OWL2EL"):
         resolve(ocel, profile="OWL2EL", order_representations=["df", "ef"])
@@ -246,7 +271,7 @@ def test_output_formats_are_read_in_any_case(ocel):
 def test_an_unknown_output_format_names_the_setting_and_the_choices(ocel):
     with pytest.raises(
         ConfigError,
-        match=r"output_formats: unknown value 'nt'\. Choose from: ofn, owl, owx, ttl, omn\.",
+        match=r"^--output-formats: unknown value 'nt'\. Choose from: ofn, owl, owx, ttl, omn\.",
     ):
         resolve(ocel, output_formats=["nt"])
 

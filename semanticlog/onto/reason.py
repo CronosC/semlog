@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
+from typing import NoReturn
 
 import jpype
 from owlapy.owl_axiom import OWLObjectPropertyAssertionAxiom
@@ -86,28 +87,109 @@ _JVM_OPTIONS: tuple[str, ...] = (
 )
 
 
+_MIN_JAVA = 17
+
+_INSTALL_JAVA = (
+    f"Install a JRE or JDK {_MIN_JAVA} or newer and put it on PATH or in JAVA_HOME."
+)
+
+_HEAP_ADVICE = (
+    "Java ran out of memory. Raise the Java heap with JAVA_TOOL_OPTIONS=-Xmx<size>, "
+    "such as JAVA_TOOL_OPTIONS=-Xmx8g, and run the command again."
+)
+
+# How far down the causes of a Java exception to look for an OutOfMemoryError.
+_MAX_CAUSES = 20
+
+
 def start_jvm() -> None:
-    """Start the JVM the OWL API runs on, unless one is running.
+    """Start the JVM the OWL API runs on, unless one is running, and check its version.
 
     owlapy starts a JVM without options on the first ontology load. Call this
     before that.
 
     Raises:
-        DependencyError: If there is no JVM to start.
+        DependencyError: If there is no JVM, it does not start, its heap is
+            too small to start, or it is older than Java 17.
     """
-    if jpype.isJVMStarted():
-        return
-    try:
-        jpype.getDefaultJVMPath()
-    except ValueError as exc:
-        raise DependencyError(
-            "No JVM found. Install a JRE or JDK 17 or newer and put it on PATH "
-            "or in JAVA_HOME."
-        ) from exc
+    if not jpype.isJVMStarted():
+        try:
+            jvm_path = jpype.getDefaultJVMPath()
+        except ValueError as exc:
+            raise DependencyError(f"No JVM found. {_INSTALL_JAVA}") from exc
 
-    jars = resources.files("owlapy") / "jar_dependencies"
-    classpath = [str(jar) for jar in jars.iterdir() if jar.name.endswith(".jar")]
-    jpype.startJVM(*_JVM_OPTIONS, classpath=classpath, ignoreUnrecognized=True)
+        jars = resources.files("owlapy") / "jar_dependencies"
+        classpath = [str(jar) for jar in jars.iterdir() if jar.name.endswith(".jar")]
+        try:
+            jpype.startJVM(*_JVM_OPTIONS, classpath=classpath, ignoreUnrecognized=True)
+        except (ValueError, OSError, RuntimeError, SystemError) as exc:
+            if "OutOfMemoryError" in str(exc):
+                raise DependencyError(_HEAP_ADVICE) from exc
+            raise DependencyError(
+                f"{_describe_jvm(jvm_path)} does not start: {_one_line(exc)}. "
+                f"{_INSTALL_JAVA}"
+            ) from exc
+
+    version = jpype.getJVMVersion()
+    feature = version[1] if version[0] == 1 else version[0]
+    if feature < _MIN_JAVA:
+        found = ".".join(str(part) for part in version)
+        raise DependencyError(
+            f"The OWL API needs Java {_MIN_JAVA} or newer, but the JVM is Java "
+            f"{found}. {_INSTALL_JAVA}"
+        )
+
+
+def _describe_jvm(jvm_path: str) -> str:
+    """Name a JVM library by the Java version in the `release` file of its JDK, if found."""
+    for home in list(Path(jvm_path).parents)[:5]:
+        release = home / "release"
+        if not release.is_file():
+            continue
+        for line in release.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("JAVA_VERSION="):
+                version = line.partition("=")[2].strip().strip('"')
+                return f"Java {version} at {home}"
+    return f"The JVM at {jvm_path}"
+
+
+def _one_line(exc: BaseException) -> str:
+    """Return the text of an exception with its whitespace runs collapsed to one space."""
+    return " ".join(str(exc).split()).rstrip(".")
+
+
+def _is_out_of_memory(exc: BaseException) -> bool:
+    """Whether a Java OutOfMemoryError raised `exc` or is among its causes."""
+    if not jpype.isJVMStarted():
+        return False
+    throwable = jpype.JClass("java.lang.Throwable")
+    out_of_memory = jpype.JClass("java.lang.OutOfMemoryError")
+    cause: BaseException | None = exc
+    for _ in range(_MAX_CAUSES):
+        if cause is None:
+            return False
+        if isinstance(cause, out_of_memory):
+            return True
+        cause = cause.getCause() if isinstance(cause, throwable) else cause.__cause__
+    return False
+
+
+def raise_java_error(exc: Exception, message: str) -> NoReturn:
+    """Raise the error for an exception from the OWL API or a reasoner, chained to it.
+
+    Args:
+        exc: The exception raised.
+        message: What failed and what to change, for an exception other than
+            a heap exhaustion. The exception text is appended.
+
+    Raises:
+        DependencyError: If Java ran out of memory, saying how to raise the
+            heap.
+        InputError: Otherwise, holding `message`.
+    """
+    if _is_out_of_memory(exc):
+        raise DependencyError(_HEAP_ADVICE) from exc
+    raise InputError(f"{message} Java reported: {_one_line(exc)}.") from exc
 
 
 class Reasoner:
@@ -128,7 +210,7 @@ class Reasoner:
 
     Raises:
         ConfigError: If the backend is not one of the three supported.
-        DependencyError: If there is no JVM to run the OWL API on.
+        DependencyError: If there is no usable JVM, or Java ran out of memory.
         InputError: If the ontology cannot be loaded, or the backend cannot
             start over it. HermiT rejects a timestamp with microseconds.
         FileNotFoundError: If there is no ontology at `path`.
@@ -156,17 +238,19 @@ class Reasoner:
         try:
             self.ontology = SyncOntology(self.path)
         except Exception as exc:
-            raise InputError(
-                f"The OWL API cannot read {path}:\n  {exc}\n"
-                "Build the ontology again, or check that a build wrote the file."
-            ) from exc
+            raise_java_error(
+                exc,
+                f"The OWL API cannot read {path}. Build the ontology again, or "
+                "check that a build wrote the file.",
+            )
         try:
             self.reasoner = SyncReasoner(self.ontology, reasoner=backend)
         except Exception as exc:
-            raise InputError(
-                f"{backend} cannot start over this ontology:\n  {exc}\n"
-                f"Try one of the other backends: {others}."
-            ) from exc
+            raise_java_error(
+                exc,
+                f"{backend} cannot start over this ontology. Try one of the other "
+                f"backends: {others}.",
+            )
 
         unsupported = _UNSUPPORTED.get(backend, frozenset())
         self.possible_generators = [g for g in _GENERATORS if g not in unsupported]
@@ -256,10 +340,11 @@ class Reasoner:
 
     @contextmanager
     def _reporting(self, what: str) -> Iterator[None]:
-        """Wrap a backend exception in an InputError naming the backend and the step.
+        """Wrap a backend exception in an error naming the backend and the step.
 
         Raises:
-            InputError: If the backend raised.
+            DependencyError: If Java ran out of memory.
+            InputError: If the backend raised anything else.
         """
         try:
             yield
@@ -267,11 +352,11 @@ class Reasoner:
             raise
         except Exception as exc:
             others = ", ".join(b for b in REASONER_BACKENDS if b != self.backend)
-            raise InputError(
-                f"{self.backend} failed while {what} over {self.path}:\n"
-                f"  {exc}\n"
-                f"Try one of the other backends: {others}."
-            ) from exc
+            raise_java_error(
+                exc,
+                f"{self.backend} failed while {what} over {self.path}. Try one of "
+                f"the other backends: {others}.",
+            )
 
     def save(self, save_path: str | None = None) -> None:
         """Write the ontology to `save_path`, or over the source file.
@@ -282,6 +367,7 @@ class Reasoner:
 
         Raises:
             ConfigError: If the suffix of `save_path` names no format.
+            DependencyError: If Java ran out of memory.
             InputError: If the OWL API cannot write `save_path`.
         """
         if save_path is not None:
@@ -293,6 +379,10 @@ class Reasoner:
         try:
             self.ontology.save(str(partial))
             partial.replace(self.path)
+        except Exception as exc:
+            if _is_out_of_memory(exc):
+                raise DependencyError(_HEAP_ADVICE) from exc
+            raise
         finally:
             partial.unlink(missing_ok=True)
 
@@ -306,6 +396,7 @@ def save_ontology(
     it. The prefixes of the source document are kept.
 
     Raises:
+        DependencyError: If Java ran out of memory. No file is left.
         InputError: If the OWL API cannot write the file. No file is left.
     """
     manager = ontology.owlapi_manager
@@ -326,8 +417,10 @@ def save_ontology(
         manager.saveOntology(owlapi_ontology, document_format, iri)
         partial.replace(target)
     except Exception as exc:
-        raise InputError(
-            f"Cannot write {target} as {output_format.value}:\n  {exc}"
-        ) from exc
+        raise_java_error(
+            exc,
+            f"Cannot write {target} as {output_format.value}. Check that the "
+            "directory is writable and has space.",
+        )
     finally:
         partial.unlink(missing_ok=True)

@@ -8,7 +8,7 @@ take which settings.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -25,10 +25,14 @@ from semanticlog.core.enums import (
     resolve_reasoner_backend,
 )
 from semanticlog.core.errors import ConfigError
-from semanticlog.core.vocabulary import TBOX_IRI, default_iri
+from semanticlog.core.vocabulary import TBOX_IRI, check_log_iri, default_iri
 from semanticlog.data.binning import DEFAULT_BIN_LABELS, DEFAULT_BINS
 from semanticlog.data.loading import LOG_SUFFIXES
-from semanticlog.onto.settings import DEFAULT_MAX_EF_PAIRS, OntoBuildSettings
+from semanticlog.onto.settings import (
+    DEFAULT_MAX_EF_PAIRS,
+    OntoBuildSettings,
+    check_tbox_iri,
+)
 
 _SETTINGS_DEFAULTS: dict[str, Any] = OntoBuildSettings().to_dict()
 
@@ -59,6 +63,9 @@ def enum_choices(enum_cls: type[BuildEnum]) -> str:
     return " | ".join(kept)
 
 
+Reader = Callable[[Any, str], Any]
+
+
 def _as_list(value: Any) -> list[Any]:
     """Read a setting as a list, accepting a single value or nothing."""
     if value is None:
@@ -80,6 +87,20 @@ def _as_int(value: Any, key: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ConfigError(f"{key}: expected a whole number, got {value!r}.")
     return value
+
+
+def _int_from(minimum: int) -> Reader:
+    """Read a setting as a whole number of at least `minimum`."""
+
+    def reader(value: Any, key: str) -> int:
+        number = _as_int(value, key)
+        if number < minimum:
+            raise ConfigError(
+                f"{key}: expected a whole number of at least {minimum}, got {number}."
+            )
+        return number
+
+    return reader
 
 
 _SUPPORT_RANGE = "a share of the traces above 0 and up to 1"
@@ -122,7 +143,19 @@ def _as_reasoner_backend(value: Any, key: str) -> str:
     return resolve_reasoner_backend(_as_str(value, key), key=key)
 
 
-Reader = Callable[[Any, str], Any]
+def _as_log_iri(value: Any, key: str) -> str:
+    """Read the base IRI of the names from the log."""
+    iri = _as_str(value, key)
+    check_log_iri(iri, key)
+    return iri
+
+
+def _as_tbox_iri(value: Any, key: str) -> str:
+    """Read the namespace of the schema names."""
+    iri = _as_str(value, key)
+    check_tbox_iri(iri, key)
+    return iri
+
 
 type Target = Literal["settings", "run"]
 
@@ -227,15 +260,13 @@ def _check_distinct_stems(inputs: Sequence[Path]) -> None:
     clashing = {stem: paths for stem, paths in by_stem.items() if len(paths) > 1}
     if not clashing:
         return
-    lines = [
-        f"  {stem}: " + ", ".join(str(p) for p in paths)
+    named = ", ".join(
+        f"{stem} ({', '.join(str(p) for p in paths)})"
         for stem, paths in sorted(clashing.items())
-    ]
+    )
     raise ConfigError(
-        "These inputs share a stem:\n"
-        + "\n".join(lines)
-        + "\n\nBuild them one at a time with --name, or into separate --output "
-        "directories."
+        f"These inputs share a stem: {named}. Build them one at a time with "
+        "--name, or into separate --output directories."
     )
 
 
@@ -304,7 +335,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     Setting(
         "iri",
         None,
-        _optional(_as_str),
+        _optional(_as_log_iri),
         "run",
         help=(
             f"Base IRI of every name from the log (default: {default_iri('STEM')}, "
@@ -315,7 +346,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     Setting(
         "tbox_iri",
         settings_default("tbox_iri"),
-        _as_str,
+        _as_tbox_iri,
         "settings",
         help=(
             f"Namespace of the schema classes and properties (default: {TBOX_IRI}). "
@@ -361,7 +392,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     Setting(
         "auto_case_concepts",
         3,
-        _as_int,
+        _int_from(1),
         "run",
         help="How many object types to auto-select (default: 3).",
         argparse={"type": int, "metavar": "N"},
@@ -534,7 +565,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     Setting(
         "max_ef_pairs",
         settings_default("max_ef_pairs"),
-        _as_int,
+        _int_from(0),
         "settings",
         help=(
             "Maximum number of eventually-follows pairs "
@@ -593,7 +624,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     Setting(
         "size_limit_mb",
         0,
-        _as_int,
+        _int_from(0),
         "run",
         help="Skip inputs larger than this many MB (default: 0, no limit).",
         argparse={"type": int, "metavar": "MB"},
@@ -649,6 +680,25 @@ def settings_targeting(target: Target) -> tuple[Setting, ...]:
     return tuple(s for s in BUILD_SETTINGS if s.target == target)
 
 
-def read_setting(merged: Mapping[str, Any], key: str) -> Any:
-    """Read one setting out of a merged configuration, as the type it has."""
-    return _BY_KEY[key].read(merged[key], key)
+def setting_name(key: str, flagged: Collection[str]) -> str:
+    """Return how an error names a setting: by its flag if one gave the value, else by its key."""
+    declared = _BY_KEY[key]
+    if key in flagged and declared.argparse is not None:
+        return declared.flag
+    return key
+
+
+def read_setting(
+    merged: Mapping[str, Any], key: str, flagged: Collection[str] = ()
+) -> Any:
+    """Read one setting out of a merged configuration, as the type it has.
+
+    Args:
+        merged: Every setting, flags applied over the config over the defaults.
+        key: The setting to read.
+        flagged: Keys whose value a flag gave. An error names their flag.
+
+    Raises:
+        ConfigError: If the value is not one the setting takes.
+    """
+    return _BY_KEY[key].read(merged[key], setting_name(key, flagged))

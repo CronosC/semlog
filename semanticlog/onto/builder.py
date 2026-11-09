@@ -195,8 +195,8 @@ class OCEDOntoBuilder:
         sink: Where to write. Defaults to an in-memory sink.
 
     Raises:
-        ConfigError: If `iri` is empty or holds whitespace or `>`, and no
-            sink is given.
+        ConfigError: If `iri` cannot be a log base, as `AxiomSink` checks,
+            and no sink is given.
 
     Attributes:
         sink: Where the axioms go.
@@ -407,10 +407,10 @@ class OCEDOntoBuilder:
         inputs: BuildInputs,
     ) -> BuildResult:
         """Run the build without aborting the sink on failure."""
+        self._claim_single_use()
         self.settings.validate()
         inputs.validate(self.settings)
         audit_build(data, self.settings, inputs)
-        self._claim_single_use()
 
         attribute_history = self.settings.emits_attribute_history
         if attribute_history and not data.ocel_mode:

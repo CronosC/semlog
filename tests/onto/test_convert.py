@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import jpype
 import pytest
 
 from semanticlog.core.enums import EventOrderRepresentation, OutputFormat
-from semanticlog.core.errors import InputError
+from semanticlog.core.errors import DependencyError, InputError
 from semanticlog.onto import reason as reason_module
 from semanticlog.onto.convert import convert
 from semanticlog.onto.inputs import BuildInputs
@@ -70,3 +71,16 @@ def test_a_failed_save_leaves_no_file_and_names_the_format(
         convert(built, {OutputFormat.TTL: target})
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_heap_exhaustion_while_loading_names_java_tool_options(
+    built, tmp_path, monkeypatch
+):
+    def exhaust(*args, **kwargs):
+        raise jpype.JClass("java.lang.OutOfMemoryError")("Java heap space")
+
+    reason_module.start_jvm()
+    monkeypatch.setattr("semanticlog.onto.convert.SyncOntology", exhaust)
+
+    with pytest.raises(DependencyError, match="JAVA_TOOL_OPTIONS=-Xmx"):
+        convert(built, {OutputFormat.TTL: tmp_path / "pipeline.ttl"})

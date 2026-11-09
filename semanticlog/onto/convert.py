@@ -9,8 +9,7 @@ from pathlib import Path
 from owlapy.owl_ontology import SyncOntology
 
 from semanticlog.core.enums import OutputFormat
-from semanticlog.core.errors import InputError
-from semanticlog.onto.reason import save_ontology, start_jvm
+from semanticlog.onto.reason import raise_java_error, save_ontology, start_jvm
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ def convert(source: Path, targets: Mapping[OutputFormat, Path]) -> None:
     moved into place when complete. The targets written before a failure stay.
 
     Raises:
-        DependencyError: If there is no JVM to run the OWL API on.
+        DependencyError: If there is no usable JVM, or Java ran out of memory.
         InputError: If the OWL API cannot read the source or write a target.
             A target that fails leaves no file.
     """
@@ -32,10 +31,11 @@ def convert(source: Path, targets: Mapping[OutputFormat, Path]) -> None:
     try:
         ontology = SyncOntology(str(source))
     except Exception as exc:
-        raise InputError(
-            f"The OWL API cannot read {source}:\n  {exc}\n"
-            "Build the ontology again, or check that a build wrote the file."
-        ) from exc
+        raise_java_error(
+            exc,
+            f"The OWL API cannot read {source}. Build the ontology again, or "
+            "check that a build wrote the file.",
+        )
     for output_format, target in targets.items():
         save_ontology(ontology, output_format, target)
         logger.info("Ontology saved as %s: %s", output_format.value, target)

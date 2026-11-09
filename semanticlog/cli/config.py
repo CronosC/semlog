@@ -8,7 +8,7 @@ over the defaults.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -56,9 +56,38 @@ _ANNOTATION_KEYS = {"label", "comment"}
 def _merged_settings(
     overrides: Mapping[str, Any], config_file: str | Path | None
 ) -> dict[str, Any]:
-    """Apply the config file and then the flags on top of the defaults."""
+    """Apply the config file and then the flags on top of the defaults.
+
+    Raises:
+        ConfigError: If the config file cannot be read, or no input is given
+            and a flag took an input path as one of its values.
+    """
     from_file = load_config_file(config_file) if config_file is not None else {}
-    return {**BUILD_DEFAULTS, **from_file, **overrides}
+    merged = {**BUILD_DEFAULTS, **from_file, **overrides}
+    if not merged["input"]:
+        _check_swallowed_input(overrides)
+    return merged
+
+
+def _check_swallowed_input(overrides: Mapping[str, Any]) -> None:
+    """Raise if a flag that takes several values ends in an existing file.
+
+    Such a flag, given before the input, takes the input path as a value.
+
+    Raises:
+        ConfigError: Naming the path and the flag.
+    """
+    for key, value in overrides.items():
+        declared = setting(key)
+        takes_several = (declared.argparse or {}).get("nargs") in ("*", "+")
+        if not takes_several or not value:
+            continue
+        last = value[-1]
+        if isinstance(last, str) and Path(last).is_file():
+            raise ConfigError(
+                f"No input given, and {declared.flag} took {last} as one of its "
+                f"values. Put {last} before {declared.flag}."
+            )
 
 
 def _loader_columns(named: Mapping[str, Any]) -> dict[str, Any]:
@@ -135,19 +164,21 @@ def resolve_log_inputs(
         ConfigError: If a setting is missing, unknown or of the wrong sort.
     """
     merged = _merged_settings(overrides, config_file)
-    inputs = read_setting(merged, "input")
+
+    def read(key: str) -> Any:
+        return read_setting(merged, key, overrides)
+
+    inputs = read("input")
     return LogInputs(
         inputs=inputs,
-        columns=_loader_columns(
-            {key: read_setting(merged, key) for key in COLUMN_KEYS}
-        ),
-        ocel_extensions=tuple(read_setting(merged, "ocel_extensions")),
-        case_concepts=read_setting(merged, "case_concepts"),
-        auto_case_concepts=read_setting(merged, "auto_case_concepts"),
-        declare_file=read_setting(merged, "declare_file"),
-        constraints=read_setting(merged, "constraints"),
-        constraint_support=read_setting(merged, "constraint_support"),
-        itemset_support=read_setting(merged, "itemset_support"),
+        columns=_loader_columns({key: read(key) for key in COLUMN_KEYS}),
+        ocel_extensions=tuple(read("ocel_extensions")),
+        case_concepts=read("case_concepts"),
+        auto_case_concepts=read("auto_case_concepts"),
+        declare_file=read("declare_file"),
+        constraints=read("constraints"),
+        constraint_support=read("constraint_support"),
+        itemset_support=read("itemset_support"),
         config_file=None if config_file is None else Path(config_file),
         warnings=tuple(_column_warnings(merged, inputs)),
     )
@@ -371,11 +402,14 @@ def _annotation_document_problem(document: Any) -> str | None:
     return None
 
 
-def _settings_from(merged: dict[str, Any]) -> OntoBuildSettings:
+def _settings_from(
+    merged: dict[str, Any], flagged: Collection[str]
+) -> OntoBuildSettings:
     """Build the ontology settings from the merged configuration."""
-    kwargs: dict[str, Any] = {}
-    for declared in settings_targeting("settings"):
-        kwargs[declared.key] = declared.read(merged[declared.key], declared.key)
+    kwargs: dict[str, Any] = {
+        declared.key: read_setting(merged, declared.key, flagged)
+        for declared in settings_targeting("settings")
+    }
     return OntoBuildSettings(**kwargs)
 
 
@@ -428,9 +462,10 @@ def resolve_run_config(
     """
     merged = _merged_settings(overrides, config_file)
 
-    settings = _settings_from(merged)
+    settings = _settings_from(merged, overrides)
     run: dict[str, Any] = {
-        s.field or s.key: read_setting(merged, s.key) for s in settings_targeting("run")
+        s.field or s.key: read_setting(merged, s.key, overrides)
+        for s in settings_targeting("run")
     }
     inputs: tuple[Path, ...] = run["inputs"]
 

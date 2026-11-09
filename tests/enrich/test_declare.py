@@ -115,11 +115,19 @@ def enricher(fakes, tiny_store, log, monkeypatch):
     return DeclareEnricher(tiny_store)
 
 
-def test_the_enricher_needs_declare4py_and_lydia(monkeypatch, tiny_store):
+def test_a_missing_declare4py_names_the_command_and_the_install_steps(
+    monkeypatch, tiny_store
+):
     monkeypatch.setattr(declare_module, "_DECLARE4PY_AVAILABLE", False)
 
-    with pytest.raises(DependencyError, match="needs Declare4Py and its Lydia backend"):
+    with pytest.raises(DependencyError, match="^semlog mine-declare needs") as failure:
         DeclareEnricher(tiny_store)
+
+    message = str(failure.value)
+    assert "uv sync --extra declare" in message
+    assert "lydia" in message
+    assert "PATH" in message
+    assert "DeclareEnricher" not in message
 
 
 def test_the_model_declares_every_activity_once(enricher, log):
@@ -248,8 +256,17 @@ def test_two_constraints_that_get_one_class_name_are_rejected():
         _concept("order", columns, ["t1", "t2"])
 
 
-def test_a_column_that_names_no_constraint_is_rejected():
-    with pytest.raises(InputError, match="names no constraint"):
+def test_two_constraints_that_get_one_class_name_are_reported_on_one_line():
+    columns = {"Response[a__b, c] | | |": [1, 0], "Response[a, b__c] | | |": [0, 1]}
+
+    with pytest.raises(InputError, match="both get the class name") as failure:
+        _concept("order", columns, ["t1", "t2"])
+
+    assert "\n" not in str(failure.value)
+
+
+def test_a_column_that_names_no_constraint_is_a_dependency_error():
+    with pytest.raises(DependencyError, match="names no constraint"):
         _concept("order", {"state": [1, 0]}, ["t1", "t2"])
 
 

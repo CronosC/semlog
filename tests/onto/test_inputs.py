@@ -25,3 +25,25 @@ def test_an_order_representation_without_its_input_is_rejected(order, match):
 
     with pytest.raises(ConfigError, match=match):
         BuildInputs().validate(settings)
+
+
+def test_missing_inputs_are_reported_on_one_line_in_the_terms_a_user_types():
+    settings = OntoBuildSettings(
+        order_representations=[
+            EventOrderRepresentation.DF,
+            EventOrderRepresentation.DECLARE,
+        ]
+    )
+
+    with pytest.raises(
+        ConfigError, match="^The build inputs are incomplete: "
+    ) as failure:
+        BuildInputs().validate(settings)
+
+    assert "\n" not in str(failure.value)
+    assert "BuildInputs" not in str(failure.value)
+
+
+def test_case_concepts_given_as_one_string_are_rejected_with_a_sentence():
+    with pytest.raises(ConfigError, match="^The setting case_concepts must be a list"):
+        BuildInputs(case_concepts="order")

@@ -9,11 +9,13 @@ import pandas as pd
 import pytest
 
 from semanticlog.core.enums import (
+    EventOrderRepresentation,
     IndividualKind,
     InverseRepresentation,
     OCELExtension,
     OWLProfile,
 )
+from semanticlog.core.errors import ConfigError
 from semanticlog.core.summary import counted
 from semanticlog.core.vocabulary import DEFAULT_IRI, TBOX_IRI, UnsafeLocalNameError
 from semanticlog.data.cleaning import clean_oced_data
@@ -79,6 +81,19 @@ def test_a_second_build_raises_and_adds_nothing(tiny_store, pipeline_store):
     assert "place_order" not in names
 
 
+def test_a_build_that_fails_validation_spends_the_builder(tiny_store):
+    builder = OCEDOntoBuilder(
+        DEFAULT_IRI,
+        OntoBuildSettings(order_representations=[EventOrderRepresentation.DF]),
+    )
+
+    with pytest.raises(ConfigError, match="no case concepts were given"):
+        builder.build_ontology(tiny_store)
+
+    with pytest.raises(ValueError, match="has produced an ontology"):
+        builder.build_ontology(tiny_store, BuildInputs(case_concepts=["order"]))
+
+
 def test_a_build_that_fails_while_emitting_spends_the_builder(tiny_store):
     builder = OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings())
 
@@ -92,7 +107,10 @@ def test_a_build_that_fails_while_emitting_spends_the_builder(tiny_store):
 @pytest.mark.parametrize(
     ("store", "match"),
     [
-        (_event_store(activity="place order"), "'place order' from .* clean_oced_data"),
+        (
+            _event_store(activity="place order"),
+            "'place order' from .* Rename it in the input log",
+        ),
         (_event_store(status=["in progress"]), r"status\.in progress"),
         (_event_store(oid="order/1"), "order/1"),
     ],

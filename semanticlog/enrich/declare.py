@@ -66,9 +66,10 @@ def _constraint_name(column: str) -> str:
     """Return the class name of a Declare4Py column such as `Response[a, b] | | |`."""
     match = _CONSTRAINT_COLUMN.match(str(column))
     if match is None:
-        raise InputError(
+        raise DependencyError(
             f"Declare4Py returned the column {column!r}, which names no "
-            "constraint. Check the installed Declare4Py version."
+            "constraint. Install the version semlog pins with 'uv sync --extra "
+            "declare'."
         )
     activities = [a.strip() for a in match["args"].split(",")]
     return vocab.declare_constraint(match["template"], activities)
@@ -83,8 +84,9 @@ def concept_constraints(case_concept: str, frame: pd.DataFrame) -> ConceptConstr
             constraint holding 1 where the trace satisfies it.
 
     Raises:
-        InputError: If a column names no constraint, or two constraints get
-            the same class name.
+        DependencyError: If a column names no constraint, which the installed
+            Declare4Py version decides.
+        InputError: If two constraints get the same class name.
     """
     trace_ids = frame["trace_id"].astype(str).tolist()
     satisfied: dict[str, frozenset[str]] = {}
@@ -96,9 +98,9 @@ def concept_constraints(case_concept: str, frame: pd.DataFrame) -> ConceptConstr
         if name in sources:
             raise InputError(
                 f"Two constraints mined over {case_concept!r} both get the class "
-                f"name {name!r}:\n  {sources[name]!r}\n  {column!r}\n\n"
-                "Their activity names join to the same text. Rename one of the "
-                "activities in the log."
+                f"name {name!r}: {sources[name]!r} and {column!r}. Their activity "
+                "names join to the same text. Rename one of the activities in the "
+                "log."
             )
         sources[name] = column
         holds = frame[column].eq(1).tolist()
@@ -204,8 +206,10 @@ class DeclareEnricher:
     def __init__(self, data: ReadableStore) -> None:
         if not _DECLARE4PY_AVAILABLE:
             raise DependencyError(
-                "DeclareEnricher needs Declare4Py and its Lydia backend. Install "
-                "Declare4Py and the Lydia LTLf/LDLf solver."
+                "semlog mine-declare needs Declare4Py and the Lydia solver. "
+                "Install Declare4Py with 'uv sync --extra declare' and put the "
+                "lydia binary on PATH, as the README's DECLARE support section "
+                "describes."
             )
         self.data = data
 

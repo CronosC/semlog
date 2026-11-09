@@ -20,7 +20,7 @@ from semanticlog.core.enums import (
     OWLProfile,
 )
 from semanticlog.core.errors import ConfigError
-from semanticlog.core.vocabulary import TBOX_IRI
+from semanticlog.core.vocabulary import TBOX_IRI, check_iri
 from semanticlog.data.binning import DEFAULT_BIN_LABELS, DEFAULT_BINS, check_bins
 
 DEFAULT_MAX_EF_PAIRS = 50_000_000
@@ -52,10 +52,9 @@ class OntoBuildSettings:
 
     Raises:
         ConfigError: If a sequence field is given a plain string, an enum
-            field an unknown value, or `tbox_iri` is empty, holds whitespace
-            or `>`, or ends in neither `#` nor `/`. With a binning mode
-            selected, also if `bins` is below two or `bin_labels` does not
-            hold exactly `bins` entries that all differ.
+            field an unknown value, or `tbox_iri` fails `check_tbox_iri`.
+            With a binning mode selected, also if `bins` is below two or
+            `bin_labels` does not hold exactly `bins` entries that all differ.
     """
 
     profile: OWLProfile = OWLProfile.OWL2DL
@@ -92,8 +91,8 @@ class OntoBuildSettings:
             value = getattr(self, name)
             if isinstance(value, str):
                 raise ConfigError(
-                    f"{name} must be a list, got the string {value!r}. "
-                    f"Pass [{value!r}]."
+                    f"The setting {name} must be a list, got the string "
+                    f"{value!r}. Pass [{value!r}]."
                 )
             if not isinstance(value, tuple):
                 object.__setattr__(self, name, tuple(value))
@@ -252,9 +251,7 @@ class OntoBuildSettings:
             )
 
         if errors:
-            raise ConfigError(
-                "Invalid OntoBuildSettings:\n" + "\n".join(f"  - {e}" for e in errors)
-            )
+            raise ConfigError("The settings contradict each other: " + " ".join(errors))
 
     def to_dict(self) -> dict:
         """Return every field as a JSON-compatible value, keyed by field name."""
@@ -264,19 +261,16 @@ class OntoBuildSettings:
         }
 
 
-def check_tbox_iri(iri: str) -> None:
+def check_tbox_iri(iri: str, name: str = "tbox_iri") -> None:
     """Raise `ConfigError` unless `iri` can hold the schema names.
 
-    It must be non-empty, hold no whitespace or `>`, and end in `#` or `/`.
+    It must pass `check_iri` and end in `#` or `/`. `name` is the setting or
+    flag quoted in the error.
     """
-    if not iri or any(c.isspace() for c in iri) or ">" in iri:
-        raise ConfigError(
-            f"tbox_iri {iri!r} cannot be written into an ontology. Use a "
-            "non-empty IRI without whitespace or '>'."
-        )
+    check_iri(iri, name)
     if not iri.endswith(("#", "/")):
         raise ConfigError(
-            f"tbox_iri must end in '#' or '/', got {iri!r}. Append one of them."
+            f"{name}: must end in '#' or '/', got {iri!r}. Append one of them."
         )
 
 

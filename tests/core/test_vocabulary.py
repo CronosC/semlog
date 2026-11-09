@@ -5,7 +5,43 @@ import pandas as pd
 import pytest
 
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.errors import InputError
+from semanticlog.core.errors import ConfigError, InputError
+
+
+@pytest.mark.parametrize(
+    "iri",
+    [
+        "https://x.org/a b/",
+        "https://x.org/a\tb/",
+        'https://x.org/a"b/',
+        "https://x.org/{a}/",
+        "https://x.org/a|b/",
+        "https://x.org/a\\b/",
+        "https://x.org/a^b/",
+        "https://x.org/a`b/",
+        "https://x.org/<a>/",
+        "https://x.org/a\x01b/",
+    ],
+)
+def test_an_iri_with_a_character_an_iri_cannot_hold_is_rejected(iri):
+    with pytest.raises(
+        ConfigError, match="--iri: .* cannot be written into an ontology"
+    ):
+        vocab.check_iri(iri, "--iri")
+
+
+def test_an_empty_iri_is_rejected():
+    with pytest.raises(ConfigError, match="^iri: an empty IRI cannot be written"):
+        vocab.check_iri("", "iri")
+
+
+def test_an_iri_of_legal_characters_is_accepted():
+    vocab.check_iri("https://example.org/ök/log-1_~%20/", "iri")
+
+
+def test_a_log_iri_ending_in_a_hash_is_rejected():
+    with pytest.raises(ConfigError, match="^iri: must end in '/'"):
+        vocab.check_log_iri("https://example.org/log#", "iri")
 
 
 @pytest.mark.parametrize(

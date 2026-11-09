@@ -78,8 +78,53 @@ def test_an_unusable_configuration_exits_two_with_one_line(ocel, capsys):
 
     assert code == EXIT_USAGE
     err = capsys.readouterr().err
-    assert err.startswith("semlog build: error: Invalid OntoBuildSettings")
+    assert err.startswith("semlog build: error: The settings contradict each other")
     assert "Traceback" not in err
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--size-limit-mb", "-1"],
+        ["--auto-case-concepts", "0"],
+        ["--max-ef-pairs", "-3"],
+        ["--iri", "https://x.org/a b"],
+    ],
+    ids=["size limit", "auto case concepts", "max ef pairs", "iri"],
+)
+def test_a_setting_out_of_range_exits_two_with_one_line_before_the_log_is_read(
+    ocel, capsys, monkeypatch, flags
+):
+    def never(_cfg):
+        raise AssertionError("build_all ran")
+
+    monkeypatch.setattr(sys.modules[MAIN_MODULE], "build_all", never)
+
+    assert main(["build", str(ocel), *flags, "-q"]) == EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith(f"semlog build: error: {flags[0]}")
+    assert err.count("\n") == 1
+
+
+def test_an_unknown_profile_flag_names_the_flag(ocel, capsys):
+    assert main(["build", str(ocel), "--profile", "foo", "-q"]) == EXIT_USAGE
+    assert capsys.readouterr().err.startswith(
+        "semlog build: error: --profile: unknown value 'foo'"
+    )
+
+
+def test_an_input_swallowed_by_a_list_flag_is_named_with_the_flag(ocel, capsys):
+    code = main(["build", "--case-concepts", "order", str(ocel), "-q"])
+
+    assert code == EXIT_USAGE
+    err = capsys.readouterr().err
+    assert f"Put {ocel} before --case-concepts" in err
+    assert err.count("\n") == 1
+
+
+def test_no_input_without_a_file_among_the_flags_asks_for_an_input(capsys):
+    assert main(["build", "--case-concepts", "order", "-q"]) == EXIT_USAGE
+    assert "No input given" in capsys.readouterr().err
 
 
 def test_an_os_error_exits_two_with_one_line(ocel, tmp_path, capsys):

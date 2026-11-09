@@ -53,8 +53,8 @@ def _check_keys(raw: dict[str, Any], source: Path) -> None:
         )
         hints.append(f"{key!r}" + (f" (did you mean {close[0]!r}?)" if close else ""))
     raise ConfigError(
-        f"{source}: unknown setting(s): {', '.join(hints)}.\n"
-        f"Valid settings: {', '.join(_KNOWN_KEYS)}."
+        f"{source}: unknown setting(s): {', '.join(hints)}. Check the spelling, "
+        "or run 'semlog build --help' for every setting."
     )
 
 

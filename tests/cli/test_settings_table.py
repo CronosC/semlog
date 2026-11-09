@@ -8,6 +8,7 @@ from semanticlog.cli.settings_table import (
     BUILD_SETTINGS,
     enum_choices,
     expand_inputs,
+    read_setting,
     setting,
 )
 from semanticlog.core.enums import EventOrderRepresentation, OCELExtension
@@ -48,6 +49,49 @@ def test_enum_choices_list_each_member_once():
 def test_a_value_of_the_wrong_sort_names_its_setting(key, value, match):
     with pytest.raises(ConfigError, match=match):
         setting(key).read(value, key)
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "minimum"),
+    [("auto_case_concepts", 0, 1), ("max_ef_pairs", -3, 0), ("size_limit_mb", -1, 0)],
+)
+def test_a_whole_number_below_its_minimum_is_rejected(key, value, minimum):
+    with pytest.raises(
+        ConfigError, match=f"{key}: expected a whole number of at least {minimum}"
+    ):
+        setting(key).read(value, key)
+
+
+@pytest.mark.parametrize(
+    ("key", "minimum"),
+    [("auto_case_concepts", 1), ("max_ef_pairs", 0), ("size_limit_mb", 0)],
+)
+def test_a_whole_number_at_its_minimum_is_accepted(key, minimum):
+    assert setting(key).read(minimum, key) == minimum
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("iri", "https://x.org/a b"), ("tbox_iri", "https://x.org/a|b#")],
+)
+def test_an_iri_setting_with_a_character_an_iri_cannot_hold_is_rejected(key, value):
+    with pytest.raises(ConfigError, match=f"^{key}: .* cannot be written"):
+        setting(key).read(value, key)
+
+
+def test_an_iri_ending_in_a_hash_is_rejected_when_read():
+    with pytest.raises(ConfigError, match="^--iri: must end in '/'"):
+        setting("iri").read("https://x.org/log#", "--iri")
+
+
+def test_a_value_given_as_a_flag_is_named_by_the_flag():
+    with pytest.raises(ConfigError, match="^--profile: unknown value 'foo'"):
+        read_setting({"profile": "foo"}, "profile", flagged={"profile"})
+
+
+def test_a_value_from_the_config_is_named_by_its_key():
+    with pytest.raises(ConfigError, match="^profile: unknown value 'foo'"):
+        read_setting({"profile": "foo"}, "profile", flagged=set())
 
 
 def test_a_reasoner_backend_is_read_in_any_case():
@@ -101,3 +145,19 @@ def test_two_inputs_sharing_a_stem_are_rejected(tmp_path, ocel):
                 str(tmp_path / "second" / "log.jsonocel"),
             ]
         )
+
+
+def test_inputs_sharing_a_stem_are_named_on_one_line(tmp_path, ocel):
+    for directory in ("first", "second"):
+        (tmp_path / directory).mkdir()
+        (tmp_path / directory / "log.jsonocel").write_bytes(ocel.read_bytes())
+
+    with pytest.raises(ConfigError, match="share a stem") as failure:
+        expand_inputs(
+            [
+                str(tmp_path / "first" / "log.jsonocel"),
+                str(tmp_path / "second" / "log.jsonocel"),
+            ]
+        )
+
+    assert "\n" not in str(failure.value)

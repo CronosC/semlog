@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import IndividualKind, OWLProfile, SinkEntity
-from semanticlog.core.errors import ConfigError
 from semanticlog.onto.sinks.ledger import NameLedger
 from semanticlog.onto.sinks.literals import (
     OWL_DATATYPES,
@@ -56,8 +55,8 @@ class AxiomSink(ABC):
         tbox_iri: Namespace of the schema names.
 
     Raises:
-        ConfigError: If the base IRI is empty, holds whitespace or `>`, or
-            ends in `#`.
+        ConfigError: If the base IRI is empty, holds a character an IRI
+            cannot hold, or ends in `#`.
     """
 
     iri: str
@@ -67,15 +66,7 @@ class AxiomSink(ABC):
     def __init__(
         self, iri: str, profile: OWLProfile, tbox_iri: str = vocab.TBOX_IRI
     ) -> None:
-        if not iri or any(c.isspace() for c in iri) or ">" in iri:
-            raise ConfigError(
-                f"Base IRI {iri!r} cannot be written into an ontology. Use a "
-                "non-empty IRI without whitespace or '>'."
-            )
-        if iri.endswith("#"):
-            raise ConfigError(
-                f"iri must end in '/', got {iri!r}. Replace the trailing '#' with '/'."
-            )
+        vocab.check_log_iri(iri, "iri")
         self.iri = iri if iri.endswith("/") else iri + "/"
         self.profile = profile
         self.tbox_iri = tbox_iri

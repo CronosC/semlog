@@ -34,7 +34,7 @@ class BuildInputs:
     def __post_init__(self) -> None:
         if isinstance(self.case_concepts, str):
             raise ConfigError(
-                "case_concepts must be a list, got the string "
+                "The setting case_concepts must be a list, got the string "
                 f"{self.case_concepts!r}. Pass [{self.case_concepts!r}]."
             )
         if not isinstance(self.case_concepts, tuple):
@@ -64,6 +64,4 @@ class BuildInputs:
             )
 
         if errors:
-            raise ConfigError(
-                "Invalid BuildInputs:\n" + "\n".join(f"  - {e}" for e in errors)
-            )
+            raise ConfigError("The build inputs are incomplete: " + " ".join(errors))
