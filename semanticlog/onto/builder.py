@@ -284,6 +284,17 @@ class OCEDOntoBuilder:
             logger, _KIND_WORDS, declared, extra=[(axioms, "axiom", "axioms")]
         )
 
+    def _report_replaced_controls(self) -> None:
+        """Warn once about the values whose control characters became U+FFFD."""
+        replaced = self.sink.replaced_controls
+        if not replaced:
+            return
+        logger.warning(
+            "Replaced the control characters in %s with U+FFFD: %s.",
+            counted(sum(replaced.values()), "value", "values"),
+            ", ".join(f"{prop} ({n:,})" for prop, n in sorted(replaced.items())),
+        )
+
     def _report_dropped_unions(self) -> None:
         """Log how many union class expressions the profile dropped or replaced."""
         dropped = self.sink.dropped_unions
@@ -428,6 +439,7 @@ class OCEDOntoBuilder:
                 step.run(emitters, context)
 
         self._apply_annotations(inputs.annotations)
+        self._report_replaced_controls()
         self._report_dropped_unions()
         self._report_what_was_kept()
         logger.info("done.")

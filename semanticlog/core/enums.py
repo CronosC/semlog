@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from pathlib import PurePath
 from typing import Self
 
 from semanticlog.core.errors import ConfigError
@@ -212,6 +213,23 @@ class OutputFormat(BuildEnum):
     OWX = "owx"
     TTL = "ttl"
     OMN = "omn"
+
+    @classmethod
+    def of_path(cls, path: str | PurePath) -> OutputFormat:
+        """Return the format the suffix of a path names, in any case.
+
+        Raises:
+            ConfigError: If the suffix names no format.
+        """
+        suffix = PurePath(path).suffix.removeprefix(".").casefold()
+        for member in cls:
+            if member.value == suffix:
+                return member
+        suffixes = ", ".join(f".{m.value}" for m in cls)
+        raise ConfigError(
+            f"Cannot write an ontology to {path}: its suffix names no format. "
+            f"Use one of {suffixes}."
+        )
 
 
 def resolve_reasoner_backend(text: str, *, key: str) -> str:

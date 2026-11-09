@@ -46,3 +46,17 @@ def test_a_float_is_a_decimal_written_without_an_exponent(profile):
     literal = resolve_literal(1.0e20, profile)
 
     assert (literal.datatype, literal.text) == ("decimal", "100000000000000000000")
+
+
+def test_a_control_character_in_a_string_becomes_a_replacement_character():
+    literal = resolve_literal("a\x00b\x01c\x1fd", DL)
+
+    assert (literal.value, literal.text) == ("a\ufffdb\ufffdc\ufffdd",) * 2
+    assert literal.replaced_controls
+
+
+def test_tab_line_feed_carriage_return_and_delete_stay_in_a_string():
+    literal = resolve_literal("a\tb\nc\rd\x7fe\x85f", DL)
+
+    assert literal.text == "a\tb\nc\rd\x7fe\x85f"
+    assert not literal.replaced_controls

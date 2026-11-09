@@ -137,3 +137,15 @@ def test_a_save_that_fails_leaves_the_file_that_was_there(small, monkeypatch):
 
     assert small.read_text(encoding="utf-8") == before
     assert [p.name for p in small.parent.iterdir()] == ["small.owl"]
+
+
+@pytest.mark.reasoner
+@pytest.mark.parametrize(
+    ("suffix", "start"), [("ofn", "Prefix("), ("owl", "<?xml"), ("ttl", "@prefix")]
+)
+def test_a_save_writes_the_format_its_suffix_names(small, tmp_path, suffix, start):
+    target = tmp_path / f"saved.{suffix}"
+
+    Reasoner(str(small), backend=BACKEND).save(str(target))
+
+    assert target.read_text(encoding="utf-8").startswith(start)

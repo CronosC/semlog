@@ -240,7 +240,10 @@ class AnnotationSink(Protocol):
         ...
 
     def annotate_individuals_bulk(
-        self, pairs: list[tuple[str, str]], kind: IndividualKind
+        self,
+        pairs: list[tuple[str, str]],
+        kind: IndividualKind,
+        attribute: str | None = ...,
     ) -> None:
         """Label many individuals of one kind at once."""
         ...
@@ -306,8 +309,8 @@ class AnnotationWriter:
     def write(self, template: str, name: str, **fields: Any) -> None:
         """Annotate one class or property, and its inverse where it has one.
 
-        A label or comment the annotation document gives for `name` is written
-        in place of the derived one.
+        A label or comment the annotation document gives for `name` or for its
+        inverse is written in place of the derived one.
 
         Args:
             template: Entry of `derived_annotations.json` to fill.
@@ -321,18 +324,31 @@ class AnnotationWriter:
         if not self.enabled:
             return
         entry = _entry(template)
+        self._annotate(name, entry["label"], entry["comment"], template, fields)
+        if "inverse_label" not in entry or not self.has_inverses:
+            return
+        self._annotate(
+            self.sink.inverse_name(name),
+            entry["inverse_label"],
+            entry["inverse_comment"],
+            template,
+            fields,
+        )
+
+    def _annotate(
+        self,
+        name: str,
+        label: str,
+        comment: str,
+        template: str,
+        fields: Mapping[str, Any],
+    ) -> None:
+        """Annotate one entity with the document's texts, or else the filled ones."""
         given = {} if vocab.is_tbox(name) else self._document.get(name, {})
         self.sink.annotate_entity(
             name,
-            label=given.get("label") or _fill(entry["label"], template, fields),
-            comment=given.get("comment") or _fill(entry["comment"], template, fields),
-        )
-        if "inverse_label" not in entry or not self.has_inverses:
-            return
-        self.sink.annotate_entity(
-            self.sink.inverse_name(name),
-            label=_fill(entry["inverse_label"], template, fields),
-            comment=_fill(entry["inverse_comment"], template, fields),
+            label=given.get("label") or _fill(label, template, fields),
+            comment=given.get("comment") or _fill(comment, template, fields),
         )
 
     def label_series(
@@ -505,8 +521,8 @@ class AnnotationWriter:
             "owners": " and ".join(phrases),
         }
 
-    def attribute_values(self, value_to_name: dict[Any, str]) -> None:
-        """Label value individuals with the value as the log wrote it."""
+    def attribute_values(self, attr: str, value_to_name: dict[Any, str]) -> None:
+        """Label the value individuals of one attribute with the value as the log wrote it."""
         if not self.enabled:
             return
         values = self._backmap.get(VALUE_KIND, {})
@@ -516,6 +532,7 @@ class AnnotationWriter:
                 for value, name in value_to_name.items()
             ],
             IndividualKind.VALUE,
+            attr,
         )
 
     def relation(

@@ -56,6 +56,7 @@ class NameLedger:
     def __init__(self) -> None:
         self._declared: dict[Key, tuple[SinkEntity, str, str]] = {}
         self._written_schema: set[tuple[object, ...]] = set()
+        self._texts: dict[tuple[str, Key], str] = {}
         self._named_inverses: dict[Key, str] = {
             _key(prop): inverse for prop, inverse in vocab.SCHEMA_NAMED_INVERSES.items()
         }
@@ -245,6 +246,27 @@ class NameLedger:
     def first_annotation(self, kind: str, name: str, text: str) -> bool:
         """Return True the first time this annotation is offered, False after."""
         return self._first(("annotate", kind, _key(name), text))
+
+    def first_text(self, annotation: str, name: str, text: str) -> bool:
+        """Return True the first time an entity gets this label or comment, False after.
+
+        Args:
+            annotation: Either `label` or `comment`.
+
+        Raises:
+            ValueError: If the entity already has another text for it.
+        """
+        key = (annotation, _key(name))
+        written = self._texts.get(key)
+        if written is None:
+            self._texts[key] = text
+            return True
+        if written == text:
+            return False
+        raise ValueError(
+            f"{name!r} already has an rdfs:{annotation} {written!r} and cannot "
+            f"take {text!r}. Annotate each entity once."
+        )
 
     def _first(self, statement: tuple[object, ...]) -> bool:
         """Record a schema statement and return True if it is new.

@@ -2,13 +2,15 @@
 
 A pandas cell becomes a typed literal. A float is an `xsd:decimal` in every
 profile, the type owlapy writes for it. Under OWL 2 EL, whose datatype map has
-no `xsd:boolean` or `xsd:date`, those two are written as strings. Both sinks
-call `resolve_literal` and render the result.
+no `xsd:boolean` or `xsd:date`, those two are written as strings. A control
+character that XML 1.0 forbids becomes U+FFFD in every text. Both sinks call
+`resolve_literal` and render the result.
 """
 
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -36,6 +38,12 @@ OWL_DATATYPES: frozenset[str] = frozenset(
 )
 """The datatypes a data property may be declared to range over."""
 
+REPLACEMENT_CHARACTER = "\ufffd"
+
+# XML 1.0 forbids every C0 control character but tab, line feed and carriage
+# return. It allows DEL and the C1 controls, so they stay.
+_FORBIDDEN_CONTROLS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
 _EL_SUBSTITUTES: dict[str, str] = {
     BOOLEAN: STRING,
     DATE: STRING,
@@ -47,6 +55,16 @@ def profile_datatype(datatype: str, profile: OWLProfile) -> str:
     if profile == OWLProfile.OWL2EL:
         return _EL_SUBSTITUTES.get(datatype, datatype)
     return datatype
+
+
+def replace_control_characters(text: str) -> tuple[str, bool]:
+    """Return the text with each forbidden control character as U+FFFD.
+
+    Returns:
+        The text, and whether any character was replaced.
+    """
+    replaced, count = _FORBIDDEN_CONTROLS.subn(REPLACEMENT_CHARACTER, text)
+    return replaced, count > 0
 
 
 def normalize_value(value: Any) -> Any:
@@ -92,11 +110,14 @@ class Literal:
             such as `true`.
         datatype: Local name of its XSD type, such as `integer`.
         text: The value as it is written inside the literal.
+        replaced_controls: Whether a control character in the text was
+            replaced by U+FFFD.
     """
 
     value: Any
     datatype: str
     text: str
+    replaced_controls: bool = False
 
 
 def _plain_datatype(value: Any) -> tuple[str, str]:
@@ -125,13 +146,17 @@ def resolve_literal(value: Any, profile: OWLProfile) -> Literal | None:
             written as a string.
 
     Returns:
-        The value with its datatype, or None if there was no value.
+        The value with its datatype, or None if there was no value. A string
+        has its forbidden control characters replaced by U+FFFD.
     """
     value = normalize_value(value)
     if value is None:
         return None
 
     datatype, text = _plain_datatype(value)
+    if datatype == STRING:
+        text, replaced = replace_control_characters(text)
+        return Literal(text, STRING, text, replaced)
     if profile != OWLProfile.OWL2EL:
         return Literal(value, datatype, text)
 

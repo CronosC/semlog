@@ -652,6 +652,29 @@ def test_reason_materializes_in_place_without_an_output(built_ofn):
     assert built_ofn.stat().st_size > before
 
 
+@pytest.mark.reasoner
+def test_reason_writes_rdf_xml_into_an_owl_output(built_ofn, tmp_path):
+    target = tmp_path / "materialized.owl"
+
+    assert main(["reason", str(built_ofn), "--output", str(target), "-q"]) == EXIT_OK
+    assert target.read_text(encoding="utf-8").startswith("<?xml")
+
+
+def test_reason_into_an_output_of_no_format_exits_two_with_one_line(
+    built_ofn, tmp_path, capsys
+):
+    capsys.readouterr()
+    target = tmp_path / "materialized.txt"
+
+    code = main(["reason", str(built_ofn), "--output", str(target), "-q"])
+
+    err = capsys.readouterr().err
+    assert code == EXIT_USAGE
+    assert len(err.strip().splitlines()) == 1
+    assert ".ofn, .owl, .owx, .ttl, .omn" in err
+    assert not target.exists()
+
+
 def test_reason_on_a_missing_file_exits_two(tmp_path, capsys):
     assert main(["reason", str(tmp_path / "absent.owl"), "--check", "-q"]) == EXIT_USAGE
     assert "not found" in capsys.readouterr().err

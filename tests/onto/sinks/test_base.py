@@ -387,12 +387,60 @@ def test_a_union_with_a_fallback_is_kept_under_dl(sink):
     assert sink.of_kind("domain") == [("domain", "ships", ["pay", "ship"], False)]
 
 
-def test_a_second_annotation_text_on_one_entity_is_kept(sink):
+@pytest.mark.parametrize("annotation", ["label", "comment"])
+def test_a_second_annotation_text_on_one_entity_is_rejected(sink, annotation):
     sink.add_class("order", source="an object type")
-    sink.annotate_entity("order", label="derived label")
-    sink.annotate_entity("order", label="label from the annotation document")
+    sink.annotate_entity("order", **{annotation: "derived text"})
 
-    assert len(sink.of_kind("annotate")) == 2
+    with pytest.raises(ValueError, match=f"'order' already has an rdfs:{annotation}"):
+        sink.annotate_entity("order", **{annotation: "text from the document"})
+
+
+def test_an_entity_annotated_twice_with_one_text_carries_one_label(
+    real_sink, read_back
+):
+    sink = real_sink()
+    sink.add_class("order", source="an object type")
+    sink.annotate_entity("order", label="Order", comment="An order.")
+    sink.annotate_entity("order", label="Order")
+
+    assert read_back(sink).annotations == {
+        ("order", "label", "Order"),
+        ("order", "comment", "An order."),
+    }
+
+
+def test_a_control_character_becomes_a_replacement_character_on_both_sinks(
+    real_sink, read_back
+):
+    sink = real_sink()
+    sink.add_class("order", source="a test")
+    sink.add_property("has_note", data_prop=True, source="a test")
+    sink.assert_individuals("order", ["o1"], OBJECT)
+    sink.assert_data("has_note", [("o1", "bad\x01char\t")], OBJECT)
+    sink.annotate_entity("order", label="Or\x02der", comment="An\x1f order.")
+    sink.annotate_individuals_bulk([("o1", "order\x0b(o1)")], OBJECT)
+
+    onto = read_back(sink)
+
+    assert onto.data_values == {("has_note", "o1", "bad\ufffdchar\t", "string")}
+    assert onto.annotations == {
+        ("order", "label", "Or\ufffdder"),
+        ("order", "comment", "An\ufffd order."),
+        ("o1", "label", "order\ufffd(o1)"),
+    }
+
+
+def test_the_values_with_control_characters_are_counted_by_property(sink):
+    sink.add_class("order", source="a test")
+    sink.add_property("has_note", data_prop=True, source="a test")
+    sink.assert_individuals("order", ["o1", "o2", "o3"], OBJECT)
+    sink.assert_data(
+        "has_note", [("o1", "a\x01\x02"), ("o2", "b\x03"), ("o3", "clean")], OBJECT
+    )
+    sink.annotate_entity("order", label="Or\x02der")
+
+    assert sink.replaced_controls == {"has_note": 2, "rdfs:label": 1}
 
 
 def test_annotating_an_undeclared_entity_is_rejected(sink):

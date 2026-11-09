@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 
+import pandas as pd
 import pytest
 
 from semanticlog.core.enums import EventOrderRepresentation
+from semanticlog.core.errors import ConfigError
 from semanticlog.core.vocabulary import DEFAULT_IRI, UnsafeLocalNameError
 from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
+from semanticlog.data.loading import load_and_clean
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.pipeline import build_log
 from semanticlog.onto.settings import OntoBuildSettings
@@ -44,7 +48,7 @@ def test_a_streamed_build_holds_no_ontology_to_hand_back(tiny_store, tmp_path):
 def test_an_in_memory_build_writes_rdf_xml_and_keeps_the_ontology(tiny_store, tmp_path):
     output = tmp_path / "tiny.owl"
 
-    result = build_log(tiny_store, NO_ORDER, BuildInputs(), output, streaming=False)
+    result = build_log(tiny_store, NO_ORDER, BuildInputs(), output)
 
     assert result.path == str(output)
     assert "step" in {
@@ -86,3 +90,59 @@ def test_a_rejected_build_leaves_no_file_behind(tiny_store, tmp_path):
         )
 
     assert list(output.parent.iterdir()) == []
+
+
+def test_a_build_into_an_ofn_path_writes_functional_syntax(tiny_store, tmp_path):
+    output = tmp_path / "tiny.ofn"
+
+    build_log(tiny_store, NO_ORDER, BuildInputs(), output)
+
+    assert output.read_text(encoding="utf-8").startswith("Prefix(")
+
+
+def test_a_build_into_an_owl_path_writes_rdf_xml(tiny_store, tmp_path):
+    output = tmp_path / "tiny.owl"
+
+    build_log(tiny_store, NO_ORDER, BuildInputs(), output)
+
+    assert output.read_text(encoding="utf-8").startswith("<?xml")
+
+
+def test_a_build_into_a_path_of_another_suffix_is_rejected(tiny_store, tmp_path):
+    output = tmp_path / "tiny.ttl"
+
+    with pytest.raises(ConfigError, match=r"tiny\.ttl.*\.ofn.*\.owl"):
+        build_log(tiny_store, NO_ORDER, BuildInputs(), output)
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("suffix", ["ofn", "owl"])
+def test_a_csv_value_with_a_control_character_builds_into_a_readable_file(
+    tmp_path, caplog, suffix
+):
+    log = tmp_path / "log.csv"
+    pd.DataFrame(
+        {
+            "case:concept:name": ["c1", "c1"],
+            "concept:name": ["a", "b"],
+            "time:timestamp": ["2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z"],
+            "note": ["bad\x01note", "fine"],
+        }
+    ).to_csv(log, index=False)
+    output = tmp_path / f"log.{suffix}"
+
+    with caplog.at_level(logging.WARNING):
+        build_log(
+            load_and_clean(log),
+            NO_ORDER.replace(derive_annotations=True),
+            BuildInputs(),
+            output,
+        )
+
+    # rdflib reads RDF/XML through an XML parser, which rejects a control
+    # character.
+    onto = read_functional(output) if suffix == "ofn" else read_rdf(output, DEFAULT_IRI)
+    assert ("note.bad_note", "label", "bad\ufffdnote") in onto.annotations
+    assert "U+FFFD" in caplog.text
+    assert "labels of note (1)" in caplog.text

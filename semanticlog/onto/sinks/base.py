@@ -10,6 +10,7 @@ with `abort` when the build failed.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -17,7 +18,12 @@ from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import IndividualKind, OWLProfile, SinkEntity
 from semanticlog.core.errors import ConfigError
 from semanticlog.onto.sinks.ledger import NameLedger
-from semanticlog.onto.sinks.literals import OWL_DATATYPES, Literal, resolve_literal
+from semanticlog.onto.sinks.literals import (
+    OWL_DATATYPES,
+    Literal,
+    replace_control_characters,
+    resolve_literal,
+)
 
 if TYPE_CHECKING:
     from owlapy.owl_ontology import Ontology
@@ -77,6 +83,7 @@ class AxiomSink(ABC):
         self._dropped_unions = 0
         self._replaced_unions = 0
         self._dropped_characteristics = 0
+        self._replaced_controls: Counter[str] = Counter()
         self._axiom_count = 0
         self._opened = False
         self._closed = False
@@ -139,6 +146,22 @@ class AxiomSink(ABC):
     def replaced_unions(self) -> int:
         """How many unions OWL 2 EL replaced by a single class."""
         return self._replaced_unions
+
+    @property
+    def replaced_controls(self) -> dict[str, int]:
+        """How many values had control characters replaced by U+FFFD, by property.
+
+        A label or comment counts under `rdfs:label` or `rdfs:comment`, and the
+        label of an attribute value under `labels of <attribute>`.
+        """
+        return dict(self._replaced_controls)
+
+    def _replace_controls(self, text: str, prop: str) -> str:
+        """Return the text with its control characters replaced, counted under `prop`."""
+        text, replaced = replace_control_characters(text)
+        if replaced:
+            self._replaced_controls[prop] += 1
+        return text
 
     def is_declared(self, name: str) -> bool:
         """Whether a class or property of this name has been declared."""
@@ -741,6 +764,8 @@ class AxiomSink(ABC):
             literal = self._resolve(value)
             if literal is None:
                 continue
+            if literal.replaced_controls:
+                self._replaced_controls[prop] += 1
             name = str(subject)
             if not accepts(name):
                 self._names.check_individual(name, f"the subject of {prop!r}")
@@ -757,7 +782,8 @@ class AxiomSink(ABC):
             comment: Text for `rdfs:comment`.
 
         Raises:
-            ValueError: If the entity is not declared.
+            ValueError: If the entity is not declared, or already has another
+                label or comment.
         """
         if not self.is_declared(iri_fragment):
             raise ValueError(
@@ -765,10 +791,12 @@ class AxiomSink(ABC):
                 "class or a property. Declare it first, or filter the names with "
                 "is_declared()."
             )
-        if label and self._names.first_annotation("label", iri_fragment, label):
-            self.write_annotations("label", [(iri_fragment, label)])
-        if comment and self._names.first_annotation("comment", iri_fragment, comment):
-            self.write_annotations("comment", [(iri_fragment, comment)])
+        for annotation, text in (("label", label), ("comment", comment)):
+            if not text:
+                continue
+            text = self._replace_controls(text, f"rdfs:{annotation}")
+            if self._names.first_text(annotation, iri_fragment, text):
+                self.write_annotations(annotation, [(iri_fragment, text)])
 
     def declare_annotation_property(self, prop: str, source: str) -> None:
         """Declare a TBox annotation property, once.
@@ -803,15 +831,26 @@ class AxiomSink(ABC):
                     f"Cannot annotate {name!r} with {prop!r}: {entity!r} is not "
                     "declared. Declare it first."
                 )
+        if not iri:
+            value = self._replace_controls(value, str(prop))
         if self._names.first_annotation(str(prop), name, value):
             self.write_entity_annotation(prop, name, value, iri)
 
     def annotate_individuals_bulk(
-        self, pairs: list[tuple[str, str]], kind: IndividualKind
+        self,
+        pairs: list[tuple[str, str]],
+        kind: IndividualKind,
+        attribute: str | None = None,
     ) -> None:
         """Label many individuals of one kind at once.
 
         Each name is checked as an individual name.
+
+        Args:
+            pairs: Individual name and its label.
+            kind: The kind of every individual.
+            attribute: The attribute whose values the labels show. A label
+                with a control character is counted under it.
 
         Raises:
             UnsafeLocalNameError: If a name cannot appear in an IRI.
@@ -820,8 +859,14 @@ class AxiomSink(ABC):
         for name, _ in pairs:
             if not accepts(name):
                 self._names.check_individual(name, "a labeled individual")
-        if pairs:
-            self.write_annotations("label", pairs, kind)
+        if not pairs:
+            return
+        counted_as = "rdfs:label" if attribute is None else f"labels of {attribute}"
+        self.write_annotations(
+            "label",
+            [(name, self._replace_controls(text, counted_as)) for name, text in pairs],
+            kind,
+        )
 
     def inverse_name(self, prop: str) -> str:
         """Return the inverse name of a property, from the vocabulary or from this build."""

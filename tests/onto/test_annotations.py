@@ -299,12 +299,13 @@ def test_an_attribute_value_is_labeled_as_the_log_wrote_it(writer):
     annotations, sink = writer(backmap={"value": {"by_hand": "by hand"}})
 
     annotations.attribute_values(
+        "kind",
         {
             "by hand": "by_hand",
             10.5: "v_10_5",
             pd.Timestamp(2024, 1, 1): "t",
             pd.Timestamp(2024, 1, 1, 0, 0, 0, 500000): "t_frac",
-        }
+        },
     )
 
     assert texts(sink) == {

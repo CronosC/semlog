@@ -17,6 +17,7 @@ from owlapy.owl_ontology import SyncOntology
 from owlapy.owl_reasoner import SyncReasoner
 
 from semanticlog.core.enums import REASONER_BACKENDS as REASONER_BACKENDS
+from semanticlog.core.enums import OutputFormat
 from semanticlog.core.errors import (
     ConfigError,
     DependencyError,
@@ -26,6 +27,16 @@ from semanticlog.core.errors import (
 from semanticlog.onto.sinks.base import PARTIAL_SUFFIX
 
 logger = logging.getLogger(__name__)
+
+# OWL API document format class of each output format, in
+# `org.semanticweb.owlapi.formats`.
+_DOCUMENT_FORMATS: dict[OutputFormat, str] = {
+    OutputFormat.OFN: "FunctionalSyntaxDocumentFormat",
+    OutputFormat.OWL: "RDFXMLDocumentFormat",
+    OutputFormat.OWX: "OWLXMLDocumentFormat",
+    OutputFormat.TTL: "TurtleDocumentFormat",
+    OutputFormat.OMN: "ManchesterSyntaxDocumentFormat",
+}
 
 _GENERATORS = [
     "InferredClassAssertionAxiomGenerator",
@@ -265,13 +276,58 @@ class Reasoner:
     def save(self, save_path: str | None = None) -> None:
         """Write the ontology to `save_path`, or over the source file.
 
-        The write goes to a partial file beside the target, which then
-        replaces it.
+        A file written to `save_path` holds the format its suffix names. The
+        source file keeps its format. The write goes to a partial file beside
+        the target, which then replaces it.
+
+        Raises:
+            ConfigError: If the suffix of `save_path` names no format.
+            InputError: If the OWL API cannot write `save_path`.
         """
-        target = save_path if save_path is not None else self.path
-        partial = Path(target + PARTIAL_SUFFIX)
+        if save_path is not None:
+            save_ontology(
+                self.ontology, OutputFormat.of_path(save_path), Path(save_path)
+            )
+            return
+        partial = Path(self.path + PARTIAL_SUFFIX)
         try:
             self.ontology.save(str(partial))
-            partial.replace(target)
+            partial.replace(self.path)
         finally:
             partial.unlink(missing_ok=True)
+
+
+def save_ontology(
+    ontology: SyncOntology, output_format: OutputFormat, target: Path
+) -> None:
+    """Write the ontology to `target` in one format.
+
+    The write goes to a partial file beside the target, which then replaces
+    it. The prefixes of the source document are kept.
+
+    Raises:
+        InputError: If the OWL API cannot write the file. No file is left.
+    """
+    manager = ontology.owlapi_manager
+    owlapi_ontology = ontology.get_owlapi_ontology()
+    source_format = manager.getOntologyFormat(owlapi_ontology)
+    document_format = jpype.JClass(
+        f"org.semanticweb.owlapi.formats.{_DOCUMENT_FORMATS[output_format]}"
+    )()
+    if document_format.isPrefixOWLDocumentFormat() and (
+        source_format is not None and source_format.isPrefixOWLDocumentFormat()
+    ):
+        document_format.copyPrefixesFrom(source_format.asPrefixOWLDocumentFormat())
+    partial = Path(f"{target}{PARTIAL_SUFFIX}")
+    iri = jpype.JClass("org.semanticweb.owlapi.model.IRI").create(
+        jpype.JClass("java.io.File")(str(partial))
+    )
+    try:
+        manager.saveOntology(owlapi_ontology, document_format, iri)
+        partial.replace(target)
+    except Exception as exc:
+        raise InputError(
+            f"Cannot write {target} as {output_format.value}:\n  {exc}"
+        ) from exc
+    finally:
+        partial.unlink(missing_ok=True)

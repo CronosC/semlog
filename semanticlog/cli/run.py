@@ -18,7 +18,7 @@ from typing import Any
 from semanticlog.cli.config import RunConfig
 from semanticlog.cli.logs import FileLog
 from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import OCELExtension
+from semanticlog.core.enums import OCELExtension, OutputFormat
 from semanticlog.core.errors import SemlogError
 from semanticlog.data.flatten import choose_case_concepts
 from semanticlog.data.loading import load_and_clean
@@ -154,7 +154,6 @@ def build_one(cfg: RunConfig, input_path: Path) -> None:
             inputs,
             onto_path,
             iri=cfg.log_iri(input_path),
-            streaming=cfg.streaming,
         )
     logger.info("Ontology saved: %s", onto_path)
 
@@ -312,13 +311,18 @@ def reason(
     """Run a reasoner over a built ontology.
 
     Args:
-        output_path: Where to write the materialized result. Without one, the
-            input file is overwritten.
+        output_path: Where to write the materialized result, in the format
+            its suffix names. Without one, the input file is overwritten.
         check_only: Report consistency and write nothing.
 
     Returns:
         Whether the ontology is consistent under `check_only`, otherwise True.
+
+    Raises:
+        ConfigError: If the suffix of `output_path` names no format.
     """
+    if output_path is not None and not check_only:
+        OutputFormat.of_path(output_path)
     reasoner = Reasoner(str(onto_path), backend=backend)
     if check_only:
         return reasoner.check()

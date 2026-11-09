@@ -8,7 +8,12 @@ import logging
 import pandas as pd
 import pytest
 
-from semanticlog.core.enums import IndividualKind, OCELExtension, OWLProfile
+from semanticlog.core.enums import (
+    IndividualKind,
+    InverseRepresentation,
+    OCELExtension,
+    OWLProfile,
+)
 from semanticlog.core.summary import counted
 from semanticlog.core.vocabulary import DEFAULT_IRI, TBOX_IRI, UnsafeLocalNameError
 from semanticlog.data.cleaning import clean_oced_data
@@ -22,6 +27,10 @@ from semanticlog.onto.builder import (
 )
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
+from semanticlog.onto.sinks import InMemorySink, StreamingSink
+from tests.support.build import BACKENDS, STREAMING
+from tests.support.functional import read_functional
+from tests.support.rdf import read_rdf
 
 NO_ORDER = OntoBuildSettings(order_representations=[])
 
@@ -363,3 +372,54 @@ def test_a_document_entry_naming_nothing_the_build_declared_is_reported(
     assert "Applied 1 of 3 annotation entries" in caplog.text
     assert "2 name nothing this build declared" in caplog.text
     assert "invoice" in caplog.text
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_a_document_label_for_an_inverse_is_its_only_label(
+    tiny_store, tmp_path, backend
+):
+    settings = OntoBuildSettings(
+        order_representations=[],
+        derive_annotations=True,
+        inverse_representations=(InverseRepresentation.AXIOMATIC,),
+    )
+    document = {"inv_concerns": {"label": "is concerned by"}}
+    path = tmp_path / ("tiny.ofn" if backend == STREAMING else "tiny.owl")
+    sink = (
+        StreamingSink(str(path), DEFAULT_IRI, settings.profile)
+        if backend == STREAMING
+        else InMemorySink(DEFAULT_IRI, settings.profile)
+    )
+
+    OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
+        tiny_store, BuildInputs(annotations=document)
+    )
+    sink.save(str(path))
+    onto = (
+        read_functional(path) if backend == STREAMING else read_rdf(path, DEFAULT_IRI)
+    )
+
+    assert {
+        text
+        for name, kind, text in onto.annotations
+        if (name, kind) == ("inv_concerns", "label")
+    } == {"is concerned by"}
+
+
+def test_values_with_control_characters_are_reported_once_by_property(
+    recording_sink, caplog
+):
+    data = _event_store(note=["bad\x01note"])
+    clean_oced_data(data)
+
+    with caplog.at_level(logging.WARNING):
+        OCEDOntoBuilder(
+            DEFAULT_IRI,
+            NO_ORDER.replace(derive_annotations=True),
+            sink=recording_sink(),
+        ).build_ontology(data)
+
+    warnings = [r for r in caplog.records if "U+FFFD" in r.getMessage()]
+    assert [r.getMessage() for r in warnings] == [
+        "Replaced the control characters in 1 value with U+FFFD: labels of note (1)."
+    ]

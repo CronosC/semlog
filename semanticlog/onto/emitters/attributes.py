@@ -426,7 +426,8 @@ class AttributeEmitter(Emitter):
 
         if self.annotations.enabled:
             self.annotations.attribute_values(
-                {value: name for value, name in mapping.items() if name in fresh_names}
+                attr,
+                {value: name for value, name in mapping.items() if name in fresh_names},
             )
 
         self.assert_relations(

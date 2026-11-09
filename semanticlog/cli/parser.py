@@ -227,7 +227,10 @@ def _add_reason_parser(
     reason_parser.add_argument(
         "--output",
         metavar="PATH",
-        help="Write the materialized ontology here (default: overwrite the input).",
+        help=(
+            "Write the materialized ontology here, in the format its suffix "
+            "names (default: overwrite the input)."
+        ),
     )
     reason_parser.add_argument(
         "--check",

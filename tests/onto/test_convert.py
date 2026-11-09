@@ -8,7 +8,7 @@ import pytest
 
 from semanticlog.core.enums import EventOrderRepresentation, OutputFormat
 from semanticlog.core.errors import InputError
-from semanticlog.onto import convert as convert_module
+from semanticlog.onto import reason as reason_module
 from semanticlog.onto.convert import convert
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.pipeline import build_log
@@ -62,7 +62,7 @@ def test_a_failed_save_leaves_no_file_and_names_the_format(
 ):
     # The bundled OWL API has no N-Triples writer, so this save fails.
     monkeypatch.setitem(
-        convert_module._DOCUMENT_FORMATS, OutputFormat.TTL, "NTriplesDocumentFormat"
+        reason_module._DOCUMENT_FORMATS, OutputFormat.TTL, "NTriplesDocumentFormat"
     )
     target = tmp_path / "pipeline.ttl"
 

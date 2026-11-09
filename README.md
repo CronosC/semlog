@@ -175,7 +175,7 @@ settings = OntoBuildSettings(order_representations=[EventOrderRepresentation.DF]
 result = build_log(data, settings, BuildInputs(case_concepts), "examples/out/pipeline.ofn")
 ```
 
-`load_and_clean` reads the log and renames every name that cannot be part of an IRI. `choose_case_concepts` follows those renames for the types you name, or picks the most common types when given `None`. `OntoBuildSettings` holds the choices that do not depend on the log. `BuildInputs` holds the case concepts, the mined DECLARE constraints and any annotations. `build_log` writes the file once the build is complete. Pass `streaming=False` for RDF/XML, which also leaves the ontology on `result.onto`.
+`load_and_clean` reads the log and renames every name that cannot be part of an IRI. `choose_case_concepts` follows those renames for the types you name, or picks the most common types when given `None`. `OntoBuildSettings` holds the choices that do not depend on the log. `BuildInputs` holds the case concepts, the mined DECLARE constraints and any annotations. `build_log` writes the file once the build is complete. The suffix of the path chooses the format: `.ofn` streams functional syntax, and `.owl` builds RDF/XML in memory, which also leaves the ontology on `result.onto`.
 
 ## Limits
 
