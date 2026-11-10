@@ -197,7 +197,7 @@ def test_a_second_relation_to_one_order_does_not_make_an_event_follow_itself(
     tiny_store, tmp_path
 ):
     """OCEL logs qualify e2o links, so one pair can arrive under two names."""
-    concerns = tiny_store.get_relation("concerns")
+    concerns = tiny_store.relation("concerns")
     tiny_store.add_relation(
         RelationKind.E2O,
         "creates",

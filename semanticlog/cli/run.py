@@ -18,14 +18,13 @@ from typing import Any
 from semanticlog.cli.config import RunConfig
 from semanticlog.cli.logs import FileLog
 from semanticlog.core.checks import raise_reports
-from semanticlog.core.enums import OCELExtension, OutputFormat
+from semanticlog.core.enums import OCELExtension, OutputFormat, ReasonerBackend
 from semanticlog.core.errors import ConfigError, SemlogError
 from semanticlog.data.flatten import choose_case_concepts
 from semanticlog.data.loading import load_and_clean
 from semanticlog.data.readable import ReadableStore
 from semanticlog.onto.audit import case_concept_report
 from semanticlog.onto.convert import convert
-from semanticlog.onto.emitters.provenance import build_configuration
 from semanticlog.onto.pipeline import build_log
 from semanticlog.onto.reason import Reasoner
 from semanticlog.onto.record import read_record
@@ -56,7 +55,7 @@ def _warn_on_changed_settings(
     if record is None:
         return
     recorded = {**record.configuration, "case_concepts": record.case_concepts}
-    current = {**build_configuration(settings), "case_concepts": list(case_concepts)}
+    current = {**settings.to_dict(), "case_concepts": list(case_concepts)}
     changed = sorted(
         key
         for key in set(recorded) | set(current)
@@ -162,9 +161,11 @@ def build_one(cfg: RunConfig, input_path: Path) -> None:
         logger.info("Name backmap saved: %s", backmap_path)
 
     if cfg.materialize:
-        logger.info("Materializing with %s", cfg.reasoner_backend)
+        logger.info("Materializing with %s", cfg.reasoner_backend.value)
         with _timed(timings, "reason"):
-            added = Reasoner(str(onto_path), backend=cfg.reasoner_backend).materialize()
+            reasoner = Reasoner(str(onto_path), backend=cfg.reasoner_backend)
+            added = reasoner.materialize()
+            reasoner.overwrite()
         logger.info("Materialization complete: %s axiom(s) added.", f"{added:,}")
 
     if cfg.build_format in cfg.output_formats:
@@ -308,7 +309,7 @@ def mine_declare(
 
 def reason(
     onto_path: Path,
-    backend: str = "HermiT",
+    backend: ReasonerBackend = ReasonerBackend.HERMIT,
     output_path: Path | None = None,
     check_only: bool = False,
 ) -> bool:
@@ -336,9 +337,11 @@ def reason(
     if check_only:
         return reasoner.check()
 
-    logger.info("Materializing %s with %s", onto_path, backend)
-    added = reasoner.materialize(overwrite_old=output_path is None)
-    if output_path is not None:
+    logger.info("Materializing %s with %s", onto_path, backend.value)
+    added = reasoner.materialize()
+    if output_path is None:
+        reasoner.overwrite()
+    else:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         reasoner.save(str(output_path))
     logger.info(

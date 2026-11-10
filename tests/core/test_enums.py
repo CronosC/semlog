@@ -2,7 +2,7 @@
 
 import pytest
 
-from semanticlog.core.enums import OutputFormat, OWLProfile, resolve_reasoner_backend
+from semanticlog.core.enums import OutputFormat, OWLProfile, ReasonerBackend
 from semanticlog.core.errors import ConfigError
 
 
@@ -15,7 +15,7 @@ def test_an_unknown_setting_is_rejected_listing_the_choices():
     with pytest.raises(
         ConfigError, match=r"reasoner_backend: unknown value 'Fact\+\+'\. Choose from: "
     ):
-        resolve_reasoner_backend("Fact++", key="reasoner_backend")
+        ReasonerBackend.parse("Fact++", key="reasoner_backend")
 
 
 def test_an_output_format_is_read_from_the_suffix_of_a_path():

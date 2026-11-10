@@ -1,4 +1,4 @@
-"""Read the JSON, XML and SQLite forms of an OCEL 2.0 log into an `OCELStore`.
+"""Read the JSON, XML and SQLite forms of an OCEL 2.0 log into an `OCELTables`.
 
 `read_ocel` picks the form by suffix. The forms are defined in the OCEL 2.0
 specification, sections 6 and 7.
@@ -29,7 +29,7 @@ from semanticlog.data.loading.ocel_schema import (
     normalize_declared,
     sqlite_types,
 )
-from semanticlog.data.loading.ocel_store import OCELStore
+from semanticlog.data.loading.ocel_tables import OCELTables
 from semanticlog.data.tables import EntityKind
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def _text(value: object) -> str | None:
 
 @dataclass
 class _Rows:
-    """The entries of one log as read, one list per column of an `OCELStore` table."""
+    """The entries of one log as read, one list per column of an `OCELTables` table."""
 
     event_ids: list[str | None] = field(default_factory=list)
     event_types: list[str | None] = field(default_factory=list)
@@ -77,7 +77,7 @@ class _Rows:
         self.object_types.append(_text(object_type))
 
 
-def read_ocel(path: str) -> OCELStore:
+def read_ocel(path: str) -> OCELTables:
     """Read an OCEL 2.0 log in the form its suffix names.
 
     Raises:
@@ -419,19 +419,6 @@ def _typed(
     return typed
 
 
-def _declared_frame(declared: DeclaredTypes) -> pd.DataFrame:
-    """Return the declared types as rows sorted by kind, type and name."""
-    return pd.DataFrame(
-        sorted(
-            (kind.value, type_name, name, declared_type)
-            for (kind, type_name), attributes in declared.items()
-            for name, declared_type in attributes.items()
-        ),
-        columns=["kind", "type", "name", "declared"],
-        dtype=object,
-    )
-
-
 def _values(
     rows: list[tuple[Any, ...]],
     columns: list[str],
@@ -454,8 +441,8 @@ def _values(
     return frame[keep].assign(_owner=owner[keep])
 
 
-def _store(path: str, rows: _Rows) -> OCELStore:
-    """Return the entries of a log as an `OCELStore`.
+def _store(path: str, rows: _Rows) -> OCELTables:
+    """Return the entries of a log as an `OCELTables`.
 
     Raises:
         InputError: If no event has an id and a type, an id repeats, or an
@@ -516,14 +503,14 @@ def _store(path: str, rows: _Rows) -> OCELStore:
 
     e2o = pd.DataFrame(rows.e2o, columns=["event_id", "object_id", "qualifier"])
     o2o = pd.DataFrame(rows.o2o, columns=["source_id", "target_id", "qualifier"])
-    return OCELStore(
+    return OCELTables(
         events=events,
         objects=objects,
         e2o=_in_order(e2o, e2o["event_id"].map(event_position)),
         o2o=_in_order(o2o, o2o["source_id"].map(object_position)),
         event_values=_in_order(event_values.drop(columns="_owner")),
         object_values=_in_order(object_values.drop(columns="_owner")),
-        declared=_declared_frame(declared),
+        declared=declared,
     )
 
 

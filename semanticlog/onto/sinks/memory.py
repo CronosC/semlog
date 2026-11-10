@@ -8,7 +8,6 @@ uses `InMemorySink` when given no sink.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from pathlib import Path
 from typing import Any
 
 from owlapy.class_expression import (
@@ -52,7 +51,7 @@ from owlapy.vocab import OWLFacet
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.core.enums import IndividualKind, OWLProfile, SinkEntity
-from semanticlog.onto.sinks.base import PARTIAL_SUFFIX, AxiomSink
+from semanticlog.onto.sinks.base import AxiomSink, partial_file
 from semanticlog.onto.sinks.literals import DECIMAL, RDFS, XSD, Literal
 
 _RDFS_LABEL = OWLAnnotationProperty(IRI(RDFS, "label"))
@@ -365,13 +364,8 @@ class InMemorySink(AxiomSink):
         The file is written under `PARTIAL_SUFFIX` and then moved to `path`.
         """
         self.close()
-        partial = Path(path + PARTIAL_SUFFIX)
-        try:
+        with partial_file(path) as partial:
             self.onto.save(str(partial))
-            partial.replace(path)
-        except BaseException:
-            partial.unlink(missing_ok=True)
-            raise
 
     def result_target(self) -> tuple[Ontology | None, str | None]:
         """Return the ontology and no path."""

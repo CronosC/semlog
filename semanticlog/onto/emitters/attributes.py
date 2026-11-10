@@ -310,13 +310,11 @@ class AttributeEmitter(Emitter):
         if not self.settings.emits_value_individuals:
             return prop
         self.add_attribute_class(attr)
-        self.sink.add_property(
+        self.add_object_property(
             prop,
             domain_class=self._owner_types(attr) or None,
             range_class=attr,
             superprop=vocab.HAS_ATTRIBUTE,
-            create_inverse=self.settings.has_inverses,
-            axiomatic_inverse=self.settings.axiomatic_inverses,
             source=attribute_source(attr),
         )
         self.declare_functional(prop)
@@ -371,11 +369,11 @@ class AttributeEmitter(Emitter):
                 `individuals`.
             owner: The kind of individual the owners are.
         """
-        self.emit_values(df_attr, key_col, attr, prop, owner)
+        self._emit_values(df_attr, key_col, attr, prop, owner)
         if is_number_column(df_attr[attr]):
             self._emit_bins(df_attr, attr)
 
-    def emit_values(
+    def _emit_values(
         self,
         df: pd.DataFrame,
         key_col: str,
@@ -437,11 +435,11 @@ class AttributeEmitter(Emitter):
         only for an attribute that is numeric in one table and text in
         another.
         """
-        tmp = df.copy()
+        linked = df.copy()
 
-        vals = tmp[attr].unique()
+        vals = linked[attr].unique()
         mapping = {v: vocab.attribute_value(attr, v) for v in vals}
-        tmp["attr_ind"] = tmp[attr].map(mapping)
+        linked["attr_ind"] = linked[attr].map(mapping)
 
         seen = self.emitted.values_of(attr)
         fresh = [name for name in mapping.values() if name not in seen]
@@ -457,11 +455,13 @@ class AttributeEmitter(Emitter):
             )
 
         self.assert_relations(
-            prop, tmp, key_col, "attr_ind", (owner, IndividualKind.VALUE)
+            prop, linked, key_col, "attr_ind", (owner, IndividualKind.VALUE)
         )
 
         if fresh_names:
-            rows = tmp[tmp["attr_ind"].isin(fresh_names)].drop_duplicates("attr_ind")
+            rows = linked[linked["attr_ind"].isin(fresh_names)].drop_duplicates(
+                "attr_ind"
+            )
             self.assert_data(
                 vocab.value_property(attr),
                 self._with_source_values(rows, attr),

@@ -1,4 +1,4 @@
-"""Reading the three forms of an OCEL 2.0 log into an OCEL store."""
+"""Reading the three forms of an OCEL 2.0 log into OCEL tables."""
 
 import logging
 import sqlite3
@@ -9,39 +9,41 @@ import pytest
 
 from semanticlog.core.errors import InputError
 from semanticlog.data.loading.ocel_reader import read_ocel
-from semanticlog.data.loading.ocel_store import OCELStore
+from semanticlog.data.loading.ocel_tables import OCELTables
 from tests.support.ocel_files import EPOCH, small_log, write_log, write_sqlite
 
 
-def test_the_json_xml_and_sqlite_forms_of_one_log_give_equal_stores(tmp_path):
-    stores = [
+def test_the_json_xml_and_sqlite_forms_of_one_log_give_equal_tables(tmp_path):
+    tables = [
         read_ocel(write_log(tmp_path, small_log(), suffix))
         for suffix in (".jsonocel", ".xmlocel", ".sqlite")
     ]
 
-    for other in stores[1:]:
-        for table in fields(OCELStore):
-            pd.testing.assert_frame_equal(
-                getattr(other, table.name), getattr(stores[0], table.name)
-            )
+    for other in tables[1:]:
+        for table in fields(OCELTables):
+            left, right = getattr(other, table.name), getattr(tables[0], table.name)
+            if isinstance(left, pd.DataFrame):
+                pd.testing.assert_frame_equal(left, right)
+            else:
+                assert left == right
 
 
 def test_a_declared_attribute_value_holds_its_type(tmp_path):
-    store = read_ocel(write_log(tmp_path, small_log(), ".xmlocel"))
-    values = store.event_values.set_index("name")["value"]
+    tables = read_ocel(write_log(tmp_path, small_log(), ".xmlocel"))
+    values = tables.event_values.set_index("name")["value"]
 
     assert values["count"] == 3
     assert values["due"] == pd.Timestamp("2024-02-01", tz="UTC")
-    assert store.object_values.set_index("name")["value"]["rush"] is True
+    assert tables.object_values.set_index("name")["value"]["rush"] is True
 
 
 def test_an_event_time_with_an_offset_is_converted_to_utc(tmp_path):
     log = small_log()
     log["events"][0]["time"] = "2024-01-01T10:00:00-07:00"
 
-    store = read_ocel(write_log(tmp_path, log))
+    tables = read_ocel(write_log(tmp_path, log))
 
-    assert store.events["time"][0] == pd.Timestamp("2024-01-01T17:00:00", tz="UTC")
+    assert tables.events["time"][0] == pd.Timestamp("2024-01-01T17:00:00", tz="UTC")
 
 
 @pytest.mark.parametrize("suffix", [".jsonocel", ".xmlocel", ".sqlite"])
@@ -63,8 +65,8 @@ def test_the_attribute_values_of_an_object_are_ordered_by_time(tmp_path):
     log = small_log()
     log["objects"][0]["attributes"].reverse()
 
-    store = read_ocel(write_log(tmp_path, log))
-    status = store.object_values[store.object_values["name"] == "status"]
+    tables = read_ocel(write_log(tmp_path, log))
+    status = tables.object_values[tables.object_values["name"] == "status"]
 
     assert list(status["value"]) == ["new", "done"]
 
@@ -73,9 +75,9 @@ def test_both_qualifiers_of_an_event_linked_twice_to_one_object_are_kept(tmp_pat
     log = small_log()
     log["events"][1]["relationships"].append({"objectId": "o1", "qualifier": "checks"})
 
-    store = read_ocel(write_log(tmp_path, log))
+    tables = read_ocel(write_log(tmp_path, log))
 
-    assert store.e2o[store.e2o["event_id"] == "e2"]["qualifier"].tolist() == [
+    assert tables.e2o[tables.e2o["event_id"] == "e2"]["qualifier"].tolist() == [
         "ships",
         "checks",
     ]
@@ -114,9 +116,9 @@ def test_an_object_without_an_id_is_left_out_with_a_warning(tmp_path, caplog):
     log["objects"].append({"type": "item"})
 
     with caplog.at_level(logging.WARNING):
-        store = read_ocel(write_log(tmp_path, log))
+        tables = read_ocel(write_log(tmp_path, log))
 
-    assert store.objects["id"].tolist() == ["o1", "i1"]
+    assert tables.objects["id"].tolist() == ["o1", "i1"]
     assert "1 object(s) of" in caplog.text
 
 
@@ -124,9 +126,9 @@ def test_an_undeclared_attribute_value_is_kept_as_read(tmp_path):
     log = small_log()
     log["events"][1]["attributes"] = [{"name": "note", "value": "late"}]
 
-    store = read_ocel(write_log(tmp_path, log, ".xmlocel"))
+    tables = read_ocel(write_log(tmp_path, log, ".xmlocel"))
 
-    assert store.event_values.set_index("name")["value"]["note"] == "late"
+    assert tables.event_values.set_index("name")["value"]["note"] == "late"
 
 
 @pytest.mark.parametrize(
@@ -195,9 +197,9 @@ def test_a_list_or_object_value_is_read_as_json_text_with_one_warning(tmp_path, 
     )
 
     with caplog.at_level(logging.WARNING):
-        store = read_ocel(write_log(tmp_path, log))
+        tables = read_ocel(write_log(tmp_path, log))
 
-    assert store.event_values.set_index("name")["value"]["tags"] == '["a", "b"]'
-    assert store.object_values.set_index("name")["value"]["size"] == '{"w": "é"}'
+    assert tables.event_values.set_index("name")["value"]["tags"] == '["a", "b"]'
+    assert tables.object_values.set_index("name")["value"]["size"] == '{"w": "é"}'
     assert "Attribute 'tags' has 1 list or object value(s)" in caplog.text
     assert "Attribute 'size' has 1 list or object value(s)" in caplog.text

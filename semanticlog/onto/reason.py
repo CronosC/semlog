@@ -17,13 +17,13 @@ from owlapy.owl_axiom import OWLObjectPropertyAssertionAxiom
 from owlapy.owl_ontology import SyncOntology
 from owlapy.owl_reasoner import SyncReasoner
 
-from semanticlog.core.enums import REASONER_BACKENDS, OutputFormat
+from semanticlog.core.enums import OutputFormat, ReasonerBackend
 from semanticlog.core.errors import (
     ConfigError,
     DependencyError,
     InputError,
 )
-from semanticlog.onto.sinks.base import PARTIAL_SUFFIX
+from semanticlog.onto.sinks.base import partial_file
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +59,8 @@ _PROPERTY_ASSERTIONS = "InferredPropertyAssertionGenerator"
 # Generators a backend raises UnsupportedOperationException for, found by
 # running each generator on each backend over the example ontology. HermiT and
 # Pellet support all of them.
-_UNSUPPORTED: dict[str, frozenset[str]] = {
-    "ELK": frozenset(
+_UNSUPPORTED: dict[ReasonerBackend, frozenset[str]] = {
+    ReasonerBackend.ELK: frozenset(
         {
             "InferredDisjointClassesAxiomGenerator",
             "InferredEquivalentDataPropertiesAxiomGenerator",
@@ -199,7 +199,7 @@ class Reasoner:
 
     Attributes:
         path: File the ontology was loaded from.
-        backend: Reasoner name.
+        backend: The reasoner backend.
         ontology: The loaded ontology.
         reasoner: The owlapy reasoner.
         possible_generators: Generators this backend supports.
@@ -217,50 +217,39 @@ class Reasoner:
     def __init__(
         self,
         path: str,
-        backend: str = "HermiT",
+        backend: ReasonerBackend | str = ReasonerBackend.HERMIT,
     ) -> None:
-        if backend not in REASONER_BACKENDS:
+        if backend not in ReasonerBackend:
             raise ConfigError(
                 f"Reasoner backend {backend!r} is not one of "
-                f"{', '.join(REASONER_BACKENDS)}."
+                f"{', '.join(b.value for b in ReasonerBackend)}."
             )
         if not Path(path).is_file():
             raise FileNotFoundError(
                 f"Ontology file not found: {path}. Build it first with 'semlog build'."
             )
-        start_jvm()
-
         self.path = path
-        self.backend = backend
-        others = ", ".join(b for b in REASONER_BACKENDS if b != backend)
+        self.backend = ReasonerBackend(backend)
+        self.ontology = load_ontology(path)
         try:
-            self.ontology = SyncOntology(self.path)
+            self.reasoner = SyncReasoner(self.ontology, reasoner=self.backend.value)
         except Exception as exc:
             raise_java_error(
                 exc,
-                f"The OWL API cannot read {path}. Build the ontology again, or "
-                "check that a build wrote the file.",
-            )
-        try:
-            self.reasoner = SyncReasoner(self.ontology, reasoner=backend)
-        except Exception as exc:
-            raise_java_error(
-                exc,
-                f"{backend} cannot start over this ontology. Try one of the other "
-                f"backends: {others}.",
+                f"{self.backend.value} cannot start over this ontology. Try one of "
+                f"the other backends: {self._others()}.",
             )
 
-        unsupported = _UNSUPPORTED.get(backend, frozenset())
+        unsupported = _UNSUPPORTED.get(self.backend, frozenset())
         self.possible_generators = [g for g in _GENERATORS if g not in unsupported]
         self.entails_property_assertions = _PROPERTY_ASSERTIONS not in unsupported
 
-    def materialize(
-        self, overwrite_old: bool = True, property_assertions: bool = True
-    ) -> int:
+    def materialize(self, property_assertions: bool = True) -> int:
         """Add everything the reasoner entails to the ontology.
 
+        Nothing is written. `save` or `overwrite` writes the result.
+
         Args:
-            overwrite_old: Save the result back over the file it came from.
             property_assertions: Also add entailed object property assertions,
                 such as the closure of a transitive property. This is the slow
                 step.
@@ -281,15 +270,12 @@ class Reasoner:
         elif property_assertions:
             logger.info(
                 "  %s does not support entailed property assertions, skipped",
-                self.backend,
+                self.backend.value,
             )
         before = self._axiom_count()
         with self._reporting("adding the entailed axioms"):
             self.ontology.add_axiom(inferred)
-        added = self._axiom_count() - before
-        if overwrite_old:
-            self.save()
-        return added
+        return self._axiom_count() - before
 
     def _axiom_count(self) -> int:
         """Axiom count of the OWL API ontology."""
@@ -303,7 +289,7 @@ class Reasoner:
         Raises:
             InputError: If the backend fails.
         """
-        logger.info("  asking %s for entailed property assertions", self.backend)
+        logger.info("  asking %s for entailed property assertions", self.backend.value)
         self._register_property_assertions()
         with self._reporting("asking for entailed property assertions"):
             axioms = [
@@ -347,40 +333,60 @@ class Reasoner:
         try:
             yield
         except Exception as exc:
-            others = ", ".join(b for b in REASONER_BACKENDS if b != self.backend)
             raise_java_error(
                 exc,
-                f"{self.backend} failed while {what} over {self.path}. Try one of "
-                f"the other backends: {others}.",
+                f"{self.backend.value} failed while {what} over {self.path}. Try "
+                f"one of the other backends: {self._others()}.",
             )
 
-    def save(self, save_path: str | None = None) -> None:
-        """Write the ontology to `save_path`, or over the source file.
+    def _others(self) -> str:
+        """Return the names of the other backends, comma-separated."""
+        return ", ".join(b.value for b in ReasonerBackend if b is not self.backend)
 
-        A file written to `save_path` holds the format its suffix names. The
-        source file keeps its format. The write goes to a partial file beside
-        the target, which then replaces it.
+    def save(self, path: str) -> None:
+        """Write the ontology to `path`, in the format its suffix names.
 
         Raises:
-            ConfigError: If the suffix of `save_path` names no format.
+            ConfigError: If the suffix of `path` names no format.
             DependencyError: If Java ran out of memory.
-            InputError: If the OWL API cannot write `save_path`.
+            InputError: If the OWL API cannot write `path`.
         """
-        if save_path is not None:
-            save_ontology(
-                self.ontology, OutputFormat.of_path(save_path), Path(save_path)
-            )
-            return
-        partial = Path(self.path + PARTIAL_SUFFIX)
+        save_ontology(self.ontology, OutputFormat.of_path(path), Path(path))
+
+    def overwrite(self) -> None:
+        """Write the ontology back over the source file, in the source format.
+
+        The write goes to a partial file beside the source, which then
+        replaces it.
+
+        Raises:
+            DependencyError: If Java ran out of memory.
+        """
         try:
-            self.ontology.save(str(partial))
-            partial.replace(self.path)
+            with partial_file(self.path) as partial:
+                self.ontology.save(str(partial))
         except Exception as exc:
             if _is_out_of_memory(exc):
                 raise DependencyError(_HEAP_ADVICE) from exc
             raise
-        finally:
-            partial.unlink(missing_ok=True)
+
+
+def load_ontology(path: str | Path) -> SyncOntology:
+    """Start the JVM and load the ontology in `path` through the OWL API.
+
+    Raises:
+        DependencyError: If there is no usable JVM, or Java ran out of memory.
+        InputError: If the OWL API cannot read the file.
+    """
+    start_jvm()
+    try:
+        return SyncOntology(str(path))
+    except Exception as exc:
+        raise_java_error(
+            exc,
+            f"The OWL API cannot read {path}. Build the ontology again, or "
+            "check that a build wrote the file.",
+        )
 
 
 def save_ontology(
@@ -405,18 +411,15 @@ def save_ontology(
         source_format is not None and source_format.isPrefixOWLDocumentFormat()
     ):
         document_format.copyPrefixesFrom(source_format.asPrefixOWLDocumentFormat())
-    partial = Path(f"{target}{PARTIAL_SUFFIX}")
-    iri = jpype.JClass("org.semanticweb.owlapi.model.IRI").create(
-        jpype.JClass("java.io.File")(str(partial))
-    )
     try:
-        manager.saveOntology(owlapi_ontology, document_format, iri)
-        partial.replace(target)
+        with partial_file(target) as partial:
+            iri = jpype.JClass("org.semanticweb.owlapi.model.IRI").create(
+                jpype.JClass("java.io.File")(str(partial))
+            )
+            manager.saveOntology(owlapi_ontology, document_format, iri)
     except Exception as exc:
         raise_java_error(
             exc,
             f"Cannot write {target} as {output_format.value}. Check that the "
             "directory is writable and has space.",
         )
-    finally:
-        partial.unlink(missing_ok=True)

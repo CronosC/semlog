@@ -1,6 +1,6 @@
 """The tables of one OCEL 2.0 log, as the file holds them.
 
-`OCELStore` keeps every event, object, relation and attribute value of the
+`OCELTables` keeps every event, object, relation and attribute value of the
 log, including the ones an OCED store has no place for, such as earlier
 values of an object attribute.
 """
@@ -9,9 +9,11 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from semanticlog.data.loading.ocel_schema import DeclaredTypes
+
 
 @dataclass(frozen=True)
-class OCELStore:
+class OCELTables:
     """The OCEL 2.0 tables of one log, one row per entry of the file.
 
     Ids are text. Rows keep the order of the file, apart from the attribute
@@ -30,8 +32,8 @@ class OCELStore:
         event_values: `event_id`, `name` and `value`.
         object_values: `object_id`, `name`, `time` as a UTC timestamp, missing
             where it does not parse, and `value`.
-        declared: `kind`, an `EntityKind` value, `type`, `name` and
-            `declared`, one of `DECLARED_TYPES`.
+        declared: The declared type of each attribute, one of
+            `DECLARED_TYPES`, per event or object type.
     """
 
     events: pd.DataFrame
@@ -40,4 +42,4 @@ class OCELStore:
     o2o: pd.DataFrame
     event_values: pd.DataFrame
     object_values: pd.DataFrame
-    declared: pd.DataFrame
+    declared: DeclaredTypes

@@ -39,7 +39,6 @@ from semanticlog.data.tables import (
 
 __all__ = [
     "clean_oced_data",
-    "fix_duplicate_names",
     "object_type_renames",
 ]
 
@@ -88,40 +87,14 @@ def clean_oced_data(
     if data.ocel_mode:
         data.replace_object_changes(
             {
-                clean_string(obj_type): _clean_changes(
-                    data.get_object_changes(obj_type)
-                )
-                for obj_type in data.get_object_change_types()
+                clean_string(obj_type): _clean_changes(data.object_changes(obj_type))
+                for obj_type in data.object_change_types()
             }
         )
-    fix_duplicate_names(data, log, bin_labels)
+    allocate_schema_names(data, log, bin_labels)
     verify_unique_names(data)
     data.backmap = log.backmap()
     _report_renames(log)
-    return data
-
-
-def fix_duplicate_names(
-    data: OCEDStore,
-    log: RenameLog | None = None,
-    bin_labels: Collection[str] = (),
-) -> OCEDStore:
-    """Give every schema name in a clean store one owner, and rename the rest.
-
-    Ids and values are not touched. Each kind of individual has a path of its
-    own in the ontology, so they collide with nothing but each other.
-
-    Args:
-        data: Store to fix, modified in place. Its names must be safe.
-        log: Rename log to append to. A new one is used when none is given.
-        bin_labels: Bin labels the build will use. Each bin class name is
-            reserved.
-
-    Returns:
-        The same store.
-    """
-    log = log if log is not None else RenameLog()
-    allocate_schema_names(data, log, bin_labels)
     return data
 
 
@@ -143,7 +116,7 @@ def verify_unique_names(data: OCEDStore) -> None:
         claim(obj_type, f"object type {obj_type!r}")
     for attribute in sorted(attribute_names(data)):
         claim(attribute, f"attribute {attribute!r}")
-    for relation in data.get_relation_types():
+    for relation in data.relation_types():
         claim(relation, f"relation {relation!r}")
 
     errors = [

@@ -64,8 +64,8 @@ def test_an_id_rename_reaches_id_columns_relation_endpoints_and_change_rows(stor
     apply_id_renames(store, {"o1": "id_o1"})
 
     assert list(store.ids(EntityKind.OBJECT, "order")) == ["id_o1"]
-    assert list(store.get_relation("in").data["src"]) == ["id_o1"]
-    assert list(store.get_object_changes("order")["ocel:oid"]) == ["id_o1"]
+    assert list(store.relation("in").data["src"]) == ["id_o1"]
+    assert list(store.object_changes("order")["ocel:oid"]) == ["id_o1"]
 
 
 def test_an_id_rename_turns_an_id_column_that_is_not_text_into_text(store):
@@ -73,7 +73,7 @@ def test_an_id_rename_turns_an_id_column_that_is_not_text_into_text(store):
     apply_id_renames(store, {"o1": "id_o1"})
 
     assert list(store.ids(EntityKind.OBJECT, "box")) == ["7"]
-    assert list(store.get_relation("in").data["dst"]) == ["7"]
+    assert list(store.relation("in").data["dst"]) == ["7"]
 
 
 def test_a_value_rename_reaches_every_table_carrying_the_attribute(store):
@@ -86,7 +86,7 @@ def test_a_value_rename_reaches_every_table_carrying_the_attribute(store):
 
 def test_an_attribute_rename_reaches_every_table_and_the_field_of_change_rows(store):
     apply_attribute_renames(store, {"status": "attribute_status"})
-    changes = store.get_object_changes("order")
+    changes = store.object_changes("order")
 
     assert "attribute_status" in store.table(EntityKind.EVENT, "act").data.columns
     assert "attribute_status" in store.table(EntityKind.OBJECT, "order").data.columns

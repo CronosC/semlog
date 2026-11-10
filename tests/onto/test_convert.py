@@ -80,7 +80,7 @@ def test_a_heap_exhaustion_while_loading_names_java_tool_options(
         raise jpype.JClass("java.lang.OutOfMemoryError")("Java heap space")
 
     reason_module.start_jvm()
-    monkeypatch.setattr("semanticlog.onto.convert.SyncOntology", exhaust)
+    monkeypatch.setattr("semanticlog.onto.reason.SyncOntology", exhaust)
 
     with pytest.raises(DependencyError, match="JAVA_TOOL_OPTIONS=-Xmx"):
         convert(built, {OutputFormat.TTL: tmp_path / "pipeline.ttl"})

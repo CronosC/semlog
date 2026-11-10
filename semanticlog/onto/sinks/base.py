@@ -12,6 +12,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from semanticlog.core import vocabulary as vocab
@@ -32,6 +34,20 @@ PARTIAL_SUFFIX = ".partial"
 
 The finished file then replaces the destination in one move.
 """
+
+
+@contextmanager
+def partial_file(target: str | Path) -> Iterator[Path]:
+    """Yield the partial file beside `target` and move it onto `target` on success.
+
+    The partial file is gone afterwards. A failure leaves `target` as it was.
+    """
+    partial = Path(f"{target}{PARTIAL_SUFFIX}")
+    try:
+        yield partial
+        partial.replace(target)
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 class AxiomSink(ABC):
@@ -97,11 +113,16 @@ class AxiomSink(ABC):
             return f"{self.iri}{name}"
         return f"{self.iri}{kind.path}{name}"
 
-    def _declare_name(self, name: str, kind: SinkEntity, source: str) -> None:
-        self._names.declare(name, kind, source)
+    def _declare(self, name: str, kind: SinkEntity, source: str) -> None:
+        """Claim a name as one entity and write its declaration the first time.
 
-    def _check_name(self, name: str, source: str) -> None:
-        self._names.check_name(name, source)
+        Raises:
+            UnsafeLocalNameError: If the name cannot appear in an IRI.
+            NameCollisionError: If the name is declared as another kind.
+        """
+        self._names.declare(name, kind, source)
+        if self._names.first_declaration(name, kind):
+            self.write_declaration(name, kind)
 
     @property
     def declared_count(self) -> int:
@@ -321,7 +342,9 @@ class AxiomSink(ABC):
             if property_iri.startswith(self.tbox_iri)
         ]
         for name in names:
-            self._declare_name(name, SinkEntity.ANNOTATION_PROPERTY, "the build record")
+            self._names.declare(
+                name, SinkEntity.ANNOTATION_PROPERTY, "the build record"
+            )
         self._opened = True
         self.write_ontology_header(record)
         for name in names:
@@ -374,7 +397,7 @@ class AxiomSink(ABC):
             return None
         parts = [expression] if isinstance(expression, str) else list(expression)
         for part in parts:
-            self._check_name(part, source)
+            self._names.check_name(part, source)
         return parts or None
 
     def _profile_allows(
@@ -394,10 +417,6 @@ class AxiomSink(ABC):
             return None
         self._replaced_unions += 1
         return [fallback]
-
-    def _resolve(self, value: Any) -> Literal | None:
-        """Return the literal a value is emitted as, or None when it is missing."""
-        return resolve_literal(value, self.profile)
 
     def add_class(
         self,
@@ -419,10 +438,8 @@ class AxiomSink(ABC):
             UnsafeLocalNameError: If a name cannot appear in an IRI.
             NameCollisionError: If the name is declared as another kind.
         """
-        self._declare_name(class_name, SinkEntity.CLASS, source)
+        self._declare(class_name, SinkEntity.CLASS, source)
         parents = self._disjuncts(superclass, f"the superclass of {class_name!r}")
-        if self._names.first_declaration(class_name, SinkEntity.CLASS):
-            self.write_declaration(class_name, SinkEntity.CLASS)
         if parents and self._names.first_sub_class(class_name, parents):
             allowed = self._profile_allows(parents)
             if allowed:
@@ -519,10 +536,7 @@ class AxiomSink(ABC):
             range_class, data_prop, create_inverse, inverse_name, axiomatic_inverse
         )
         kind = SinkEntity.property_for(data_prop)
-        self._declare_name(prop_name, kind, source)
-
-        if self._names.first_declaration(prop_name, kind):
-            self.write_declaration(prop_name, kind)
+        self._declare(prop_name, kind, source)
         if superprop is not None:
             self.add_sub_property(prop_name, superprop, data_prop, source=source)
         domain = self._disjuncts(domain_class, f"the domain of {prop_name!r}")
@@ -558,17 +572,13 @@ class AxiomSink(ABC):
             inverse_name = self.inverse_name(prop_name)
         inverse_source = f"inverse of {source}"
         self._names.claim_inverse(prop_name, inverse_name, source)
-        self._declare_name(inverse_name, kind, inverse_source)
-        if self._names.first_declaration(inverse_name, kind):
-            self.write_declaration(inverse_name, kind)
+        self._declare(inverse_name, kind, inverse_source)
         if axiomatic and self._names.first_inverse(prop_name, inverse_name):
             self.write_inverse_properties(prop_name, inverse_name)
         if superprop is not None:
             parent_inverse = self.inverse_name(superprop)
             if not self.is_declared(parent_inverse):
-                self._declare_name(parent_inverse, kind, inverse_source)
-                if self._names.first_declaration(parent_inverse, kind):
-                    self.write_declaration(parent_inverse, kind)
+                self._declare(parent_inverse, kind, inverse_source)
             self.add_sub_property(
                 inverse_name,
                 parent_inverse,
@@ -589,14 +599,14 @@ class AxiomSink(ABC):
         Raises:
             UnsafeLocalNameError: If either name cannot appear in an IRI.
         """
-        self._check_name(sub, source)
-        self._check_name(parent, source)
+        self._names.check_name(sub, source)
+        self._names.check_name(parent, source)
         if self._names.first_sub_property(sub, parent, data_prop):
             self.write_sub_property_of(sub, parent, data_prop)
 
     def add_transitive(self, prop: str) -> None:
         """Declare an object property transitive."""
-        self._check_name(prop, "a transitivity axiom")
+        self._names.check_name(prop, "a transitivity axiom")
         if self._names.first_transitive(prop):
             self.write_transitive(prop)
 
@@ -627,7 +637,7 @@ class AxiomSink(ABC):
                 "no datatype restrictions."
             )
         for name in (bin_class, attribute_class, value_prop):
-            self._check_name(name, "a bin definition")
+            self._names.check_name(name, "a bin definition")
         if self._names.first_bin_definition(bin_class):
             self.write_bin_definition(
                 bin_class, attribute_class, value_prop, lower, upper
@@ -639,7 +649,7 @@ class AxiomSink(ABC):
         Under OWL 2 EL an object property is left as it is, and the dropped
         axiom is counted.
         """
-        self._check_name(prop, "a functional property axiom")
+        self._names.check_name(prop, "a functional property axiom")
         if not self._names.first_functional(prop, data_prop):
             return
         if not data_prop and self.profile == OWLProfile.OWL2EL:
@@ -653,7 +663,7 @@ class AxiomSink(ABC):
         Under OWL 2 EL the property is left as it is, and the dropped axiom is
         counted.
         """
-        self._check_name(prop, "an inverse functional property axiom")
+        self._names.check_name(prop, "an inverse functional property axiom")
         if not self._names.first_inverse_functional(prop):
             return
         if self.profile == OWLProfile.OWL2EL:
@@ -675,7 +685,7 @@ class AxiomSink(ABC):
         if len(distinct) < 2:
             return
         for name in distinct:
-            self._check_name(name, source)
+            self._names.check_name(name, source)
         if self._names.first_disjoint(distinct):
             self.write_disjoint_classes(distinct)
 
@@ -737,29 +747,27 @@ class AxiomSink(ABC):
         self, prop: str, pairs: Iterable[tuple[Any, Any]]
     ) -> Iterator[tuple[str, str]]:
         """Yield each pair as text, with both names checked."""
-        accepts = self._names.accepts_individual
         for subject, target in pairs:
             name, other = str(subject), str(target)
-            if not accepts(name):
-                self._names.check_individual(name, f"the subject of {prop!r}")
-            if not accepts(other):
-                self._names.check_individual(other, f"the target of {prop!r}")
+            if not vocab.is_safe_local_name(name):
+                self._names.check_name(name, f"the subject of {prop!r}")
+            if not vocab.is_safe_local_name(other):
+                self._names.check_name(other, f"the target of {prop!r}")
             yield name, other
 
     def _checked_subjects(
         self, prop: str, pairs: Iterable[tuple[Any, Any]]
     ) -> Iterator[tuple[str, Literal]]:
         """Yield each pair with the subject as checked text and the value resolved."""
-        accepts = self._names.accepts_individual
         for subject, value in pairs:
-            literal = self._resolve(value)
+            literal = resolve_literal(value, self.profile)
             if literal is None:
                 continue
             if literal.replaced_controls:
                 self._replaced_controls[prop] += 1
             name = str(subject)
-            if not accepts(name):
-                self._names.check_individual(name, f"the subject of {prop!r}")
+            if not vocab.is_safe_local_name(name):
+                self._names.check_name(name, f"the subject of {prop!r}")
             yield name, literal
 
     def annotate_entity(
@@ -795,9 +803,7 @@ class AxiomSink(ABC):
         Raises:
             NameCollisionError: If the name is declared as another kind.
         """
-        self._declare_name(prop, SinkEntity.ANNOTATION_PROPERTY, source)
-        if self._names.first_declaration(prop, SinkEntity.ANNOTATION_PROPERTY):
-            self.write_declaration(prop, SinkEntity.ANNOTATION_PROPERTY)
+        self._declare(prop, SinkEntity.ANNOTATION_PROPERTY, source)
 
     def annotate_entity_with(
         self, name: str, prop: str, value: str, *, iri: bool = False
@@ -846,10 +852,9 @@ class AxiomSink(ABC):
         Raises:
             UnsafeLocalNameError: If a name cannot appear in an IRI.
         """
-        accepts = self._names.accepts_individual
         for name, _ in pairs:
-            if not accepts(name):
-                self._names.check_individual(name, "a labeled individual")
+            if not vocab.is_safe_local_name(name):
+                self._names.check_name(name, "a labeled individual")
         if not pairs:
             return
         counted_as = "rdfs:label" if attribute is None else f"labels of {attribute}"

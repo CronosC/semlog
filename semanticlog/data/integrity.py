@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from semanticlog.core.checks import CheckReport, Fixed, first_five
+from semanticlog.core.checks import CheckReport, FixIn, first_five
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind, RelationKind
 
@@ -47,7 +47,7 @@ def check_missing_ids(data: ReadableStore) -> CheckReport | None:
         header="The store holds rows with no id:",
         problems=tuple(violations),
         advice="Give every event and object an id, or drop the rows before building.",
-        about=Fixed.INPUT,
+        fix_in=FixIn.INPUT,
     )
 
 
@@ -77,13 +77,13 @@ def check_integrity(data: ReadableStore) -> CheckReport | None:
         return found
 
     def empty_endpoints(family: str, name: str, column: str) -> None:
-        relation = data.get_relation(name)
+        relation = data.relation(name)
         blank = int(relation.data[column].isna().sum())
         if blank:
             violations.append(f"{family} {name!r}: {blank} row(s) have no {column!r}")
 
-    for name in data.get_relation_types(RelationKind.E2O):
-        relation = data.get_relation(name)
+    for name in data.relation_types(RelationKind.E2O):
+        relation = data.relation(name)
         empty_endpoints("e2o", name, relation.from_id)
         empty_endpoints("e2o", name, relation.to_id)
         missing = set(relation.data[relation.from_id].dropna().unique()) - event_ids
@@ -101,8 +101,8 @@ def check_integrity(data: ReadableStore) -> CheckReport | None:
                 f"id(s) are in none of those types ({_sample(missing)})"
             )
 
-    for name in data.get_relation_types(RelationKind.O2O):
-        relation = data.get_relation(name)
+    for name in data.relation_types(RelationKind.O2O):
+        relation = data.relation(name)
         for column, types, side in (
             (relation.from_id, relation.from_type, "from"),
             (relation.to_id, relation.to_type, "to"),
@@ -121,5 +121,5 @@ def check_integrity(data: ReadableStore) -> CheckReport | None:
         header="The store holds rows a build could not emit an individual for:",
         problems=tuple(violations),
         advice="Fix the source data, or drop the rows before building.",
-        about=Fixed.INPUT,
+        fix_in=FixIn.INPUT,
     )

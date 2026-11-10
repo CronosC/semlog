@@ -7,21 +7,21 @@ and `HistoryEmitter` call `AttributeEmitter` for attribute columns, and
 
 from semanticlog.onto.emitters.attributes import AttributeEmitter
 from semanticlog.onto.emitters.base import Emitter
+from semanticlog.onto.emitters.build_record import BuildRecordEmitter
 from semanticlog.onto.emitters.entities import EntityEmitter
 from semanticlog.onto.emitters.history import HistoryEmitter
 from semanticlog.onto.emitters.order import OrderEmitter
-from semanticlog.onto.emitters.provenance import ProvenanceEmitter
 from semanticlog.onto.emitters.relations import RelationEmitter
 from semanticlog.onto.emitters.tbox import TBoxEmitter
 from semanticlog.onto.emitters.time import TimeEmitter
 
 __all__ = [
     "AttributeEmitter",
+    "BuildRecordEmitter",
     "Emitter",
     "EntityEmitter",
     "HistoryEmitter",
     "OrderEmitter",
-    "ProvenanceEmitter",
     "RelationEmitter",
     "TBoxEmitter",
     "TimeEmitter",

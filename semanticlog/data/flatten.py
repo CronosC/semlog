@@ -104,7 +104,7 @@ def projection_advice(data: ReadableStore) -> str:
 def _rank_case_concepts(data: ReadableStore, n: int) -> list[str]:
     """Return the n `case_concept_candidates` with the most instances."""
     reachable = set(case_concept_candidates(data))
-    ranked = data.get_most_common_objects(n=len(data.types(EntityKind.OBJECT)))
+    ranked = data.most_common_objects(n=len(data.types(EntityKind.OBJECT)))
     return [obj_type for obj_type in ranked if obj_type in reachable][:n]
 
 

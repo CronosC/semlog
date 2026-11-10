@@ -18,8 +18,8 @@ def test_the_log_holds_three_activities_two_object_types_and_their_relations(
 
     assert set(raw.types(EntityKind.EVENT)) == {"place_order", "pay", "ship_order"}
     assert set(raw.types(EntityKind.OBJECT)) == {"order", "item"}
-    assert set(raw.get_relation_types(RelationKind.E2O)) == {"modifies", "ships"}
-    assert set(raw.get_relation_types(RelationKind.O2O)) == {"contains"}
+    assert set(raw.relation_types(RelationKind.E2O)) == {"modifies", "ships"}
+    assert set(raw.relation_types(RelationKind.O2O)) == {"contains"}
 
 
 def test_the_log_holds_four_events_per_activity_and_the_documented_object_ids(

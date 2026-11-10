@@ -71,7 +71,7 @@ def test_two_relations_cleaning_alike_are_kept_apart_across_both_families(
 
     cleaned = clean_oced_data(oced)
 
-    assert cleaned.get_relation_types() == ["contains_x", "relation_contains_x"]
+    assert cleaned.relation_types() == ["contains_x", "relation_contains_x"]
     assert cleaned.backmap["relation"]["relation_contains_x"] == "contains_x"
 
 
@@ -130,7 +130,7 @@ def test_values_of_one_attribute_cleaning_alike_are_kept_apart_across_tables():
     cleaned = clean_oced_data(oced)
 
     assert list(cleaned.table(EntityKind.OBJECT, "order").data["status"]) == ["a_b"]
-    assert list(cleaned.get_object_changes("order")["status"]) == ["value_a_b"]
+    assert list(cleaned.object_changes("order")["status"]) == ["value_a_b"]
     assert cleaned.backmap["value"]["status.a_b"] == "a b"
     assert cleaned.backmap["value"]["status.value_a_b"] == "a_b"
 

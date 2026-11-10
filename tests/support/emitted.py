@@ -40,7 +40,7 @@ class Emitted:
         defined: Classes stated equivalent to a class expression.
         inverse_functional: Object properties declared inverse functional.
         annotations: Entity annotations, as (name, label or comment, text).
-        ontology_annotations: The provenance record, keyed by annotation name.
+        ontology_annotations: The build record, keyed by annotation name.
         axiom_lines: Every axiom line, for the syntaxes that have lines.
     """
 

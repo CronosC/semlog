@@ -107,7 +107,7 @@ def allocate_schema_names(
         registry,
         log,
         RenameKind.RELATION,
-        data.get_relation_types(),
+        data.relation_types(),
         data.rename_relation,
         derives=vocab.derived_from_relation,
         accepts=_opens_a_property,

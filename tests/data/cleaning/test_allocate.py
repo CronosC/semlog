@@ -3,7 +3,9 @@
 import pandas as pd
 import pytest
 
-from semanticlog.data.cleaning import clean_oced_data, fix_duplicate_names
+from semanticlog.data.cleaning import clean_oced_data
+from semanticlog.data.cleaning.allocate import allocate_schema_names
+from semanticlog.data.cleaning.renames import RenameLog
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, RelationKind
 
@@ -17,6 +19,11 @@ def _relate(oced, name, to_type="obj"):
         to_id="oid",
         to_type=[to_type],
     )
+
+
+def _allocate(oced):
+    allocate_schema_names(oced, RenameLog(), ())
+    return oced
 
 
 def _columns(oced, obj_type="obj"):
@@ -44,7 +51,7 @@ def test_an_activity_named_after_a_derived_name_is_prefixed(
 ):
     oced = make_store(activity=activity, objects=objects)
 
-    assert fix_duplicate_names(oced).types(EntityKind.EVENT) == [f"event_{activity}"]
+    assert _allocate(oced).types(EntityKind.EVENT) == [f"event_{activity}"]
 
 
 @pytest.mark.parametrize("attribute", ["has_weight", "Observes"])
@@ -52,7 +59,7 @@ def test_a_name_that_only_resembles_a_schema_name_is_left_alone(make_store, attr
     """`has_weight` derives from no attribute of the log, and IRIs are case sensitive."""
     oced = make_store(objects=pd.DataFrame({"oid": ["o1"], attribute: ["x"]}))
 
-    assert _columns(fix_duplicate_names(oced)) == ["oid", attribute]
+    assert _columns(_allocate(oced)) == ["oid", attribute]
 
 
 def test_an_object_type_keeps_a_name_an_activity_and_an_attribute_also_claim(
@@ -80,8 +87,8 @@ def test_a_relation_named_after_an_object_type_is_prefixed(make_store):
 
     cleaned = clean_oced_data(oced)
 
-    assert cleaned.get_relation_types() == ["relation_order"]
-    assert cleaned.get_relation("relation_order").to_type == ["order"]
+    assert cleaned.relation_types() == ["relation_order"]
+    assert cleaned.relation("relation_order").to_type == ["order"]
 
 
 def test_a_relation_cannot_open_a_property_name_with_a_digit(make_store):
@@ -89,7 +96,7 @@ def test_a_relation_cannot_open_a_property_name_with_a_digit(make_store):
     oced = make_store()
     _relate(oced, "2modifies")
 
-    assert clean_oced_data(oced).get_relation_types() == ["relation_2modifies"]
+    assert clean_oced_data(oced).relation_types() == ["relation_2modifies"]
 
 
 def _with_object_type(oced, name):
@@ -122,7 +129,7 @@ def test_a_rename_never_discards_a_type_already_in_the_store(make_store):
         time_col="ts",
     )
 
-    fix_duplicate_names(oced)
+    _allocate(oced)
 
     assert sorted(oced.types(EntityKind.EVENT)) == ["event_order", "event_order_2"]
 
@@ -220,7 +227,7 @@ def test_an_attribute_only_the_history_carries_is_renamed_in_the_change_rows(
         ),
     )
 
-    changes = clean_oced_data(oced).get_object_changes("order")
+    changes = clean_oced_data(oced).object_changes("order")
 
     assert list(changes["ocel:field"]) == ["attribute_status"]
     assert list(changes["attribute_status"]) == ["done"]

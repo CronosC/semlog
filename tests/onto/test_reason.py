@@ -10,7 +10,7 @@ from pathlib import Path
 import jpype
 import pytest
 
-from semanticlog.core.enums import REASONER_BACKENDS, IndividualKind, OWLProfile
+from semanticlog.core.enums import IndividualKind, OWLProfile, ReasonerBackend
 from semanticlog.core.errors import ConfigError, DependencyError, InputError
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.onto.reason import Reasoner, start_jvm
@@ -53,17 +53,21 @@ def test_a_missing_ontology_file_is_rejected_before_the_jvm_starts(tmp_path):
 
 @pytest.mark.reasoner
 def test_materializing_writes_the_inferred_types_back_to_the_file(small):
-    Reasoner(str(small)).materialize()
+    reasoner = Reasoner(str(small))
+    reasoner.materialize()
+    reasoner.overwrite()
 
     assert read_rdf(small, DEFAULT_IRI).types["a"] == {"Man", "Human"}
 
 
 @pytest.mark.reasoner
-@pytest.mark.parametrize("backend", REASONER_BACKENDS)
+@pytest.mark.parametrize("backend", [b.value for b in ReasonerBackend])
 def test_every_backend_materializes(backend, small):
     before = small.stat().st_size
 
-    Reasoner(str(small), backend=backend).materialize()
+    reasoner = Reasoner(str(small), backend=backend)
+    reasoner.materialize()
+    reasoner.overwrite()
 
     assert small.stat().st_size > before
 
@@ -134,7 +138,7 @@ def test_a_save_that_fails_leaves_the_file_that_was_there(small, monkeypatch):
     monkeypatch.setattr(reasoner.ontology, "save", fail)
 
     with pytest.raises(RuntimeError, match="serialization failed"):
-        reasoner.save()
+        reasoner.overwrite()
 
     assert small.read_text(encoding="utf-8") == before
     assert [p.name for p in small.parent.iterdir()] == ["small.owl"]

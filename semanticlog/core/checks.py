@@ -23,7 +23,7 @@ def first_five(items: Sequence[object]) -> str:
     return f"{shown} and {more} more" if more > 0 else shown
 
 
-class Fixed(str, Enum):
+class FixIn(str, Enum):
     """Where a finding is fixed.
 
     Attributes:
@@ -45,13 +45,13 @@ class CheckReport:
         problems: One clause per finding. The first five are rendered and
             the rest counted. Empty when the header says everything.
         advice: What to change, written after the findings.
-        about: Where the fix is made, the config or the input.
+        fix_in: Where the fix is made, the config or the input.
     """
 
     header: str
     problems: tuple[str, ...] = ()
     advice: str = ""
-    about: Fixed = Fixed.INPUT
+    fix_in: FixIn = FixIn.INPUT
 
     def render(self) -> str:
         """Return the one line this report contributes to a message."""
@@ -81,6 +81,6 @@ def raise_reports(reports: Iterable[CheckReport | None]) -> None:
     if not found:
         return
     message = " ".join(report.render() for report in found)
-    if all(report.about is Fixed.CONFIG for report in found):
+    if all(report.fix_in is FixIn.CONFIG for report in found):
         raise ConfigError(message)
     raise InputError(message)

@@ -63,7 +63,7 @@ def test_every_name_in_the_store_is_made_safe_and_mapped_to_its_source():
         "id": {"e_1": "e 1"},
         "value": {"total_cost.2023-03-15_12_45": "2023-03-15 12:45"},
     }
-    assert cleaned.get_relation("rel_name").data.values.tolist() == [["e_1", "o1"]]
+    assert cleaned.relation("rel_name").data.values.tolist() == [["e_1", "o1"]]
 
 
 def test_a_cleaned_store_holds_only_safe_names_and_passes_the_integrity_check(
@@ -73,7 +73,7 @@ def test_a_cleaned_store_holds_only_safe_names_and_passes_the_integrity_check(
     names = [
         *cleaned.types(EntityKind.EVENT),
         *cleaned.types(EntityKind.OBJECT),
-        *cleaned.get_relation_types(),
+        *cleaned.relation_types(),
         *(column for view in cleaned.tables() for column in view.attributes),
     ]
 
@@ -90,8 +90,8 @@ def test_a_change_table_is_keyed_by_the_cleaned_type_and_keeps_its_ocel_column_n
 
     cleaned = clean_oced_data(oced)
 
-    changes = cleaned.get_object_changes("order_item")
-    assert cleaned.get_object_change_types() == ["order_item"]
+    changes = cleaned.object_changes("order_item")
+    assert cleaned.object_change_types() == ["order_item"]
     assert list(changes.columns) == [
         "ocel:oid",
         "ocel:type",
@@ -123,8 +123,8 @@ def test_a_renamed_id_is_rewritten_in_relations_and_change_rows(make_store):
     cleaned = clean_oced_data(oced)
 
     assert list(cleaned.ids(EntityKind.OBJECT, "order")) == ["a_b", "id_a_b"]
-    assert list(cleaned.get_relation("modifies").data["oid"]) == ["id_a_b"]
-    assert list(cleaned.get_object_changes("order")["ocel:oid"]) == ["id_a_b"]
+    assert list(cleaned.relation("modifies").data["oid"]) == ["id_a_b"]
+    assert list(cleaned.object_changes("order")["ocel:oid"]) == ["id_a_b"]
 
 
 def test_an_id_equal_to_an_activity_name_is_kept(make_store, events):
@@ -216,7 +216,7 @@ def test_a_dotted_attribute_is_renamed_in_the_change_rows(make_store):
         "obj", _changes("obj", field="unit.price", **{"unit.price": [2]})
     )
 
-    changes = clean_oced_data(oced).get_object_changes("obj")
+    changes = clean_oced_data(oced).object_changes("obj")
 
     assert list(changes["ocel:field"]) == ["unit_price"]
     assert "unit_price" in changes.columns

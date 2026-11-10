@@ -111,22 +111,6 @@ class NameLedger:
                 "in the input log or the declare_file."
             )
 
-    def accepts_individual(self, name: str) -> bool:
-        """Whether a name can be an IRI local name. `check_individual` gives the error."""
-        return bool(vocab.SAFE_LOCAL_NAME.fullmatch(name))
-
-    def check_individual(self, name: str, source: str) -> None:
-        """Raise if a name cannot be emitted as an individual.
-
-        Args:
-            name: Individual name, as text.
-            source: Origin of the name, quoted in the error.
-
-        Raises:
-            UnsafeLocalNameError: If the name cannot appear in an IRI.
-        """
-        self.check_name(name, source)
-
     def check_individuals(self, names: Iterable[str], source: str) -> list[str]:
         """Check a batch of individual names and return the ones to emit.
 

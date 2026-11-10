@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 from semanticlog.core.enums import (
-    REASONER_BACKENDS,
     AttributeRepresentation,
     BuildEnum,
     EventOrderRepresentation,
@@ -22,7 +21,7 @@ from semanticlog.core.enums import (
     OCELExtension,
     OutputFormat,
     OWLProfile,
-    resolve_reasoner_backend,
+    ReasonerBackend,
 )
 from semanticlog.core.errors import ConfigError
 from semanticlog.core.vocabulary import TBOX_IRI, check_log_iri, default_iri
@@ -104,11 +103,6 @@ def _as_str(value: Any, key: str) -> str:
 def _as_path(value: Any, key: str) -> Path:
     """Read a setting as a filesystem path."""
     return Path(_as_str(value, key))
-
-
-def _as_reasoner_backend(value: Any, key: str) -> str:
-    """Read a reasoner name in any case."""
-    return resolve_reasoner_backend(_as_str(value, key), key=key)
 
 
 def _as_log_iri(value: Any, key: str) -> str:
@@ -552,9 +546,12 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     Setting(
         "reasoner_backend",
         "HermiT",
-        _as_reasoner_backend,
+        _enum_of(ReasonerBackend),
         "run",
-        help=f"Reasoner backend: {' | '.join(REASONER_BACKENDS)} (default: HermiT).",
+        help=(
+            f"Reasoner backend: {' | '.join(b.value for b in ReasonerBackend)} "
+            "(default: HermiT)."
+        ),
         argparse={"metavar": "NAME"},
     ),
     Setting(

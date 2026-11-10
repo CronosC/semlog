@@ -205,14 +205,14 @@ class OCEDStore:
         if self._ocel_mode and old_name in self._object_changes:
             self._object_changes[new_name] = self._object_changes.pop(old_name)
 
-    def get_most_common_objects(self, n: int = 1) -> list[str]:
+    def most_common_objects(self, n: int = 1) -> list[str]:
         """Return the n object types with the most instances, most first.
 
         Raises:
             ValueError: If n is negative.
         """
         if n < 0:
-            raise ValueError(f"get_most_common_objects needs n >= 0, got {n}.")
+            raise ValueError(f"most_common_objects needs n >= 0, got {n}.")
         objects = self._entities[EntityKind.OBJECT]
         return sorted(objects, key=lambda k: len(objects[k].data), reverse=True)[:n]
 
@@ -362,9 +362,9 @@ class OCEDStore:
         Raises:
             InputError: If no relation of that name exists.
         """
-        self.get_relation(relation).data = data
+        self.relation(relation).data = data
 
-    def get_relation(self, relation: str) -> RelationTable:
+    def relation(self, relation: str) -> RelationTable:
         """Return one relation table from either family.
 
         Raises:
@@ -375,11 +375,10 @@ class OCEDStore:
             if relation in family:
                 return family[relation]
         raise InputError(
-            f"Unknown relation {relation!r}. This store holds "
-            f"{self.get_relation_types()}."
+            f"Unknown relation {relation!r}. This store holds {self.relation_types()}."
         )
 
-    def get_relation_types(self, kind: RelationKind = RelationKind.ALL) -> list[str]:
+    def relation_types(self, kind: RelationKind = RelationKind.ALL) -> list[str]:
         """Return the relation names of one family or both, event-to-object first."""
         wanted = RelationKind.families() if kind is RelationKind.ALL else (kind,)
         return [name for family in wanted for name in self._relations.of(family)]
@@ -390,7 +389,7 @@ class OCEDStore:
         Raises:
             InputError: If the new name is taken, or the old name is unknown.
         """
-        held = self.get_relation_types()
+        held = self.relation_types()
         if new_name in held:
             raise InputError(
                 f"Cannot rename relation: {new_name!r} already exists as a relation."
@@ -430,25 +429,25 @@ class OCEDStore:
             )
         self._object_changes[obj_type] = data
 
-    def get_object_changes(self, obj_type: str) -> pd.DataFrame:
+    def object_changes(self, obj_type: str) -> pd.DataFrame:
         """Return the recorded attribute changes of one object type.
 
         Raises:
             ValueError: If the store is not in OCEL mode.
             InputError: If nothing was recorded for the type.
         """
-        self._require_ocel_mode("get_object_changes")
+        self._require_ocel_mode("object_changes")
         if obj_type not in self._object_changes:
             raise InputError(f"No object changes recorded for type {obj_type!r}.")
         return self._object_changes[obj_type]
 
-    def get_object_change_types(self) -> list[str]:
+    def object_change_types(self) -> list[str]:
         """Return the object types that have recorded changes.
 
         Raises:
             ValueError: If the store is not in OCEL mode.
         """
-        self._require_ocel_mode("get_object_change_types")
+        self._require_ocel_mode("object_change_types")
         return list(self._object_changes)
 
     def replace_object_changes(self, changes: dict[str, pd.DataFrame]) -> None:

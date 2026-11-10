@@ -6,10 +6,8 @@ import logging
 from collections.abc import Mapping
 from pathlib import Path
 
-from owlapy.owl_ontology import SyncOntology
-
 from semanticlog.core.enums import OutputFormat
-from semanticlog.onto.reason import raise_java_error, save_ontology, start_jvm
+from semanticlog.onto.reason import load_ontology, save_ontology
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +25,7 @@ def convert(source: Path, targets: Mapping[OutputFormat, Path]) -> None:
     """
     if not targets:
         return
-    start_jvm()
-    try:
-        ontology = SyncOntology(str(source))
-    except Exception as exc:
-        raise_java_error(
-            exc,
-            f"The OWL API cannot read {source}. Build the ontology again, or "
-            "check that a build wrote the file.",
-        )
+    ontology = load_ontology(source)
     for output_format, target in targets.items():
         save_ontology(ontology, output_format, target)
         logger.info("Ontology saved as %s: %s", output_format.value, target)

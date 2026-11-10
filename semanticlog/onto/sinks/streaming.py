@@ -62,6 +62,7 @@ class StreamingSink(AxiomSink):
         Functional syntax places ontology annotations inside `Ontology(...)`,
         before the axioms.
         """
+        self._begin_write(len(annotations))
         self._out.write(f"Prefix(:=<{self.iri}>)\n")
         for kind in IndividualKind:
             self._out.write(f"Prefix({kind.value}:=<{self.iri}{kind.path}>)\n")
@@ -75,7 +76,6 @@ class StreamingSink(AxiomSink):
         )
         for property_iri, value in annotations.items():
             self._out.write(f'Annotation(<{property_iri}> "{self._escape(value)}")\n')
-            self._axiom_count += 1
 
     def _axiom(self, text: str) -> None:
         """Write one axiom and count it, opening the ontology if it is not open."""

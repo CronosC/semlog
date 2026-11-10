@@ -531,7 +531,7 @@ def test_a_reasoner_places_an_unasserted_value_in_its_bin(tmp_path):
     path.write_text(f"{text[:-1]}{extra})\n", encoding="utf-8")
 
     reasoner = Reasoner(str(path))
-    reasoner.materialize(overwrite_old=False, property_assertions=False)
+    reasoner.materialize(property_assertions=False)
     reasoner.save(str(tmp_path / "materialized.ofn"))
 
     types = read_functional(tmp_path / "materialized.ofn").types["probe"]

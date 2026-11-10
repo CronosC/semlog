@@ -1,6 +1,6 @@
-"""Reading the provenance record back out of an ontology file.
+"""Reading the build record back out of an ontology file.
 
-`ProvenanceEmitter` writes the record as ontology annotations. `read_record`
+`BuildRecordEmitter` writes the record as ontology annotations. `read_record`
 finds them in the head of a written file, in functional syntax or in RDF/XML,
 and parses their JSON. The file may be one semlog wrote or one the OWL
 API rewrote.

@@ -1,6 +1,6 @@
 """The record of how an ontology was produced, written into the ontology.
 
-`ProvenanceEmitter` writes the tool, the settings and the case concepts as
+`BuildRecordEmitter` writes the tool, the settings and the case concepts as
 ontology annotations.
 """
 
@@ -11,19 +11,13 @@ from collections.abc import Sequence
 
 from semanticlog.core import vocabulary as vocab
 from semanticlog.onto.emitters.base import Emitter
-from semanticlog.onto.settings import OntoBuildSettings
 
 
-def build_configuration(settings: OntoBuildSettings) -> dict:
-    """Return the settings to record."""
-    return settings.to_dict()
-
-
-class ProvenanceEmitter(Emitter):
+class BuildRecordEmitter(Emitter):
     """Annotates the ontology with the tool, the settings and the case concepts."""
 
     def emit(self, case_concepts: Sequence[str]) -> None:
-        """Open the ontology with the provenance record as its annotations.
+        """Open the ontology with the build record as its annotations.
 
         This is the first emitter a build runs. The settings and the case
         concepts are written as JSON text.
@@ -35,7 +29,7 @@ class ProvenanceEmitter(Emitter):
             {
                 f"{base}{vocab.BUILD_TOOL}": f"semlog {__version__}",
                 f"{base}{vocab.BUILD_CONFIGURATION}": json.dumps(
-                    build_configuration(self.settings), sort_keys=True
+                    self.settings.to_dict(), sort_keys=True
                 ),
                 f"{base}{vocab.CASE_CONCEPTS}": json.dumps(list(case_concepts)),
             }

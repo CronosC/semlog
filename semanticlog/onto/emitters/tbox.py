@@ -25,43 +25,33 @@ class TBoxEmitter(Emitter):
         if attribute_history is None:
             attribute_history = self.settings.emits_attribute_history
 
-        has_inverses = self.settings.has_inverses
-        axiomatic = self.settings.axiomatic_inverses
         for name in (vocab.OBJECT, vocab.EVENT, vocab.ATTRIBUTE, vocab.TIME):
             self.sink.add_class(name, source="the TBox")
         for name in (vocab.OBJECT_ATTRIBUTE, vocab.EVENT_ATTRIBUTE):
             self.sink.add_class(name, vocab.ATTRIBUTE, source="the TBox")
 
-        self.sink.add_property(
+        self.add_object_property(
             vocab.OBSERVED_AT,
             domain_class=vocab.EVENT,
             range_class=vocab.TIME,
-            create_inverse=has_inverses,
-            axiomatic_inverse=axiomatic,
             source="the TBox",
         )
-        self.sink.add_property(
+        self.add_object_property(
             vocab.EVENT_OBJECT_RELATION,
             domain_class=vocab.EVENT,
             range_class=vocab.OBJECT,
-            create_inverse=has_inverses,
-            axiomatic_inverse=axiomatic,
             source="the TBox",
         )
-        self.sink.add_property(
+        self.add_object_property(
             vocab.OBJECT_OBJECT_RELATION,
             domain_class=vocab.OBJECT,
             range_class=vocab.OBJECT,
-            create_inverse=has_inverses,
-            axiomatic_inverse=axiomatic,
             source="the TBox",
         )
-        self.sink.add_property(
+        self.add_object_property(
             vocab.HAS_ATTRIBUTE,
             domain_class=[vocab.OBJECT, vocab.EVENT],
             range_class=vocab.ATTRIBUTE,
-            create_inverse=has_inverses,
-            axiomatic_inverse=axiomatic,
             source="the TBox",
         )
         self.sink.add_property(vocab.HAS_DATA_VALUE, data_prop=True, source="the TBox")
@@ -93,39 +83,29 @@ class TBoxEmitter(Emitter):
 
     def _emit_attribute_history_schema(self) -> None:
         """Emit the change record class and the properties around it."""
-        has_inverses = self.settings.has_inverses
-        axiomatic = self.settings.axiomatic_inverses
         self.sink.add_class(vocab.ATTRIBUTE_CHANGE, source="the TBox")
-        self.sink.add_property(
+        self.add_object_property(
             vocab.HAS_ATTRIBUTE_CHANGE,
             domain_class=vocab.OBJECT,
             range_class=vocab.ATTRIBUTE_CHANGE,
-            create_inverse=has_inverses,
-            axiomatic_inverse=axiomatic,
             source="the TBox",
         )
-        self.sink.add_property(
+        self.add_object_property(
             vocab.ATTRIBUTE_CHANGE_VALUE,
             domain_class=vocab.ATTRIBUTE_CHANGE,
             range_class=vocab.ATTRIBUTE,
-            create_inverse=has_inverses,
-            axiomatic_inverse=axiomatic,
             source="the TBox",
         )
-        self.sink.add_property(
+        self.add_object_property(
             vocab.CHANGED_AT,
             domain_class=vocab.ATTRIBUTE_CHANGE,
             range_class=vocab.TIME,
-            create_inverse=has_inverses,
-            axiomatic_inverse=axiomatic,
             source="the TBox",
         )
-        self.sink.add_property(
+        self.add_object_property(
             vocab.CAUSED_BY,
             domain_class=vocab.ATTRIBUTE_CHANGE,
             range_class=vocab.EVENT,
-            create_inverse=has_inverses,
-            axiomatic_inverse=axiomatic,
             source="the TBox",
         )
         self.declare_inverse_functional(vocab.HAS_ATTRIBUTE_CHANGE)

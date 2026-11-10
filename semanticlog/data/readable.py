@@ -49,20 +49,20 @@ class ReadableStore(Protocol):
     def types_holding(self, kind: EntityKind, ids: Iterable[object]) -> list[str]:
         """Return the sorted types of one kind whose tables hold any of the ids."""
 
-    def get_most_common_objects(self, n: int = 1) -> list[str]:
+    def most_common_objects(self, n: int = 1) -> list[str]:
         """Return the object types with the most instances."""
 
     def relations_of(self, kind: RelationKind) -> Mapping[str, RelationTable]:
         """Return one relation family, keyed by name and read-only."""
 
-    def get_relation(self, relation: str) -> RelationTable:
+    def relation(self, relation: str) -> RelationTable:
         """Return one relation by name, from either family."""
 
-    def get_relation_types(self, kind: RelationKind = RelationKind.ALL) -> list[str]:
+    def relation_types(self, kind: RelationKind = RelationKind.ALL) -> list[str]:
         """Return relation names, optionally of one family only."""
 
-    def get_object_changes(self, obj_type: str) -> pd.DataFrame:
+    def object_changes(self, obj_type: str) -> pd.DataFrame:
         """Return the recorded attribute changes of one object type."""
 
-    def get_object_change_types(self) -> list[str]:
+    def object_change_types(self) -> list[str]:
         """Return the object types that have recorded changes."""

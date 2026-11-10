@@ -1,4 +1,4 @@
-"""`ProvenanceEmitter`: the build record, written as annotations on the ontology."""
+"""`BuildRecordEmitter`: the build record, written as annotations on the ontology."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from semanticlog import __version__
 from semanticlog.core.enums import EventOrderRepresentation, OWLProfile
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.onto.builder import OCEDOntoBuilder
-from semanticlog.onto.emitters.provenance import build_configuration
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 from semanticlog.onto.sinks import StreamingSink
@@ -87,7 +86,7 @@ def test_the_resolved_settings_are_recorded_as_json(record):
 
 
 def test_the_recorded_configuration_holds_every_setting():
-    config = build_configuration(OntoBuildSettings())
+    config = OntoBuildSettings().to_dict()
 
     assert set(config) == {f.name for f in dataclasses.fields(OntoBuildSettings)}
 

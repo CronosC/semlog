@@ -89,10 +89,7 @@ def inspect_input(
     activities = by_count(rows[EntityKind.EVENT])
     object_types = by_count(rows[EntityKind.OBJECT])
     relations = by_count(
-        [
-            (name, len(data.get_relation(name).data))
-            for name in data.get_relation_types()
-        ]
+        [(name, len(data.relation(name).data)) for name in data.relation_types()]
     )
 
     stamps = [

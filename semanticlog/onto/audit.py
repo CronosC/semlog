@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from semanticlog.core.checks import CheckReport, Fixed, raise_reports
+from semanticlog.core.checks import CheckReport, FixIn, raise_reports
 from semanticlog.data.cleaning import object_type_renames
 from semanticlog.data.declare import DeclareResult
 from semanticlog.data.flatten import case_concept_candidates, projection_advice
@@ -115,7 +115,7 @@ def case_concept_report(
         ),
         problems=tuple(problems),
         advice=f"{projection_advice(data)} {fix}",
-        about=Fixed.CONFIG,
+        fix_in=FixIn.CONFIG,
     )
 
 
@@ -160,5 +160,5 @@ def check_declare_input(
             "one before it was filtered. Re-run 'semlog mine-declare' against "
             "the log being built."
         ),
-        about=Fixed.INPUT,
+        fix_in=FixIn.INPUT,
     )

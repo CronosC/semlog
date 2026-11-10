@@ -57,7 +57,3 @@ class EntityEmitter(Emitter):
                 str(view.id_column),
                 kind.individual,
             )
-
-    def emit_attribute_disjointness(self) -> None:
-        """State that the attribute classes the build declared share no value."""
-        self.attributes.emit_disjointness()

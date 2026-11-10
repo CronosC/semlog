@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 
 from semanticlog.core.enums import SinkEntity
-from semanticlog.core.vocabulary import NameCollisionError, UnsafeLocalNameError
+from semanticlog.core.vocabulary import (
+    NameCollisionError,
+    UnsafeLocalNameError,
+    is_safe_local_name,
+)
 from semanticlog.onto.sinks.ledger import NameLedger
 
 CLASS = SinkEntity.CLASS
@@ -89,7 +93,7 @@ def test_an_individual_named_like_a_class_is_accepted(ledger):
     ledger.declare("order", CLASS, "an object type")
 
     assert ledger.check_individuals(["o1", "order"], "a test") == ["o1", "order"]
-    assert ledger.accepts_individual("order") is True
+    assert is_safe_local_name("order") is True
 
 
 def test_an_unsafe_individual_name_is_rejected(ledger):

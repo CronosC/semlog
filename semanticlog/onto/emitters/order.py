@@ -63,26 +63,20 @@ class OrderEmitter(Emitter):
         """
         include_df = self.settings.emits_df
         include_ef = self.settings.emits_ef
-        has_inverses = self.settings.has_inverses
-        axiomatic = self.settings.axiomatic_inverses
 
         order_source = "the event order super-properties"
         if include_df:
-            self.sink.add_property(
+            self.add_object_property(
                 vocab.DF,
                 vocab.EVENT,
                 vocab.EVENT,
-                create_inverse=has_inverses,
-                axiomatic_inverse=axiomatic,
                 source=order_source,
             )
         if include_ef:
-            self.sink.add_property(
+            self.add_object_property(
                 vocab.EF,
                 vocab.EVENT,
                 vocab.EVENT,
-                create_inverse=has_inverses,
-                axiomatic_inverse=axiomatic,
                 source=order_source,
             )
         self.annotations.order_superproperties(include_df, include_ef)
@@ -131,8 +125,6 @@ class OrderEmitter(Emitter):
         start_ids = grouped["event_id"].nth(0)
         end_ids = grouped["event_id"].nth(-1)
 
-        has_inverses = self.settings.has_inverses
-        axiomatic = self.settings.axiomatic_inverses
         start_cls = vocab.start_class(case_concept)
         end_cls = vocab.end_class(case_concept)
         case_source = f"case concept {case_concept!r}"
@@ -147,13 +139,11 @@ class OrderEmitter(Emitter):
             df_pairs = events.loc[
                 events["next_event_id"].notna(), ["event_id", "next_event_id"]
             ]
-            self.sink.add_property(
+            self.add_object_property(
                 df_rel,
                 vocab.EVENT,
                 vocab.EVENT,
                 vocab.DF,
-                create_inverse=has_inverses,
-                axiomatic_inverse=axiomatic,
                 source=case_source,
             )
             self.annotations.df_property(case_concept, df_rel)
@@ -165,13 +155,11 @@ class OrderEmitter(Emitter):
             return
 
         ef_rel = vocab.ef_property(case_concept)
-        self.sink.add_property(
+        self.add_object_property(
             ef_rel,
             vocab.EVENT,
             vocab.EVENT,
             vocab.EF,
-            create_inverse=has_inverses,
-            axiomatic_inverse=axiomatic,
             source=case_source,
         )
         self.annotations.ef_property(case_concept, ef_rel)
@@ -190,7 +178,7 @@ class OrderEmitter(Emitter):
         """
         self.sink.add_sub_property(df_rel, ef_rel)
         self.sink.add_transitive(ef_rel)
-        if self.settings.has_inverses and not self.settings.axiomatic_inverses:
+        if self._states_inverse_twins():
             self.sink.add_sub_property(
                 self.sink.inverse_name(df_rel), self.sink.inverse_name(ef_rel)
             )

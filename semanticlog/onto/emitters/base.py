@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 
 from semanticlog.core.enums import IndividualKind
@@ -35,6 +37,28 @@ class Emitter:
         self.settings = settings
         self.annotations = annotations
         self.emitted = emitted
+
+    def add_object_property(
+        self,
+        name: str,
+        domain_class: str | list[str] | None = None,
+        range_class: str | list[str] | None = None,
+        superprop: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Declare an object property, with the inverse the settings ask for.
+
+        Other keyword arguments go to `AxiomSink.add_property`.
+        """
+        self.sink.add_property(
+            name,
+            domain_class,
+            range_class,
+            superprop,
+            create_inverse=self.settings.has_inverses,
+            axiomatic_inverse=self.settings.axiomatic_inverses,
+            **kwargs,
+        )
 
     def _states_inverse_twins(self) -> bool:
         """Whether an inverse property needs its characteristic stated, having no inverse axiom."""

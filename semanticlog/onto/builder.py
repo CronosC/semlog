@@ -22,10 +22,10 @@ from semanticlog.onto.audit import audit_build
 from semanticlog.onto.emitted import EmittedIndividuals
 from semanticlog.onto.emitters import (
     AttributeEmitter,
+    BuildRecordEmitter,
     EntityEmitter,
     HistoryEmitter,
     OrderEmitter,
-    ProvenanceEmitter,
     RelationEmitter,
     TBoxEmitter,
     TimeEmitter,
@@ -57,17 +57,18 @@ _KIND_WORDS: dict[str, tuple[str, str]] = {
 class Emitters:
     """The emitters of one build. They share one sink and one `EmittedIndividuals`.
 
-    `AttributeEmitter` is not listed. The entity and history emitters call it
-    for their attribute columns.
+    The entity and history emitters call `attributes` for their attribute
+    columns.
     """
 
+    attributes: AttributeEmitter
     tbox: TBoxEmitter
     entities: EntityEmitter
     times: TimeEmitter
     order: OrderEmitter
     relations: RelationEmitter
     history: HistoryEmitter
-    provenance: ProvenanceEmitter
+    build_record: BuildRecordEmitter
 
 
 @dataclass(frozen=True)
@@ -113,14 +114,14 @@ class BuildStep:
 
 
 def _upper_schema(emitters: Emitters, context: BuildContext) -> None:
-    """Emit the provenance record, then the upper schema."""
-    emitters.provenance.emit(context.inputs.case_concepts)
+    """Emit the build record, then the upper schema."""
+    emitters.build_record.emit(context.inputs.case_concepts)
     emitters.tbox.emit(attribute_history=context.attribute_history)
 
 
 def _disjoint_attribute_classes(emitters: Emitters) -> None:
     """Emit the disjointness of the attribute, bin and change classes the build declared."""
-    emitters.entities.emit_attribute_disjointness()
+    emitters.attributes.emit_disjointness()
     emitters.history.emit_disjointness()
 
 
@@ -157,19 +158,19 @@ BUILD_STEPS: tuple[BuildStep, ...] = (
     BuildStep(
         message="Instantiating event to object relation data ({count} relation types)",
         absent="No event to object relations in the data.",
-        count=lambda c: len(c.data.get_relation_types(RelationKind.E2O)),
+        count=lambda c: len(c.data.relation_types(RelationKind.E2O)),
         run=lambda e, c: e.relations.emit(c.data, RelationKind.E2O),
     ),
     BuildStep(
         message="Instantiating object to object relation data ({count} relation types)",
         absent="No object to object relations in the data.",
-        count=lambda c: len(c.data.get_relation_types(RelationKind.O2O)),
+        count=lambda c: len(c.data.relation_types(RelationKind.O2O)),
         run=lambda e, c: e.relations.emit(c.data, RelationKind.O2O),
     ),
     BuildStep(
         message="Instantiating object attribute change history",
         absent="No object attribute changes in the data.",
-        count=lambda c: len(c.data.get_object_change_types()),
+        count=lambda c: len(c.data.object_change_types()),
         when=lambda c: c.attribute_history,
         run=lambda e, c: e.history.emit(c.data),
     ),
@@ -249,13 +250,14 @@ class OCEDOntoBuilder:
         )
         times = TimeEmitter(*parts)
         return Emitters(
+            attributes=attributes,
             tbox=TBoxEmitter(*parts),
             entities=EntityEmitter(*parts, attributes),
             times=times,
             order=OrderEmitter(*parts),
             relations=RelationEmitter(*parts),
             history=HistoryEmitter(*parts, attributes, times),
-            provenance=ProvenanceEmitter(*parts),
+            build_record=BuildRecordEmitter(*parts),
         )
 
     @contextmanager
@@ -271,17 +273,11 @@ class OCEDOntoBuilder:
         mark = self.sink.declared_count
         axioms = self.sink.axiom_count
         yield
-        self._report(self.sink.declared_since(mark), self.sink.axiom_count - axioms)
-
-    def _report(self, declared: dict[str, list[str]], axioms: int) -> None:
-        """Log what one step produced, as counts and then names.
-
-        Args:
-            declared: Names the step declared, grouped by kind.
-            axioms: How many axioms it wrote.
-        """
         report_by_kind(
-            logger, _KIND_WORDS, declared, extra=[(axioms, "axiom", "axioms")]
+            logger,
+            _KIND_WORDS,
+            self.sink.declared_since(mark),
+            extra=[(self.sink.axiom_count - axioms, "axiom", "axioms")],
         )
 
     def _report_replaced_controls(self) -> None:

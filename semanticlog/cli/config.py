@@ -23,7 +23,7 @@ from semanticlog.cli.settings_table import (
     settings_targeting,
 )
 from semanticlog.cli.toml import load_config_file, toml_value
-from semanticlog.core.enums import OCELExtension, OutputFormat
+from semanticlog.core.enums import OCELExtension, OutputFormat, ReasonerBackend
 from semanticlog.core.errors import ConfigError
 from semanticlog.core.vocabulary import default_iri
 from semanticlog.data.declare import DeclareResult
@@ -229,7 +229,7 @@ class RunConfig:
     constraint_support: float
     itemset_support: float
     materialize: bool
-    reasoner_backend: str
+    reasoner_backend: ReasonerBackend
     save_backmap: bool
     streaming: bool
     output_formats: list[OutputFormat]

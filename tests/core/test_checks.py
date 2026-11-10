@@ -2,21 +2,21 @@
 
 import pytest
 
-from semanticlog.core.checks import CheckReport, Fixed, raise_reports
+from semanticlog.core.checks import CheckReport, FixIn, raise_reports
 from semanticlog.core.errors import ConfigError, InputError
 
 CONFIG = CheckReport(
     header="The case concepts are wrong:",
     problems=("'a' is not an object type", "'b' is not an object type"),
     advice="Name types the log holds.",
-    about=Fixed.CONFIG,
+    fix_in=FixIn.CONFIG,
 )
 
 INPUT = CheckReport(
     header="The store holds rows that cannot be emitted:",
     problems=("e2o 'rel': 1 event id is in no event table",),
     advice="Fix the source data.",
-    about=Fixed.INPUT,
+    fix_in=FixIn.INPUT,
 )
 
 

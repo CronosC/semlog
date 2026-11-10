@@ -35,8 +35,8 @@ def test_an_event_linked_twice_to_one_object_keeps_both_relations(tmp_path):
 
     oced = OCELLoader(write_log(tmp_path, log)).get_oced()
 
-    assert oced.get_relation("ships").data.values.tolist() == [["e2", "o1"]]
-    assert oced.get_relation("checks").data.values.tolist() == [["e2", "o1"]]
+    assert oced.relation("ships").data.values.tolist() == [["e2", "o1"]]
+    assert oced.relation("checks").data.values.tolist() == [["e2", "o1"]]
 
 
 def test_an_event_without_objects_and_an_object_without_events_are_kept(tmp_path):
@@ -95,7 +95,7 @@ def test_an_object_carries_the_latest_value_the_last_listed_among_equal_times(
 def test_the_changes_hold_every_value_after_the_earliest_in_time_order(tmp_path):
     oced = OCELLoader(_status_log(tmp_path), HISTORY).get_oced()
 
-    assert oced.get_object_changes("order")["status"].tolist() == [
+    assert oced.object_changes("order")["status"].tolist() == [
         "shipped",
         "delivered",
         "closed",
@@ -112,7 +112,7 @@ def test_the_values_after_a_null_earliest_value_are_all_changes(tmp_path, suffix
     ]
 
     oced = OCELLoader(write_log(tmp_path, log, suffix), HISTORY).get_oced()
-    changes = oced.get_object_changes("order")
+    changes = oced.object_changes("order")
     orders = oced.table(EntityKind.OBJECT, "order").data
 
     assert list(zip(changes["ocel:timestamp"], changes["status"], strict=True)) == [
@@ -131,7 +131,7 @@ def test_a_relation_to_an_object_the_log_lacks_is_left_out_with_a_warning(
     with caplog.at_level(logging.WARNING):
         oced = OCELLoader(write_log(tmp_path, log)).get_oced()
 
-    assert "x" not in oced.get_relation_types()
+    assert "x" not in oced.relation_types()
     assert "1 e2o relation(s) of" in caplog.text
 
 

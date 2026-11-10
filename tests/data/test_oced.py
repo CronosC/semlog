@@ -87,8 +87,8 @@ def test_the_store_holds_the_frames_it_is_given_without_copying():
     store.add_object_changes("A", changes)
 
     assert store.table(EntityKind.OBJECT, "A").data is objects
-    assert store.get_relation("touches").data is relation
-    assert store.get_object_changes("A") is changes
+    assert store.relation("touches").data is relation
+    assert store.object_changes("A") is changes
 
 
 @pytest.mark.parametrize(
@@ -181,12 +181,12 @@ def test_a_kind_that_is_not_an_entity_kind_is_a_programming_error():
 
 
 def test_the_most_common_object_types_come_largest_first(oced):
-    assert oced.get_most_common_objects(n=2) == ["A", "B"]
+    assert oced.most_common_objects(n=2) == ["A", "B"]
 
 
 def test_a_negative_count_of_common_object_types_is_a_programming_error(oced):
     with pytest.raises(ValueError, match="needs n >= 0, got -1") as excinfo:
-        oced.get_most_common_objects(n=-1)
+        oced.most_common_objects(n=-1)
 
     assert not isinstance(excinfo.value, SemlogError)
 
@@ -202,9 +202,9 @@ def test_renaming_an_object_type_renames_it_in_relations_and_its_change_table(oc
     oced.rename(EntityKind.OBJECT, "A", "C")
 
     assert oced.types(EntityKind.OBJECT) == ["B", "C"]
-    assert oced.get_relation("touches").to_type == ["C", "B"]
-    assert oced.get_relation("holds").from_type == ["C"]
-    assert oced.get_object_change_types() == ["C"]
+    assert oced.relation("touches").to_type == ["C", "B"]
+    assert oced.relation("holds").from_type == ["C"]
+    assert oced.object_change_types() == ["C"]
 
 
 def test_renaming_an_activity_changes_nothing_but_the_activity(oced):
@@ -228,7 +228,7 @@ def test_renaming_a_type_onto_a_taken_name_is_rejected(oced):
 def test_renaming_a_relation_keeps_it_in_its_family(oced):
     oced.rename_relation("holds", "contains")
 
-    assert oced.get_relation_types(RelationKind.O2O) == ["contains"]
+    assert oced.relation_types(RelationKind.O2O) == ["contains"]
 
 
 @pytest.mark.parametrize(
@@ -255,9 +255,9 @@ def test_renaming_a_relation_onto_a_taken_name_or_from_an_unknown_one_is_rejecte
 
 
 def test_relations_are_listed_by_family_event_to_object_first(oced):
-    assert oced.get_relation_types() == ["touches", "holds"]
+    assert oced.relation_types() == ["touches", "holds"]
     assert list(oced.relations_of(RelationKind.E2O)) == ["touches"]
-    assert oced.get_relation_types(RelationKind.O2O) == ["holds"]
+    assert oced.relation_types(RelationKind.O2O) == ["holds"]
 
 
 def test_adding_a_relation_to_both_families_at_once_is_a_programming_error(oced):
@@ -321,7 +321,7 @@ def test_an_unknown_relation_is_rejected_listing_both_families(oced):
         InputError,
         match=r"Unknown relation 'nope'\. This store holds \['touches', 'holds'\]",
     ):
-        oced.get_relation("nope")
+        oced.relation("nope")
 
 
 # --------------------------------------------------------------------------
@@ -357,7 +357,7 @@ def test_changes_without_the_ocel_columns_are_rejected_naming_them(oced):
 
 def test_reading_the_changes_of_a_type_with_none_recorded_is_rejected(oced):
     with pytest.raises(InputError, match="No object changes recorded for type 'B'"):
-        oced.get_object_changes("B")
+        oced.object_changes("B")
 
 
 # --------------------------------------------------------------------------

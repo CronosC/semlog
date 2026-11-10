@@ -73,7 +73,7 @@ class BuildEnum(str, Enum):
     def parse(cls, value: object, *, key: str) -> Self:
         """Return the member a written setting names.
 
-        The value and the member name are both accepted, in any case.
+        The value is accepted in any case.
 
         Args:
             value: What was written. A member is returned unchanged.
@@ -90,7 +90,7 @@ class BuildEnum(str, Enum):
             return value
         folded = str(value).strip().casefold()
         for member in cls:
-            if folded in (str(member.value).casefold(), member.name.casefold()):
+            if folded == str(member.value).casefold():
                 return member
         allowed = ", ".join(str(m.value) for m in cls)
         raise ConfigError(f"{key}: unknown value {value!r}. Choose from: {allowed}.")
@@ -188,9 +188,6 @@ class ReasonerBackend(BuildEnum):
     ELK = "ELK"
 
 
-REASONER_BACKENDS: tuple[str, ...] = tuple(b.value for b in ReasonerBackend)
-
-
 class OutputFormat(BuildEnum):
     """Format a built ontology is also written in, named by its file suffix.
 
@@ -224,18 +221,6 @@ class OutputFormat(BuildEnum):
             f"Cannot write an ontology to {path}: its suffix names no format. "
             f"Use one of {suffixes}."
         )
-
-
-def resolve_reasoner_backend(text: str, *, key: str) -> str:
-    """Return the backend name as the OWL API spells it, one of `REASONER_BACKENDS`.
-
-    Args:
-        key: Setting or flag being read, quoted in the error.
-
-    Raises:
-        ConfigError: If the name is not one of them.
-    """
-    return ReasonerBackend.parse(text, key=key).value
 
 
 class InverseRepresentation(BuildEnum):

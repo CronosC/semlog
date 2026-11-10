@@ -96,9 +96,7 @@ def resolve_merged_names(data: OCEDStore, log: RenameLog) -> None:
         data.rename(EntityKind.OBJECT, obj_type, free)
         log.record(RenameKind.OBJECT_TYPE, obj_type, free)
 
-    relations = merged_names(
-        data.get_relation_types(), KIND_PREFIX[RenameKind.RELATION]
-    )
+    relations = merged_names(data.relation_types(), KIND_PREFIX[RenameKind.RELATION])
     for relation, free in relations.items():
         data.rename_relation(relation, free)
         log.record(RenameKind.RELATION, relation, free)

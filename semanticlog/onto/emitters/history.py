@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 def changed_attributes(data: ReadableStore) -> frozenset[str]:
     """Return the attributes that have at least one recorded change with a value."""
     changed = set()
-    for obj_type in data.get_object_change_types():
-        changes = data.get_object_changes(obj_type)
+    for obj_type in data.object_change_types():
+        changes = data.object_changes(obj_type)
         for field, rows in changes.groupby("ocel:field"):
             name = str(field)
             if name in rows.columns and rows[name].notna().any():
@@ -144,8 +144,8 @@ class HistoryEmitter(Emitter):
         """
         causes = _events_by_object_and_time(data)
         counts = _CauseCounts()
-        for obj_type in data.get_object_change_types():
-            changes_df = data.get_object_changes(obj_type)
+        for obj_type in data.object_change_types():
+            changes_df = data.object_changes(obj_type)
             for attr_name, grp in changes_df.groupby("ocel:field"):
                 self._emit_attribute(obj_type, str(attr_name), grp, causes, counts)
         if counts.records:
@@ -188,54 +188,54 @@ class HistoryEmitter(Emitter):
             )
             return
 
-        tmp = grp[["ocel:oid", "ocel:timestamp", attr_name]].copy()
-        tmp = tmp[tmp[attr_name].notna()].copy()
-        if tmp.empty:
+        changes = grp[["ocel:oid", "ocel:timestamp", attr_name]].copy()
+        changes = changes[changes[attr_name].notna()].copy()
+        if changes.empty:
             return
 
         attr_change_cls, change_prop = self._emit_schema(attr_name)
 
-        tmp["ts_str"] = vocab.timestamp_ids(tmp["ocel:timestamp"])
-        self._warn_on_repeated_changes(tmp, attr_name, obj_type)
-        tmp["attr_change_id"] = vocab.attribute_change_ids(
-            tmp["ocel:oid"], attr_name, tmp["ts_str"]
+        changes["time_str"] = vocab.timestamp_ids(changes["ocel:timestamp"])
+        self._warn_on_repeated_changes(changes, attr_name, obj_type)
+        changes["attr_change_id"] = vocab.attribute_change_ids(
+            changes["ocel:oid"], attr_name, changes["time_str"]
         )
         self.sink.assert_individuals(
-            attr_change_cls, tmp["attr_change_id"], IndividualKind.CHANGE
+            attr_change_cls, changes["attr_change_id"], IndividualKind.CHANGE
         )
         self.annotations.attribute_change_individuals(
-            tmp["attr_change_id"],
+            changes["attr_change_id"],
             attr_name,
             obj_type,
-            tmp["ocel:oid"],
-            tmp["ocel:timestamp"],
+            changes["ocel:oid"],
+            changes["ocel:timestamp"],
         )
         self.assert_relations(
             vocab.HAS_ATTRIBUTE_CHANGE,
-            tmp,
+            changes,
             "ocel:oid",
             "attr_change_id",
             (IndividualKind.OBJECT, IndividualKind.CHANGE),
         )
         self.attributes.emit_column_values(
-            tmp[["attr_change_id", attr_name]],
+            changes[["attr_change_id", attr_name]],
             "attr_change_id",
             attr_name,
             change_prop,
             IndividualKind.CHANGE,
         )
-        self.times.emit_individuals(tmp["ts_str"], tmp["ocel:timestamp"])
+        self.times.emit_individuals(changes["time_str"], changes["ocel:timestamp"])
         self.assert_relations(
             vocab.CHANGED_AT,
-            tmp,
+            changes,
             "attr_change_id",
-            "ts_str",
+            "time_str",
             (IndividualKind.CHANGE, IndividualKind.TIME),
         )
-        self._emit_causes(tmp, causes, counts)
+        self._emit_causes(changes, causes, counts)
 
     def _emit_causes(
-        self, tmp: pd.DataFrame, causes: pd.DataFrame, counts: _CauseCounts
+        self, changes: pd.DataFrame, causes: pd.DataFrame, counts: _CauseCounts
     ) -> None:
         """Link each change record to the one event of its object at its timestamp.
 
@@ -244,19 +244,19 @@ class HistoryEmitter(Emitter):
         """
         keys = pd.DataFrame(
             {
-                "object": tmp["ocel:oid"].to_numpy(),
-                "time": _utc(tmp["ocel:timestamp"]).reset_index(drop=True),
+                "object": changes["ocel:oid"].to_numpy(),
+                "time": _utc(changes["ocel:timestamp"]).reset_index(drop=True),
             }
         )
         matched = keys.merge(causes, how="left", on=["object", "time"])
         events = matched["events"].fillna(0).to_numpy()
         linked = pd.DataFrame(
             {
-                "attr_change_id": tmp["attr_change_id"].to_numpy(),
+                "attr_change_id": changes["attr_change_id"].to_numpy(),
                 "event": matched["event"].to_numpy(),
             }
         )[events == 1]
-        counts.records += len(tmp)
+        counts.records += len(changes)
         counts.no_event += int((events == 0).sum())
         counts.several += int((events > 1).sum())
         self.assert_relations(
@@ -290,12 +290,10 @@ class HistoryEmitter(Emitter):
             self.annotations.attribute_change_schema(attr_name, attr_change_cls)
             return attr_change_cls, change_prop
         self.attributes.add_attribute_class(attr_name)
-        self.sink.add_property(
+        self.add_object_property(
             change_prop,
             superprop=vocab.ATTRIBUTE_CHANGE_VALUE,
             range_class=attr_name,
-            create_inverse=self.settings.has_inverses,
-            axiomatic_inverse=self.settings.axiomatic_inverses,
             source=change_source,
         )
         self.declare_functional(change_prop)
@@ -306,14 +304,14 @@ class HistoryEmitter(Emitter):
 
     @staticmethod
     def _warn_on_repeated_changes(
-        tmp: pd.DataFrame, attr_name: str, obj_type: str
+        changes: pd.DataFrame, attr_name: str, obj_type: str
     ) -> None:
         """Warn about objects with two changes of one attribute at one timestamp.
 
         `attribute_change_ids` numbers those records.
         """
-        repeated = tmp.loc[
-            tmp.duplicated(["ocel:oid", "ts_str"], keep=False), "ocel:oid"
+        repeated = changes.loc[
+            changes.duplicated(["ocel:oid", "time_str"], keep=False), "ocel:oid"
         ].unique()
         if len(repeated):
             logger.warning(

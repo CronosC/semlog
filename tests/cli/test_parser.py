@@ -43,7 +43,7 @@ def test_every_subcommand_renders_its_help(capsys):
         assert capsys.readouterr().out.startswith(f"usage: semlog {command}")
 
 
-def test_the_version_is_the_one_provenance_records(capsys):
+def test_the_version_is_the_one_the_build_record_holds(capsys):
     with pytest.raises(SystemExit):
         parse("--version")
 

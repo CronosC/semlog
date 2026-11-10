@@ -21,7 +21,7 @@ def read_built(path: Path) -> Emitted:
 
 
 def record(path: Path) -> dict:
-    """Return the provenance record of a written ontology, with its JSON entries parsed."""
+    """Return the build record of a written ontology, with its JSON entries parsed."""
     written = dict(read_built(path).ontology_annotations)
     for key in _JSON_ENTRIES:
         if key in written:

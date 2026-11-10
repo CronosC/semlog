@@ -136,10 +136,10 @@ def test_each_activity_and_object_type_of_the_log_becomes_a_table(simple_ocel):
 
 def test_each_qualifier_becomes_a_relation_holding_its_endpoints_and_types(simple_ocel):
     oced = PM4PyLoader(simple_ocel).get_oced()
-    contains = oced.get_relation("contains")
+    contains = oced.relation("contains")
 
-    assert oced.get_relation_types(RelationKind.E2O) == ["places", "ships"]
-    assert oced.get_relation("places").to_type == ["order"]
+    assert oced.relation_types(RelationKind.E2O) == ["places", "ships"]
+    assert oced.relation("places").to_type == ["order"]
     assert list(contains.data.columns) == ["ocel:oid", "ocel:oid_2"]
     assert (contains.from_type, contains.to_type) == (["order"], ["item"])
 
@@ -169,8 +169,8 @@ def test_a_missing_qualifier_takes_the_fallback_name_of_its_family(tmp_path):
 
     oced = PM4PyLoader(path).get_oced()
 
-    assert oced.get_relation_types(RelationKind.E2O) == ["involves"]
-    assert oced.get_relation_types(RelationKind.O2O) == ["relates"]
+    assert oced.relation_types(RelationKind.E2O) == ["involves"]
+    assert oced.relation_types(RelationKind.O2O) == ["relates"]
 
 
 def test_a_qualifier_both_families_use_is_suffixed_on_both_sides(tmp_path):
@@ -184,7 +184,7 @@ def test_a_qualifier_both_families_use_is_suffixed_on_both_sides(tmp_path):
 
     oced = PM4PyLoader(path).get_oced()
 
-    assert oced.get_relation_types() == ["contains_e2o", "contains_o2o"]
+    assert oced.relation_types() == ["contains_e2o", "contains_o2o"]
 
 
 def test_a_suffixed_name_the_log_uses_is_numbered_past():
@@ -231,7 +231,7 @@ def test_numeric_ids_are_prefixed_with_their_type_everywhere_they_appear(tmp_pat
 
     assert list(oced.ids(EntityKind.OBJECT, "order")) == ["order_10", "order_20"]
     assert list(oced.ids(EntityKind.EVENT, "act")) == ["act_1", "act_2"]
-    assert oced.get_relation("places").data.values.tolist() == [
+    assert oced.relation("places").data.values.tolist() == [
         ["act_1", "order_10"],
         ["act_2", "order_20"],
     ]
@@ -315,7 +315,7 @@ def test_attribute_history_puts_the_latest_value_on_the_object_and_later_ones_in
 ):
     oced = PM4PyLoader(history_ocel, ocel_extensions=HISTORY).get_oced()
     orders = oced.table(EntityKind.OBJECT, "order").data
-    changes = oced.get_object_changes("order")
+    changes = oced.object_changes("order")
 
     assert oced.ocel_mode is True
     assert dict(zip(orders["ocel:oid"], orders["status"], strict=True)) == {
