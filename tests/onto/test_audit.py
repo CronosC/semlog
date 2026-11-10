@@ -108,6 +108,31 @@ def test_a_log_without_event_to_object_relations_is_answered_with_no_types():
         audit_build(clean_oced_data(store), DF, BuildInputs(case_concepts=["order"]))
 
 
+@pytest.mark.parametrize(
+    ("store", "case_concept", "match"),
+    [
+        (_store(), "no_such_type", "'no_such_type' is not an object type of this log"),
+        (_store(), "pallet", "'pallet' is an object type of this log, but no event"),
+    ],
+    ids=["unknown", "unreachable"],
+)
+def test_a_case_concept_the_log_cannot_be_projected_onto_is_rejected_without_event_order(
+    store, case_concept, match
+):
+    with pytest.raises(ConfigError, match=match):
+        audit_build(
+            clean_oced_data(store),
+            OntoBuildSettings(),
+            BuildInputs(case_concepts=[case_concept]),
+        )
+
+
+def test_a_log_without_event_to_object_relations_passes_without_event_order():
+    audit_build(
+        clean_oced_data(_store(relation_eid=None)), OntoBuildSettings(), BuildInputs()
+    )
+
+
 # --------------------------------------------------------------------------
 # DECLARE constraints
 # --------------------------------------------------------------------------

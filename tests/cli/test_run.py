@@ -41,6 +41,20 @@ def test_a_build_writes_one_ontology_and_prints_its_path(ocel, tmp_path, capsys)
     assert capsys.readouterr().out.strip() == str(out / "pipeline.ofn")
 
 
+def test_a_build_without_event_order_fails_on_an_unknown_case_concept(
+    ocel, tmp_path, capsys
+):
+    out = tmp_path / "onto"
+
+    code = main(
+        ["build", str(ocel), "--case-concepts", "nosuch", "order", "--output", str(out)]
+    )
+
+    assert code == EXIT_FAILED
+    assert "'nosuch' is not an object type of this log" in capsys.readouterr().err
+    assert not out.exists() or list(out.iterdir()) == []
+
+
 def test_the_header_holds_the_tool_the_settings_and_the_case_concepts(ocel, tmp_path):
     cfg = resolve_run_config(
         {

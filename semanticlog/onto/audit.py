@@ -46,15 +46,15 @@ def check_case_concepts(
 ) -> CheckReport | None:
     """Check that every case concept is an object type with an event-to-object relation.
 
-    Names are compared as cleaning left them. The check applies only when the
-    settings emit traces.
+    Names are compared as cleaning left them. A log without event-to-object
+    relations is rejected only when the settings emit traces.
 
     Returns:
         Every case concept the log cannot be projected onto, or None when the
-        check passes or does not apply.
+        check passes.
     """
     if not settings.emits_traces:
-        return None
+        return case_concept_report(data, case_concepts, require_relations=False)
     return case_concept_report(
         data,
         case_concepts,
@@ -63,22 +63,27 @@ def check_case_concepts(
 
 
 def case_concept_report(
-    data: ReadableStore, case_concepts: Sequence[str], or_instead: str = ""
+    data: ReadableStore,
+    case_concepts: Sequence[str],
+    or_instead: str = "",
+    require_relations: bool = True,
 ) -> CheckReport | None:
     """Return every case concept the log cannot be projected onto, or None if there is none.
 
-    Names are compared as cleaning left them. A log no event-to-object
-    relation reaches is reported even without case concepts.
+    Names are compared as cleaning left them.
 
     Args:
         or_instead: The other change that fixes a log without event-to-object
             relations, as a clause starting with a verb.
+        require_relations: Whether a log no event-to-object relation reaches
+            is reported even when every case concept passes, including when
+            there are none.
     """
     object_types = set(data.types(EntityKind.OBJECT))
     reachable = set(case_concept_candidates(data))
     unknown = [c for c in case_concepts if c not in object_types]
     unreachable = [c for c in case_concepts if c in object_types and c not in reachable]
-    if reachable and not unknown and not unreachable:
+    if not unknown and not unreachable and (reachable or not require_relations):
         return None
 
     renames = object_type_renames(data)

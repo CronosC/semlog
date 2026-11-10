@@ -30,12 +30,13 @@ def test_a_build_that_fails_the_audit_writes_no_axioms(tiny_store):
     assert _declared(builder) == set()
 
 
-def test_case_concepts_are_not_checked_when_no_order_is_emitted(tiny_store):
+def test_case_concepts_are_checked_when_no_order_is_emitted(tiny_store):
     builder = OCEDOntoBuilder(NS, OntoBuildSettings(order_representations=[]))
 
-    builder.build_ontology(tiny_store, BuildInputs(case_concepts=["no_such_type"]))
+    with pytest.raises(ConfigError, match="'no_such_type' is not an object type"):
+        builder.build_ontology(tiny_store, BuildInputs(case_concepts=["no_such_type"]))
 
-    assert "step" in _declared(builder)
+    assert _declared(builder) == set()
 
 
 def test_a_constraint_named_after_an_object_type_is_rejected():
