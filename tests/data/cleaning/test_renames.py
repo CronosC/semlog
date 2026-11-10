@@ -1,6 +1,6 @@
 """The record of the source name behind each cleaned name."""
 
-from semanticlog.data.cleaning.renames import RenameKind, RenameLog
+from semlog.data.cleaning.renames import RenameKind, RenameLog
 
 
 def test_successive_renames_map_the_last_name_to_the_source_name():

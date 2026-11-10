@@ -3,13 +3,13 @@
 import pandas as pd
 import pytest
 
-from semanticlog.data.cleaning.rewrite import (
+from semlog.data.cleaning.rewrite import (
     apply_attribute_renames,
     apply_id_renames,
     apply_value_renames,
 )
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
 
 
 @pytest.fixture

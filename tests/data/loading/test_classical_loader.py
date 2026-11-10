@@ -3,10 +3,10 @@
 import pandas as pd
 import pytest
 
-from semanticlog.core.errors import ConfigError, InputError
-from semanticlog.data.loading.base import LoaderColumns
-from semanticlog.data.loading.classical_loader import ClassicalLoader
-from semanticlog.data.tables import EntityKind
+from semlog.core.errors import ConfigError, InputError
+from semlog.data.loading.base import LoaderColumns
+from semlog.data.loading.classical_loader import ClassicalLoader
+from semlog.data.tables import EntityKind
 
 _CSV_CONTENT = """case:concept:name,concept:name,time:timestamp,resource
 c1,A,2022-01-01T08:00:00Z,Alice

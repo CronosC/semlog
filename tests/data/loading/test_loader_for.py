@@ -2,8 +2,8 @@
 
 import pytest
 
-from semanticlog.core.errors import InputError
-from semanticlog.data.loading import ClassicalLoader, OCELLoader, loader_for
+from semlog.core.errors import InputError
+from semlog.data.loading import ClassicalLoader, OCELLoader, loader_for
 
 
 @pytest.mark.parametrize(

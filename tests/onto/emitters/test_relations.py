@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from semanticlog.core.enums import OWLProfile
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.data.tables import RelationKind
-from semanticlog.onto.annotations import AnnotationWriter
-from semanticlog.onto.emitted import EmittedIndividuals
-from semanticlog.onto.emitters import RelationEmitter
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core.enums import OWLProfile
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.data.tables import RelationKind
+from semlog.onto.annotations import AnnotationWriter
+from semlog.onto.emitted import EmittedIndividuals
+from semlog.onto.emitters import RelationEmitter
+from semlog.onto.settings import OntoBuildSettings
 from tests.support.build import emit
 from tests.support.recording import RecordingSink
 from tests.support.settings import settings

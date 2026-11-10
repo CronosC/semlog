@@ -11,15 +11,15 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import IndividualKind, OWLProfile
-from semanticlog.core.errors import ConfigError
-from semanticlog.core.vocabulary import (
+from semlog.core import vocabulary as vocab
+from semlog.core.enums import IndividualKind, OWLProfile
+from semlog.core.errors import ConfigError
+from semlog.core.vocabulary import (
     DEFAULT_IRI,
     TBOX_IRI,
     NameCollisionError,
 )
-from semanticlog.onto.sinks import InMemorySink, StreamingSink
+from semlog.onto.sinks import InMemorySink, StreamingSink
 from tests.support.build import BACKENDS, IN_MEMORY, STREAMING, emit
 from tests.support.owlapi import ontology_annotations
 from tests.support.settings import CONFIGURATIONS, NAMES

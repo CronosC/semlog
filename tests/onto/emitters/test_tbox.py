@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import InverseRepresentation, OCELExtension
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.onto.reason import Reasoner
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core import vocabulary as vocab
+from semlog.core.enums import InverseRepresentation, OCELExtension
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.onto.reason import Reasoner
+from semlog.onto.settings import OntoBuildSettings
 from tests.support.build import emit
 from tests.support.tbox import construct_tbox
 

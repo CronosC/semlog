@@ -6,14 +6,14 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from semanticlog.core.enums import (
+from semlog.core.enums import (
     AttributeRepresentation,
     EventOrderRepresentation,
     InverseRepresentation,
     OWLProfile,
 )
-from semanticlog.core.errors import ConfigError
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core.errors import ConfigError
+from semlog.onto.settings import OntoBuildSettings
 
 DF = EventOrderRepresentation.DF
 EF = EventOrderRepresentation.EF

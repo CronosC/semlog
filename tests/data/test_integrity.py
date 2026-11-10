@@ -3,11 +3,11 @@
 import pandas as pd
 import pytest
 
-from semanticlog.core.checks import raise_reports
-from semanticlog.core.errors import InputError
-from semanticlog.data.integrity import check_integrity, check_missing_ids
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
+from semlog.core.checks import raise_reports
+from semlog.core.errors import InputError
+from semlog.data.integrity import check_integrity, check_missing_ids
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
 
 
 @pytest.fixture

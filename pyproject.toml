@@ -39,7 +39,7 @@ Repository = "https://github.com/CronosC/semlog"
 Issues = "https://github.com/CronosC/semlog/issues"
 
 [project.scripts]
-semlog = "semanticlog.cli:main"
+semlog = "semlog.cli:main"
 
 [project.optional-dependencies]
 # [declare] also needs the Lydia solver, built from source. See the README.
@@ -66,12 +66,12 @@ override-dependencies = ["lark-parser ; sys_platform == 'never'"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["semanticlog*"]
+include = ["semlog*"]
 
 [tool.setuptools.package-data]
-semanticlog = ["py.typed"]
-# The labels and comments a build emits. Read by semanticlog/onto/annotations.py.
-"semanticlog.onto" = ["tbox_annotations.json", "derived_annotations.json"]
+semlog = ["py.typed"]
+# The labels and comments a build emits. Read by semlog/onto/annotations.py.
+"semlog.onto" = ["tbox_annotations.json", "derived_annotations.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -89,7 +89,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["semanticlog"]
+source = ["semlog"]
 branch = true
 
 [tool.coverage.report]
@@ -114,6 +114,6 @@ ignore = [
 
 [tool.mypy]
 python_version = "3.12"
-files = ["semanticlog"]
+files = ["semlog"]
 ignore_missing_imports = true
 warn_unused_ignores = true

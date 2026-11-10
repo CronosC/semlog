@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from semanticlog.cli import EXIT_FAILED, EXIT_OK, EXIT_USAGE, main
-from semanticlog.cli.inspect import inspect_input
+from semlog.cli import EXIT_FAILED, EXIT_OK, EXIT_USAGE, main
+from semlog.cli.inspect import inspect_input
 
 
 def test_inspect_prints_a_summary_and_writes_nothing(ocel, tmp_path, capsys):

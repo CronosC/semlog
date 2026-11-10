@@ -8,13 +8,13 @@ import re
 
 import pytest
 
-from semanticlog import __version__
-from semanticlog.core.enums import EventOrderRepresentation, OWLProfile
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.onto.builder import OCEDOntoBuilder
-from semanticlog.onto.inputs import BuildInputs
-from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sinks import StreamingSink
+from semlog import __version__
+from semlog.core.enums import EventOrderRepresentation, OWLProfile
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.onto.builder import OCEDOntoBuilder
+from semlog.onto.inputs import BuildInputs
+from semlog.onto.settings import OntoBuildSettings
+from semlog.onto.sinks import StreamingSink
 from tests.support.build import BACKENDS, STREAMING, emit
 from tests.support.rdf import read_rdf
 

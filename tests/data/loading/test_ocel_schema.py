@@ -5,8 +5,8 @@ import sqlite3
 
 import pytest
 
-from semanticlog.data.loading.ocel_schema import declared_types, normalize_type
-from semanticlog.data.tables import EntityKind
+from semlog.data.loading.ocel_schema import declared_types, normalize_type
+from semlog.data.tables import EntityKind
 
 
 @pytest.mark.parametrize(

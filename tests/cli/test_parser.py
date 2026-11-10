@@ -11,11 +11,11 @@ import re
 
 import pytest
 
-from semanticlog import __version__
-from semanticlog.cli import EXIT_USAGE, build_parser, main
-from semanticlog.cli.parser import _log_level, flag_overrides
-from semanticlog.cli.settings_table import BUILD_DEFAULTS, BUILD_SETTINGS
-from semanticlog.core.errors import ConfigError
+from semlog import __version__
+from semlog.cli import EXIT_USAGE, build_parser, main
+from semlog.cli.parser import _log_level, flag_overrides
+from semlog.cli.settings_table import BUILD_DEFAULTS, BUILD_SETTINGS
+from semlog.core.errors import ConfigError
 
 SUBCOMMANDS = ("build", "inspect", "mine-declare", "reason")
 

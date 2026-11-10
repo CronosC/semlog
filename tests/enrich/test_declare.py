@@ -7,11 +7,11 @@ import logging
 import pandas as pd
 import pytest
 
-from semanticlog.core.errors import ConfigError, DependencyError, InputError
-from semanticlog.data.declare import ConceptConstraints, MiningSettings
-from semanticlog.data.tables import EntityKind
-from semanticlog.enrich import declare as declare_module
-from semanticlog.enrich.declare import (
+from semlog.core.errors import ConfigError, DependencyError, InputError
+from semlog.data.declare import ConceptConstraints, MiningSettings
+from semlog.data.tables import EntityKind
+from semlog.enrich import declare as declare_module
+from semlog.enrich.declare import (
     DeclareEnricher,
     concept_constraints,
     drop_uninformative,
@@ -175,7 +175,7 @@ def test_what_declare4py_prints_is_logged_at_info_and_kept_off_stdout(
 ):
     monkeypatch.setattr(declare_module, "DeclareMiner", PrintingMiner)
 
-    with caplog.at_level(logging.INFO, logger="semanticlog"):
+    with caplog.at_level(logging.INFO, logger="semlog"):
         enricher.get_constraints_via_discovery(["order"])
 
     assert capsys.readouterr().out == ""

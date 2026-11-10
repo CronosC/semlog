@@ -10,11 +10,11 @@ from pathlib import Path
 import jpype
 import pytest
 
-from semanticlog.core.enums import IndividualKind, OWLProfile, ReasonerBackend
-from semanticlog.core.errors import ConfigError, DependencyError, InputError
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.onto.reason import Reasoner, start_jvm
-from semanticlog.onto.sinks import InMemorySink
+from semlog.core.enums import IndividualKind, OWLProfile, ReasonerBackend
+from semlog.core.errors import ConfigError, DependencyError, InputError
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.onto.reason import Reasoner, start_jvm
+from semlog.onto.sinks import InMemorySink
 from tests.support.rdf import read_rdf
 
 # Pellet reads both profiles and accepts a timestamp with microseconds.
@@ -100,7 +100,7 @@ def test_a_backend_that_cannot_start_is_named_with_the_others(small, monkeypatch
     def fail(*args, **kwargs):
         raise RuntimeError("java.lang.IllegalStateException")
 
-    monkeypatch.setattr("semanticlog.onto.reason.SyncReasoner", fail)
+    monkeypatch.setattr("semlog.onto.reason.SyncReasoner", fail)
 
     with pytest.raises(InputError, match="Pellet cannot start") as failure:
         Reasoner(str(small), backend="Pellet")
@@ -163,7 +163,7 @@ def _exhaust_the_heap(*args, **kwargs):
 @pytest.mark.reasoner
 def test_a_heap_exhaustion_while_loading_names_java_tool_options(small, monkeypatch):
     start_jvm()
-    monkeypatch.setattr("semanticlog.onto.reason.SyncOntology", _exhaust_the_heap)
+    monkeypatch.setattr("semlog.onto.reason.SyncOntology", _exhaust_the_heap)
 
     with pytest.raises(DependencyError, match="JAVA_TOOL_OPTIONS=-Xmx") as failure:
         Reasoner(str(small))
@@ -195,7 +195,7 @@ def test_a_java_error_is_reported_on_one_line(small, monkeypatch):
     def fail(*args, **kwargs):
         raise RuntimeError("first line\n\tat second line")
 
-    monkeypatch.setattr("semanticlog.onto.reason.SyncReasoner", fail)
+    monkeypatch.setattr("semlog.onto.reason.SyncReasoner", fail)
 
     with pytest.raises(InputError, match="first line at second line") as failure:
         Reasoner(str(small), backend="Pellet")

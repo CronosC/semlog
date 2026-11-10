@@ -41,4 +41,4 @@ jobs:
 
       # fail_under is set in pyproject.toml.
       - name: Test
-        run: uv run pytest -q -n auto --cov=semanticlog
+        run: uv run pytest -q -n auto --cov=semlog

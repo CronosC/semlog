@@ -5,12 +5,12 @@ The settings alone decide what the schema holds.
 
 from __future__ import annotations
 
-from semanticlog.onto.annotations import AnnotationWriter
-from semanticlog.onto.emitted import EmittedIndividuals
-from semanticlog.onto.emitters import TBoxEmitter
-from semanticlog.onto.result import BuildResult
-from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sinks import AxiomSink, InMemorySink
+from semlog.onto.annotations import AnnotationWriter
+from semlog.onto.emitted import EmittedIndividuals
+from semlog.onto.emitters import TBoxEmitter
+from semlog.onto.result import BuildResult
+from semlog.onto.settings import OntoBuildSettings
+from semlog.onto.sinks import AxiomSink, InMemorySink
 
 
 def construct_tbox(

@@ -8,11 +8,11 @@ import time
 
 import pandas as pd
 
-from semanticlog.core.enums import IndividualKind
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.onto.emitters.pairs import clean_pairs
-from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sinks import InMemorySink
+from semlog.core.enums import IndividualKind
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.onto.emitters.pairs import clean_pairs
+from semlog.onto.settings import OntoBuildSettings
+from semlog.onto.sinks import InMemorySink
 
 DEFAULT_INDIVIDUALS = 100_000
 DEFAULT_RELATIONS = 50_000

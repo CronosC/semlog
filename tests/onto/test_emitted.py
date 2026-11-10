@@ -1,6 +1,6 @@
 """The record of the individuals a build has asserted."""
 
-from semanticlog.onto.emitted import EmittedIndividuals
+from semlog.onto.emitted import EmittedIndividuals
 
 
 def test_the_values_recorded_for_an_attribute_are_kept_apart_from_other_attributes():

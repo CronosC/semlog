@@ -11,8 +11,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from semanticlog.core.enums import OWLProfile
-from semanticlog.core.vocabulary import DEFAULT_IRI, TBOX_IRI
+from semlog.core.enums import OWLProfile
+from semlog.core.vocabulary import DEFAULT_IRI, TBOX_IRI
 
 # The entity types OWL 2 DL requires a declaration for. A named individual is
 # not one of them, and neither sink declares one.
@@ -25,7 +25,7 @@ def load(path: str | Path) -> Any:
     """Return the `OWLOntology` the OWL API parses from a file, not the owlapy wrapper."""
     from owlapy.owl_ontology import SyncOntology
 
-    from semanticlog.onto.reason import start_jvm
+    from semlog.onto.reason import start_jvm
 
     start_jvm()
     return SyncOntology(str(path)).get_owlapi_ontology()

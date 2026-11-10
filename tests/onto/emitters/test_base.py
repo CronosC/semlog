@@ -2,11 +2,11 @@
 
 import pandas as pd
 
-from semanticlog.core.enums import IndividualKind, InverseRepresentation
-from semanticlog.onto.annotations import AnnotationWriter
-from semanticlog.onto.emitted import EmittedIndividuals
-from semanticlog.onto.emitters.base import Emitter
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core.enums import IndividualKind, InverseRepresentation
+from semlog.onto.annotations import AnnotationWriter
+from semlog.onto.emitted import EmittedIndividuals
+from semlog.onto.emitters.base import Emitter
+from semlog.onto.settings import OntoBuildSettings
 
 PAIRS = pd.DataFrame({"eid": ["e1", "e2"], "oid": ["o1", "o1"]})
 KINDS = (IndividualKind.EVENT, IndividualKind.OBJECT)

@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 
-from semanticlog.data.tables import (
+from semlog.data.tables import (
     EntityKind,
     EntityTable,
     RelationKind,

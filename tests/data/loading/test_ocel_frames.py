@@ -5,10 +5,10 @@ import logging
 import pandas as pd
 import pytest
 
-from semanticlog.core.enums import OCELExtension
-from semanticlog.data.loading.ocel_frames import normalize_qualifiers, relation_names
-from semanticlog.data.loading.ocel_loader import OCELLoader
-from semanticlog.data.tables import EntityKind, RelationKind
+from semlog.core.enums import OCELExtension
+from semlog.data.loading.ocel_frames import normalize_qualifiers, relation_names
+from semlog.data.loading.ocel_loader import OCELLoader
+from semlog.data.tables import EntityKind, RelationKind
 from tests.support.ocel_files import EPOCH, small_log, write_log
 
 HISTORY = [OCELExtension.ATTRIBUTE_HISTORY]

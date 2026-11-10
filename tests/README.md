@@ -1,6 +1,6 @@
 # tests
 
-The test suite for `semanticlog`. Each module with logic has one test file at the mirrored path: `semanticlog/data/cleaning/allocate.py` is tested in `tests/data/cleaning/test_allocate.py`, and a package `__init__.py` in a file named after its main function. Modules without logic of their own, such as `core/errors.py`, have no test file. Tests of a whole build live in `tests/output/`.
+The test suite for `semlog`. Each module with logic has one test file at the mirrored path: `semlog/data/cleaning/allocate.py` is tested in `tests/data/cleaning/test_allocate.py`, and a package `__init__.py` in a file named after its main function. Modules without logic of their own, such as `core/errors.py`, have no test file. Tests of a whole build live in `tests/output/`.
 
 ## Running
 
@@ -39,7 +39,7 @@ The test files at the root check the package as a whole:
 | [test_benchmarks.py](test_benchmarks.py) | each script in `benchmarks/` runs at a tiny size |
 | [test_support_functional.py](test_support_functional.py) | the functional-syntax reader in `support/` reads a file the OWL API rewrote |
 
-[cli/test_entrypoint.py](cli/test_entrypoint.py) mirrors no module. It runs the console script and `python -m semanticlog.cli.main` as subprocesses.
+[cli/test_entrypoint.py](cli/test_entrypoint.py) mirrors no module. It runs the console script and `python -m semlog.cli.main` as subprocesses.
 
 ## Stores
 

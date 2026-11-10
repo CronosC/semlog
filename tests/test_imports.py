@@ -11,10 +11,10 @@ HEAVY = ("pm4py", "owlapy", "jpype")
 
 # A statement, and the heavy packages it may load. Each runs in a fresh process.
 LOADS = {
-    "import semanticlog": set(),
-    "from semanticlog import OCEDStore": set(),
-    "from semanticlog import Reasoner": {"owlapy", "jpype"},
-    "from semanticlog.cli import main\n"
+    "import semlog": set(),
+    "from semlog import OCEDStore": set(),
+    "from semlog import Reasoner": {"owlapy", "jpype"},
+    "from semlog.cli import main\n"
     "from contextlib import redirect_stdout, suppress\n"
     "with redirect_stdout(None), suppress(SystemExit):\n"
     "    main(['--help'])": set(),
@@ -35,14 +35,14 @@ def test_only_the_reasoner_loads_the_owl_api_the_java_bridge_or_pm4py():
 
 
 def test_every_exported_name_is_listed_and_reachable():
-    import semanticlog
+    import semlog
 
-    assert set(semanticlog.__all__) == set(semanticlog._EXPORTS) | {"__version__"}
-    assert [n for n in semanticlog.__all__ if getattr(semanticlog, n) is None] == []
+    assert set(semlog.__all__) == set(semlog._EXPORTS) | {"__version__"}
+    assert [n for n in semlog.__all__ if getattr(semlog, n) is None] == []
 
 
 def test_an_unknown_name_raises_attribute_error():
-    import semanticlog
+    import semlog
 
     with pytest.raises(AttributeError, match="no attribute 'nope'"):
-        getattr(semanticlog, "nope")  # noqa: B009
+        getattr(semlog, "nope")  # noqa: B009

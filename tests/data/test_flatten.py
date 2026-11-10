@@ -6,18 +6,18 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
-from semanticlog.core.errors import InputError
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.flatten import (
+from semlog.core.errors import InputError
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.flatten import (
     case_concept_candidates,
     choose_case_concepts,
     get_log,
     iter_logs,
 )
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
 
-LOGGER = "semanticlog.data.flatten"
+LOGGER = "semlog.data.flatten"
 
 
 def _store(*activities, relations=()):

@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from semanticlog.core.summary import (
+from semlog.core.summary import (
     LINE_WIDTH,
     MAX_LINES,
     count_phrase,
@@ -21,7 +21,7 @@ WORDS = {
     "object": ("object property", "object properties"),
 }
 
-LOGGER = "semanticlog.test.summary"
+LOGGER = "semlog.test.summary"
 
 HEAD = "    classes:           "
 

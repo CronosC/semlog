@@ -8,27 +8,27 @@ import logging
 import pandas as pd
 import pytest
 
-from semanticlog.core.enums import (
+from semlog.core.enums import (
     EventOrderRepresentation,
     InverseRepresentation,
     OCELExtension,
     OWLProfile,
 )
-from semanticlog.core.errors import ConfigError
-from semanticlog.core.summary import counted
-from semanticlog.core.vocabulary import DEFAULT_IRI, TBOX_IRI, UnsafeLocalNameError
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
-from semanticlog.onto.builder import (
+from semlog.core.errors import ConfigError
+from semlog.core.summary import counted
+from semlog.core.vocabulary import DEFAULT_IRI, TBOX_IRI, UnsafeLocalNameError
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
+from semlog.onto.builder import (
     BUILD_STEPS,
     BuildContext,
     Emitters,
     OCEDOntoBuilder,
 )
-from semanticlog.onto.inputs import BuildInputs
-from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sinks import InMemorySink, StreamingSink
+from semlog.onto.inputs import BuildInputs
+from semlog.onto.settings import OntoBuildSettings
+from semlog.onto.sinks import InMemorySink, StreamingSink
 from tests.support.build import BACKENDS, STREAMING
 from tests.support.functional import read_functional
 from tests.support.rdf import read_rdf
@@ -153,7 +153,7 @@ def test_every_emitter_is_run_by_a_step(tiny_store):
 
 
 def test_the_steps_of_a_build_are_announced_in_order(pipeline_store, caplog):
-    with caplog.at_level(logging.INFO, logger="semanticlog.onto.builder"):
+    with caplog.at_level(logging.INFO, logger="semlog.onto.builder"):
         OCEDOntoBuilder(DEFAULT_IRI, NO_ORDER).build_ontology(pipeline_store)
 
     announced = [
@@ -212,7 +212,7 @@ def test_the_history_step_runs_only_when_the_settings_ask_for_it(recording_sink)
 def test_the_unions_el_drops_are_reported_once_for_the_build(awkward_store, caplog):
     builder = OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings(profile=OWLProfile.OWL2EL))
 
-    with caplog.at_level(logging.INFO, logger="semanticlog.onto.builder"):
+    with caplog.at_level(logging.INFO, logger="semlog.onto.builder"):
         builder.build_ontology(awkward_store)
 
     omitted = [
@@ -232,7 +232,7 @@ def test_the_property_axioms_el_drops_are_reported_once_for_the_build(
 ):
     builder = OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings(profile=OWLProfile.OWL2EL))
 
-    with caplog.at_level(logging.INFO, logger="semanticlog.onto.builder"):
+    with caplog.at_level(logging.INFO, logger="semlog.onto.builder"):
         builder.build_ontology(awkward_store)
 
     omitted = [r.message for r in caplog.records if "functional" in r.message]

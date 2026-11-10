@@ -3,11 +3,11 @@
 import pandas as pd
 import pytest
 
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.cleaning.allocate import allocate_schema_names
-from semanticlog.data.cleaning.renames import RenameLog
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.cleaning.allocate import allocate_schema_names
+from semlog.data.cleaning.renames import RenameLog
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
 
 
 def _relate(oced, name, to_type="obj"):

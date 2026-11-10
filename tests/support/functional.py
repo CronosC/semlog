@@ -6,7 +6,7 @@ import re
 from collections.abc import Iterator
 from pathlib import Path
 
-from semanticlog.onto.record import _record_patterns, _unescape_functional
+from semlog.onto.record import _record_patterns, _unescape_functional
 from tests.support.emitted import Emitted, inverse_pair
 
 _NOT_AN_AXIOM = ("Prefix(", "Ontology(", "Annotation(", ")", "#")
@@ -64,7 +64,7 @@ def read_functional(path: str | Path) -> Emitted:
 
 
 def _ontology_annotations(text: str, names: set[str]) -> dict[str, str]:
-    """Return the build record annotations among `names`, read as `semanticlog.onto.record` reads one."""
+    """Return the build record annotations among `names`, read as `semlog.onto.record` reads one."""
     found: dict[str, str] = {}
     for name in names:
         pattern, _ = _record_patterns(name)[0]

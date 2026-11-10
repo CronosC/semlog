@@ -1,0 +1,68 @@
+"""The read-only view of a store used by the layers above `data`.
+
+A build, an enrichment or a check takes a `ReadableStore`. `OCEDStore`
+satisfies the protocol structurally.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Iterator, Mapping
+from typing import Protocol
+
+import pandas as pd
+
+from semlog.data.tables import (
+    EntityKind,
+    EntityTable,
+    RelationKind,
+    RelationTable,
+    TableView,
+)
+
+
+class ReadableStore(Protocol):
+    """The read methods a build, an enrichment or a check calls on a store."""
+
+    @property
+    def backmap(self) -> Mapping[str, Mapping[str, str]]:
+        """Cleaned name to original name, for everything cleaning renamed, one map per kind of name."""
+
+    @property
+    def ocel_mode(self) -> bool:
+        """Whether this store may hold attribute change history."""
+
+    def tables(self, *, changes: bool = True) -> Iterator[TableView]:
+        """Yield every table in the store, with its structural columns named."""
+
+    def types(self, kind: EntityKind) -> list[str]:
+        """Return every activity or object type name in the store."""
+
+    def table(self, kind: EntityKind, name: str) -> EntityTable:
+        """Return the table of one activity or object type."""
+
+    def tables_of(self, kind: EntityKind) -> Mapping[str, EntityTable]:
+        """Return the tables of one kind, keyed by type and read-only."""
+
+    def ids(self, kind: EntityKind, name: str) -> Iterable[object]:
+        """Return the distinct ids of one activity or object type."""
+
+    def types_holding(self, kind: EntityKind, ids: Iterable[object]) -> list[str]:
+        """Return the sorted types of one kind whose tables hold any of the ids."""
+
+    def most_common_objects(self, n: int = 1) -> list[str]:
+        """Return the object types with the most instances."""
+
+    def relations_of(self, kind: RelationKind) -> Mapping[str, RelationTable]:
+        """Return one relation family, keyed by name and read-only."""
+
+    def relation(self, relation: str) -> RelationTable:
+        """Return one relation by name, from either family."""
+
+    def relation_types(self, kind: RelationKind = RelationKind.ALL) -> list[str]:
+        """Return relation names, optionally of one family only."""
+
+    def object_changes(self, obj_type: str) -> pd.DataFrame:
+        """Return the recorded attribute changes of one object type."""
+
+    def object_change_types(self) -> list[str]:
+        """Return the object types that have recorded changes."""

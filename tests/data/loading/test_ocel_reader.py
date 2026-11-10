@@ -7,9 +7,9 @@ from dataclasses import fields
 import pandas as pd
 import pytest
 
-from semanticlog.core.errors import InputError
-from semanticlog.data.loading.ocel_reader import read_ocel
-from semanticlog.data.loading.ocel_tables import OCELTables
+from semlog.core.errors import InputError
+from semlog.data.loading.ocel_reader import read_ocel
+from semlog.data.loading.ocel_tables import OCELTables
 from tests.support.ocel_files import EPOCH, small_log, write_log, write_sqlite
 
 

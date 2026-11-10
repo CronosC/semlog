@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from semanticlog.core import vocabulary as vocab
-from semanticlog.core.errors import ConfigError, InputError
+from semlog.core import vocabulary as vocab
+from semlog.core.errors import ConfigError, InputError
 
 
 @pytest.mark.parametrize(

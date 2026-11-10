@@ -7,11 +7,11 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from semanticlog.core.enums import OWLProfile
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core.enums import OWLProfile
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
+from semlog.onto.settings import OntoBuildSettings
 from tests.support.build import BACKENDS, STREAMING, emit
 from tests.support.owlapi import profile_violations
 from tests.support.settings import MATRIX, NAMES

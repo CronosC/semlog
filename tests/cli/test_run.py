@@ -9,20 +9,20 @@ import re
 
 import pytest
 
-from semanticlog.cli import EXIT_FAILED, EXIT_OK, EXIT_USAGE, main
-from semanticlog.cli.config import resolve_run_config
-from semanticlog.cli.run import (
+from semlog.cli import EXIT_FAILED, EXIT_OK, EXIT_USAGE, main
+from semlog.cli.config import resolve_run_config
+from semlog.cli.run import (
     build_all,
     build_one,
     mine_declare,
 )
-from semanticlog.core.errors import ConfigError, DependencyError
-from semanticlog.core.vocabulary import default_iri
-from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
-from semanticlog.data.loading import load_and_clean
-from semanticlog.onto.inputs import BuildInputs
-from semanticlog.onto.pipeline import build_log
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core.errors import ConfigError, DependencyError, InputError
+from semlog.core.vocabulary import default_iri
+from semlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
+from semlog.data.loading import load_and_clean
+from semlog.onto.inputs import BuildInputs
+from semlog.onto.pipeline import build_log
+from semlog.onto.settings import OntoBuildSettings
 from tests.support.ocel_files import small_log, write_log
 from tests.support.owlapi import load
 from tests.support.rdf import read_rdf
@@ -185,7 +185,9 @@ def test_configured_case_concepts_follow_a_rename(ocel, tmp_path):
 
 
 @pytest.mark.parametrize("streaming", [True, False])
-def test_a_failing_build_leaves_the_previous_ontology_alone(ocel, tmp_path, streaming):
+def test_a_failing_build_leaves_the_previous_ontology_alone(
+    ocel, tmp_path, streaming, monkeypatch
+):
     out = tmp_path / "onto"
     good = resolve_run_config(
         {
@@ -199,9 +201,17 @@ def test_a_failing_build_leaves_the_previous_ontology_alone(ocel, tmp_path, stre
     path = good.ontology_path(ocel)
     before = path.read_bytes()
 
-    # Fails inside the order emitter, after the TBox and every event are written.
-    report = build_all(dataclasses.replace(good, case_concepts=("nope",)))
+    reached = []
 
+    def fail(self, data, inputs):
+        reached.append(self.sink.axiom_count)
+        raise InputError("The order emitter failed.")
+
+    monkeypatch.setattr("semlog.onto.emitters.order.OrderEmitter.emit", fail)
+    report = build_all(good)
+
+    assert len(reached) == 1
+    assert reached[0] > 0
     assert [p.name for p, _ in report.failed] == ["pipeline.jsonocel"]
     assert path.read_bytes() == before
     assert [p.name for p in out.iterdir()] == [path.name]
@@ -215,7 +225,7 @@ def test_a_failure_before_the_build_leaves_no_partial_file(ocel, tmp_path, monke
     def fail(*args, **kwargs):
         raise RuntimeError("no build")
 
-    monkeypatch.setattr("semanticlog.cli.run._warn_on_changed_settings", fail)
+    monkeypatch.setattr("semlog.cli.run._warn_on_changed_settings", fail)
 
     with pytest.raises(RuntimeError, match="no build"):
         build_one(cfg, ocel)
@@ -357,7 +367,7 @@ def test_a_semlog_error_in_one_input_is_logged_without_a_traceback(
     def reject(*args, **kwargs):
         raise ConfigError("Case concept 'nope' is not an object type.")
 
-    monkeypatch.setattr("semanticlog.cli.run.choose_case_concepts", reject)
+    monkeypatch.setattr("semlog.cli.run.choose_case_concepts", reject)
 
     report = build_all(cfg)
 
@@ -374,7 +384,7 @@ def test_a_defect_in_one_input_is_logged_with_its_traceback(
     def burst(*args, **kwargs):
         raise RuntimeError("a defect")
 
-    monkeypatch.setattr("semanticlog.cli.run.choose_case_concepts", burst)
+    monkeypatch.setattr("semlog.cli.run.choose_case_concepts", burst)
 
     report = build_all(cfg)
 
@@ -446,7 +456,7 @@ def test_the_converted_files_hold_what_the_reasoner_added(ocel, tmp_path):
 @pytest.mark.reasoner
 def test_no_progress_line_of_a_build_ends_in_two_dots(ocel, tmp_path, caplog):
     argv = ["build", str(ocel), "--output", str(tmp_path / "onto")]
-    with caplog.at_level(logging.INFO, logger="semanticlog"):
+    with caplog.at_level(logging.INFO, logger="semlog"):
         main([*argv, "--save-backmap", "--output-formats", "ttl"])
 
     assert len(caplog.records) > 10
@@ -486,7 +496,7 @@ class _FakeEnricher:
 
 @pytest.fixture
 def fake_enricher(monkeypatch):
-    import semanticlog.enrich.declare as declare
+    import semlog.enrich.declare as declare
 
     monkeypatch.setattr(declare, "DeclareEnricher", _FakeEnricher)
     return _FakeEnricher
@@ -509,7 +519,7 @@ def test_mine_declare_writes_constraints_that_record_their_log(
 def test_mine_declare_logs_the_constraint_count_of_each_case_concept(
     ocel, tmp_path, fake_enricher, caplog
 ):
-    with caplog.at_level(logging.INFO, logger="semanticlog"):
+    with caplog.at_level(logging.INFO, logger="semlog"):
         mine_declare(ocel, tmp_path / "c.declare.json")
 
     assert "order: 1 DECLARE constraint(s) over 2 trace(s)" in caplog.text
@@ -529,11 +539,11 @@ class _EmptyEnricher(_FakeEnricher):
 def test_mine_declare_warns_when_no_constraint_is_kept(
     ocel, tmp_path, monkeypatch, caplog
 ):
-    import semanticlog.enrich.declare as declare
+    import semlog.enrich.declare as declare
 
     monkeypatch.setattr(declare, "DeclareEnricher", _EmptyEnricher)
 
-    with caplog.at_level(logging.WARNING, logger="semanticlog"):
+    with caplog.at_level(logging.WARNING, logger="semlog"):
         mine_declare(ocel, tmp_path / "c.declare.json")
 
     assert "Mining kept no DECLARE constraints" in caplog.text
@@ -611,7 +621,7 @@ def test_mine_declare_rejects_an_unknown_template_before_reading_the_log(
     def unread(*args, **kwargs):
         raise AssertionError("the log was read before the templates were checked")
 
-    monkeypatch.setattr("semanticlog.cli.run.load_and_clean", unread)
+    monkeypatch.setattr("semlog.cli.run.load_and_clean", unread)
 
     code = main(
         [
@@ -632,7 +642,7 @@ def test_mine_declare_rejects_an_unknown_template_before_reading_the_log(
 def test_mine_declare_without_the_solver_exits_two_with_a_message(
     ocel, tmp_path, monkeypatch, capsys
 ):
-    import semanticlog.enrich.declare as declare
+    import semlog.enrich.declare as declare
 
     def missing(_data):
         raise DependencyError(
@@ -791,7 +801,7 @@ def _never_mined(_data):
 def test_mine_declare_rejects_an_unknown_case_concept_naming_the_choices(
     ocel, tmp_path, monkeypatch, capsys
 ):
-    import semanticlog.enrich.declare as declare
+    import semlog.enrich.declare as declare
 
     monkeypatch.setattr(declare, "DeclareEnricher", _never_mined)
 
@@ -816,7 +826,7 @@ def test_mine_declare_rejects_an_unknown_case_concept_naming_the_choices(
 def test_mine_declare_on_a_log_without_event_to_object_relations_names_none(
     tmp_path, monkeypatch, capsys
 ):
-    import semanticlog.enrich.declare as declare
+    import semlog.enrich.declare as declare
 
     monkeypatch.setattr(declare, "DeclareEnricher", _never_mined)
     log = small_log()

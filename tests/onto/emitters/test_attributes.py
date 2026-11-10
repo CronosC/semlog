@@ -8,24 +8,24 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import (
+from semlog.core import vocabulary as vocab
+from semlog.core.enums import (
     AttributeRepresentation,
     IndividualKind,
     InverseRepresentation,
     OWLProfile,
 )
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.data.binning import Binning
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
-from semanticlog.onto.annotations import AnnotationWriter
-from semanticlog.onto.builder import OCEDOntoBuilder
-from semanticlog.onto.emitted import EmittedIndividuals
-from semanticlog.onto.emitters.attributes import AttributeEmitter, attribute_datatypes
-from semanticlog.onto.reason import Reasoner
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.data.binning import Binning
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
+from semlog.onto.annotations import AnnotationWriter
+from semlog.onto.builder import OCEDOntoBuilder
+from semlog.onto.emitted import EmittedIndividuals
+from semlog.onto.emitters.attributes import AttributeEmitter, attribute_datatypes
+from semlog.onto.reason import Reasoner
+from semlog.onto.settings import OntoBuildSettings
 from tests.support.build import BACKENDS, emit
 from tests.support.functional import read_functional
 

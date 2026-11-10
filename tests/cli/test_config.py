@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from semanticlog.cli.config import resolve_log_inputs, resolve_run_config
-from semanticlog.core.enums import OCELExtension, OutputFormat, OWLProfile
-from semanticlog.core.errors import ConfigError
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.cli.config import resolve_log_inputs, resolve_run_config
+from semlog.core.enums import OCELExtension, OutputFormat, OWLProfile
+from semlog.core.errors import ConfigError
+from semlog.onto.settings import OntoBuildSettings
 
 
 def resolve(ocel: Path, **overrides):

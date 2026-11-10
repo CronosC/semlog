@@ -4,8 +4,8 @@ import logging
 
 import pytest
 
-from semanticlog.data.loading.ocel_loader import OCELLoader
-from semanticlog.data.tables import EntityKind
+from semlog.data.loading.ocel_loader import OCELLoader
+from semlog.data.tables import EntityKind
 from tests.support.ocel_files import (
     events_in_order,
     small_log,

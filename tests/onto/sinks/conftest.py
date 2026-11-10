@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from semanticlog.core.enums import OWLProfile
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.onto.sinks import AxiomSink, InMemorySink, StreamingSink
+from semlog.core.enums import OWLProfile
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.onto.sinks import AxiomSink, InMemorySink, StreamingSink
 from tests.support.build import BACKENDS, STREAMING
 from tests.support.emitted import Emitted
 from tests.support.functional import read_functional

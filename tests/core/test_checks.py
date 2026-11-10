@@ -2,8 +2,8 @@
 
 import pytest
 
-from semanticlog.core.checks import CheckReport, FixIn, raise_reports
-from semanticlog.core.errors import ConfigError, InputError
+from semlog.core.checks import CheckReport, FixIn, raise_reports
+from semlog.core.errors import ConfigError, InputError
 
 CONFIG = CheckReport(
     header="The case concepts are wrong:",

@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from semanticlog.core.enums import OWLProfile
-from semanticlog.core.errors import SemlogError
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.data.oced import OCEDStore
+from semlog.core.enums import OWLProfile
+from semlog.core.errors import SemlogError
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.data.oced import OCEDStore
 from tests.support import stores
 from tests.support.build import STREAMING, SinkCounts, emit_through
 from tests.support.emitted import Emitted

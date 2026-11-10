@@ -6,10 +6,10 @@ import sys
 
 import pytest
 
-from semanticlog.cli import EXIT_FAILED, EXIT_INTERRUPTED, EXIT_OK, EXIT_USAGE, main
+from semlog.cli import EXIT_FAILED, EXIT_INTERRUPTED, EXIT_OK, EXIT_USAGE, main
 
-# `semanticlog.cli` re-exports `main`, so the module comes from sys.modules.
-MAIN_MODULE = "semanticlog.cli.main"
+# `semlog.cli` re-exports `main`, so the module comes from sys.modules.
+MAIN_MODULE = "semlog.cli.main"
 
 
 def test_no_command_prints_help_and_exits_two(capsys):
@@ -110,7 +110,7 @@ def test_a_setting_out_of_range_exits_two_with_one_line_before_the_log_is_read(
     def never(_cfg):
         raise AssertionError("build_all ran")
 
-    monkeypatch.setattr("semanticlog.cli.run.build_all", never)
+    monkeypatch.setattr("semlog.cli.run.build_all", never)
 
     assert main(["build", str(ocel), *flags, "-q"]) == EXIT_USAGE
     err = capsys.readouterr().err
@@ -163,7 +163,7 @@ def test_an_interrupted_command_exits_130(ocel, capsys, monkeypatch):
     def interrupt(_cfg):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("semanticlog.cli.run.build_all", interrupt)
+    monkeypatch.setattr("semlog.cli.run.build_all", interrupt)
 
     assert main(["build", str(ocel), "-q"]) == EXIT_INTERRUPTED
     assert capsys.readouterr().err.strip() == "semlog build: interrupted"

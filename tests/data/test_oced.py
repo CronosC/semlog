@@ -5,9 +5,9 @@ import re
 import pandas as pd
 import pytest
 
-from semanticlog.core.errors import InputError, SemlogError
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, EntityTable, RelationKind, Relations
+from semlog.core.errors import InputError, SemlogError
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, EntityTable, RelationKind, Relations
 
 STAMPS = pd.date_range("2022-01-01", periods=3, tz="UTC")
 

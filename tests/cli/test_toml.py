@@ -6,9 +6,9 @@ import tomllib
 
 import pytest
 
-from semanticlog.cli.toml import load_config_file, toml_value
-from semanticlog.core.enums import OWLProfile
-from semanticlog.core.errors import ConfigError
+from semlog.cli.toml import load_config_file, toml_value
+from semlog.core.enums import OWLProfile
+from semlog.core.errors import ConfigError
 
 
 def test_a_config_is_read_as_the_settings_it_names(write_config):

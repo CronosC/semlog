@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from semanticlog.core.enums import InverseRepresentation, OWLProfile
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.onto.builder import OCEDOntoBuilder
-from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sinks import InMemorySink
+from semlog.core.enums import InverseRepresentation, OWLProfile
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.onto.builder import OCEDOntoBuilder
+from semlog.onto.settings import OntoBuildSettings
+from semlog.onto.sinks import InMemorySink
 from tests.support.build import IN_MEMORY
 
 

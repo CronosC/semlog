@@ -7,10 +7,10 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from semanticlog.core import vocabulary as vocab
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
+from semlog.core import vocabulary as vocab
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
 from tests.support.build import emit
 from tests.support.settings import CONFIGURATIONS
 

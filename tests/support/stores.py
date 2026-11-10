@@ -23,10 +23,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.loading.ocel_loader import OCELLoader
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.loading.ocel_loader import OCELLoader
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 PIPELINE_OCEL = FIXTURES / "pipeline.jsonocel"

@@ -4,7 +4,7 @@ from itertools import islice
 
 import pytest
 
-from semanticlog.core.names import NameRegistry, candidates
+from semlog.core.names import NameRegistry, candidates
 
 
 def _has(name: str) -> set[str]:

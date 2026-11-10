@@ -2,15 +2,15 @@
 
 import pytest
 
-from semanticlog.core import vocabulary as vocab
-from semanticlog.data.oced import attribute_owners_by_kind
-from semanticlog.data.tables import EntityKind
-from semanticlog.onto.annotations import AnnotationWriter
-from semanticlog.onto.emitted import EmittedIndividuals
-from semanticlog.onto.emitters.attributes import AttributeEmitter
-from semanticlog.onto.emitters.entities import EntityEmitter
-from semanticlog.onto.reason import Reasoner
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core import vocabulary as vocab
+from semlog.data.oced import attribute_owners_by_kind
+from semlog.data.tables import EntityKind
+from semlog.onto.annotations import AnnotationWriter
+from semlog.onto.emitted import EmittedIndividuals
+from semlog.onto.emitters.attributes import AttributeEmitter
+from semlog.onto.emitters.entities import EntityEmitter
+from semlog.onto.reason import Reasoner
+from semlog.onto.settings import OntoBuildSettings
 from tests.support.build import emit
 from tests.support.settings import settings
 

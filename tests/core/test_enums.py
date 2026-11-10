@@ -2,8 +2,8 @@
 
 import pytest
 
-from semanticlog.core.enums import OutputFormat, OWLProfile, ReasonerBackend
-from semanticlog.core.errors import ConfigError
+from semlog.core.enums import OutputFormat, OWLProfile, ReasonerBackend
+from semlog.core.errors import ConfigError
 
 
 @pytest.mark.parametrize("written", [" owl2el ", OWLProfile.OWL2EL])

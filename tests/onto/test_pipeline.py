@@ -8,14 +8,14 @@ import logging
 import pandas as pd
 import pytest
 
-from semanticlog.core.enums import EventOrderRepresentation
-from semanticlog.core.errors import ConfigError
-from semanticlog.core.vocabulary import DEFAULT_IRI, UnsafeLocalNameError
-from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
-from semanticlog.data.loading import load_and_clean
-from semanticlog.onto.inputs import BuildInputs
-from semanticlog.onto.pipeline import build_log
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core.enums import EventOrderRepresentation
+from semlog.core.errors import ConfigError
+from semlog.core.vocabulary import DEFAULT_IRI, UnsafeLocalNameError
+from semlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
+from semlog.data.loading import load_and_clean
+from semlog.onto.inputs import BuildInputs
+from semlog.onto.pipeline import build_log
+from semlog.onto.settings import OntoBuildSettings
 from tests.support.functional import read_functional
 from tests.support.rdf import read_rdf
 

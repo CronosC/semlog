@@ -8,11 +8,11 @@ import pm4py
 import pytest
 from pm4py.objects.ocel.obj import OCEL
 
-from semanticlog.core.enums import OCELExtension
-from semanticlog.core.errors import InputError
-from semanticlog.data.loading import pm4py_loader
-from semanticlog.data.loading.pm4py_loader import PM4PyLoader
-from semanticlog.data.tables import EntityKind, RelationKind
+from semlog.core.enums import OCELExtension
+from semlog.core.errors import InputError
+from semlog.data.loading import pm4py_loader
+from semlog.data.loading.pm4py_loader import PM4PyLoader
+from semlog.data.tables import EntityKind, RelationKind
 from tests.support.ocel_files import events_in_order
 
 HISTORY = [OCELExtension.ATTRIBUTE_HISTORY]

@@ -3,8 +3,8 @@
 import pandas as pd
 import pytest
 
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind
 
 
 def _events(*ids, **attributes):

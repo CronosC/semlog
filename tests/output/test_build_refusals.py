@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from semanticlog.core.enums import EventOrderRepresentation, OCELExtension
-from semanticlog.core.errors import ConfigError
-from semanticlog.core.vocabulary import DEFAULT_IRI, NameCollisionError
-from semanticlog.onto.builder import OCEDOntoBuilder
-from semanticlog.onto.inputs import BuildInputs
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core.enums import EventOrderRepresentation, OCELExtension
+from semlog.core.errors import ConfigError
+from semlog.core.vocabulary import DEFAULT_IRI, NameCollisionError
+from semlog.onto.builder import OCEDOntoBuilder
+from semlog.onto.inputs import BuildInputs
+from semlog.onto.settings import OntoBuildSettings
 from tests.support import stores
 from tests.support.settings import declare_constraints, settings
 

@@ -7,15 +7,15 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from semanticlog.core.enums import EventOrderRepresentation
-from semanticlog.core.errors import ConfigError, InputError
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
-from semanticlog.onto.audit import audit_build
-from semanticlog.onto.inputs import BuildInputs
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core.enums import EventOrderRepresentation
+from semlog.core.errors import ConfigError, InputError
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
+from semlog.onto.audit import audit_build
+from semlog.onto.inputs import BuildInputs
+from semlog.onto.settings import OntoBuildSettings
 
 DF = OntoBuildSettings(order_representations=[EventOrderRepresentation.DF])
 DECLARE = OntoBuildSettings(order_representations=[EventOrderRepresentation.DECLARE])

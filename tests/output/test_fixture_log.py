@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.loading.ocel_loader import OCELLoader
-from semanticlog.data.loading.pm4py_loader import PM4PyLoader
-from semanticlog.data.tables import EntityKind, RelationKind
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.loading.ocel_loader import OCELLoader
+from semlog.data.loading.pm4py_loader import PM4PyLoader
+from semlog.data.tables import EntityKind, RelationKind
 from tests.support.build import emit
 from tests.support.settings import settings
 from tests.support.stores import PIPELINE_OCEL

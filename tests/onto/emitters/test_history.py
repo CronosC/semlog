@@ -10,12 +10,12 @@ import logging
 import pandas as pd
 import pytest
 
-from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import AttributeRepresentation, OCELExtension, OWLProfile
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core import vocabulary as vocab
+from semlog.core.enums import AttributeRepresentation, OCELExtension, OWLProfile
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
+from semlog.onto.settings import OntoBuildSettings
 from tests.support.build import emit
 
 CHANGES = {
@@ -319,7 +319,7 @@ def test_a_change_with_no_event_or_several_events_at_its_time_has_no_cause(tmp_p
 
 
 def test_the_build_reports_the_changes_left_without_a_cause(tmp_path, caplog):
-    with caplog.at_level(logging.INFO, logger="semanticlog.onto.emitters.history"):
+    with caplog.at_level(logging.INFO, logger="semlog.onto.emitters.history"):
         emit(history_settings(), tmp_path / "causes.ofn", data=_store_with_causes())
 
     assert (

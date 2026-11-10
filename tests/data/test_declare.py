@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from semanticlog.core.errors import InputError
-from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
+from semlog.core.errors import InputError
+from semlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
 
 DISCOVERY = MiningSettings(
     method="discovery",

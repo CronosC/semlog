@@ -3,10 +3,10 @@
 import pandas as pd
 import pytest
 
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.cleaning.merged import merged_names
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.cleaning.merged import merged_names
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
 
 
 @pytest.mark.parametrize(

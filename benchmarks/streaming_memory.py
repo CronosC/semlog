@@ -18,15 +18,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from semanticlog.core.enums import EventOrderRepresentation
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
-from semanticlog.onto.builder import OCEDOntoBuilder
-from semanticlog.onto.inputs import BuildInputs
-from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sinks import StreamingSink
+from semlog.core.enums import EventOrderRepresentation
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
+from semlog.onto.builder import OCEDOntoBuilder
+from semlog.onto.inputs import BuildInputs
+from semlog.onto.settings import OntoBuildSettings
+from semlog.onto.sinks import StreamingSink
 
 ACTS = 5
 NAMES = ["ann", "bo", "cy"]

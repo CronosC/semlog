@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from semanticlog.core.vocabulary import DEFAULT_IRI
+from semlog.core.vocabulary import DEFAULT_IRI
 from tests.support.emitted import Emitted
 from tests.support.functional import read_functional
 from tests.support.rdf import read_rdf

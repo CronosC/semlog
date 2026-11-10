@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from semanticlog.core.enums import IndividualKind, OWLProfile
-from semanticlog.core.vocabulary import DEFAULT_IRI, EVENT, TBOX_IRI
-from semanticlog.onto.sinks import StreamingSink
+from semlog.core.enums import IndividualKind, OWLProfile
+from semlog.core.vocabulary import DEFAULT_IRI, EVENT, TBOX_IRI
+from semlog.onto.sinks import StreamingSink
 
 PROFILE = OWLProfile.OWL2DL
 

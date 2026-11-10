@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from semanticlog.core.errors import ConfigError
-from semanticlog.data.binning import (
+from semlog.core.errors import ConfigError
+from semlog.data.binning import (
     Binning,
     _select_labels,
     check_bins,

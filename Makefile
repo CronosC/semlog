@@ -16,18 +16,18 @@ test-fast: ## Run the suite without the JVM and subprocess tests
 	$(RUN) pytest -n auto -m "not reasoner and not slow"
 
 coverage: ## Run the suite with an HTML coverage report
-	$(RUN) pytest -n auto --cov=semanticlog --cov-report=html --cov-report=term-missing
+	$(RUN) pytest -n auto --cov=semlog --cov-report=html --cov-report=term-missing
 
 format: ## Format and fix the code
-	$(RUN) ruff format semanticlog/ tests/ benchmarks/
-	$(RUN) ruff check --fix semanticlog/ tests/ benchmarks/
+	$(RUN) ruff format semlog/ tests/ benchmarks/
+	$(RUN) ruff check --fix semlog/ tests/ benchmarks/
 
 lint: ## Lint and check formatting
-	$(RUN) ruff check semanticlog/ tests/ benchmarks/
-	$(RUN) ruff format --check semanticlog/ tests/ benchmarks/
+	$(RUN) ruff check semlog/ tests/ benchmarks/
+	$(RUN) ruff format --check semlog/ tests/ benchmarks/
 
 typecheck: ## Type check the package
-	$(RUN) mypy semanticlog/
+	$(RUN) mypy semlog/
 
 check: lint typecheck test ## Lint, type check and run the whole suite
 

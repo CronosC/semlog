@@ -8,16 +8,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 
-from semanticlog.core.enums import (
+from semlog.core.enums import (
     AttributeRepresentation,
     EventOrderRepresentation,
     InverseRepresentation,
     OCELExtension,
     OWLProfile,
 )
-from semanticlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
-from semanticlog.onto.inputs import BuildInputs
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.data.declare import ConceptConstraints, DeclareResult, MiningSettings
+from semlog.onto.inputs import BuildInputs
+from semlog.onto.settings import OntoBuildSettings
 
 DISCOVERY = MiningSettings("discovery", ("Response",), 0.1, 0.9)
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from semanticlog.core import vocabulary as vocab
+from semlog.core import vocabulary as vocab
 
 EVENTS = [f"e{i}" for i in range(1, 13)]
 SHIPMENTS = [f"s{i}" for i in range(1, 7)]

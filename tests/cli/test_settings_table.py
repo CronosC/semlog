@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from semanticlog.cli.settings_table import (
+from semlog.cli.settings_table import (
     BUILD_SETTINGS,
     expand_inputs,
     read_setting,
     setting,
 )
-from semanticlog.core.errors import ConfigError
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core.errors import ConfigError
+from semlog.onto.settings import OntoBuildSettings
 
 
 def test_every_settings_field_has_a_row_with_the_same_default():

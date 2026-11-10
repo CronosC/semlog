@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
-from semanticlog.data.dtypes import cast_declared, infer_dtypes
+from semlog.data.dtypes import cast_declared, infer_dtypes
 
 
 def test_numeric_and_boolean_columns_pass_through_unchanged():

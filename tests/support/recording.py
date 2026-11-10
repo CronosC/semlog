@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from semanticlog.core.enums import OWLProfile
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.onto.sinks import AxiomSink
+from semlog.core.enums import OWLProfile
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.onto.sinks import AxiomSink
 
 
 class RecordingSink(AxiomSink):

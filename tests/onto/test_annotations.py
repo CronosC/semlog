@@ -11,19 +11,19 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import InverseRepresentation
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.data.tables import EntityKind
-from semanticlog.onto import annotations as annotations_module
-from semanticlog.onto.annotations import (
+from semlog.core import vocabulary as vocab
+from semlog.core.enums import InverseRepresentation
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.data.tables import EntityKind
+from semlog.onto import annotations as annotations_module
+from semlog.onto.annotations import (
     AnnotationWriter,
     _declare_label,
     derived_annotations,
     tbox_annotations,
     timestamp_labels,
 )
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.onto.settings import OntoBuildSettings
 from tests.support.tbox import construct_tbox
 
 # --------------------------------------------------------------------------

@@ -4,8 +4,8 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
-from semanticlog.core.vocabulary import is_safe_local_name
-from semanticlog.data.cleaning.names import (
+from semlog.core.vocabulary import is_safe_local_name
+from semlog.data.cleaning.names import (
     clean_dataframe,
     clean_series,
     clean_string,

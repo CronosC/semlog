@@ -8,11 +8,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple
 
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.data.oced import OCEDStore
-from semanticlog.onto.builder import OCEDOntoBuilder
-from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sinks import AxiomSink, StreamingSink
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.data.oced import OCEDStore
+from semlog.onto.builder import OCEDOntoBuilder
+from semlog.onto.settings import OntoBuildSettings
+from semlog.onto.sinks import AxiomSink, StreamingSink
 from tests.support import stores
 from tests.support.emitted import Emitted
 from tests.support.functional import read_functional

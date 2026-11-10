@@ -4,8 +4,8 @@ import logging
 
 import pytest
 
-from semanticlog.cli import logs
-from semanticlog.cli.logs import PACKAGE_LOGGER, FileLog, setup_console_logging
+from semlog.cli import logs
+from semlog.cli.logs import PACKAGE_LOGGER, FileLog, setup_console_logging
 
 
 @pytest.fixture
@@ -26,7 +26,7 @@ def restore_logging():
 def test_verbose_raises_this_package_only(restore_logging):
     setup_console_logging(logging.DEBUG)
 
-    assert logging.getLogger("semanticlog.cli.run").isEnabledFor(logging.DEBUG)
+    assert logging.getLogger("semlog.cli.run").isEnabledFor(logging.DEBUG)
     assert not logging.getLogger("pm4py").isEnabledFor(logging.DEBUG)
     assert logging.getLogger("pm4py").isEnabledFor(logging.WARNING)
 

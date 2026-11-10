@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from semanticlog.core.enums import IndividualKind
-from semanticlog.core.vocabulary import TBOX_IRI
+from semlog.core.enums import IndividualKind
+from semlog.core.vocabulary import TBOX_IRI
 from tests.support.emitted import Emitted, inverse_pair
 
 

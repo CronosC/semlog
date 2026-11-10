@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from semanticlog.core.enums import SinkEntity
-from semanticlog.core.vocabulary import (
+from semlog.core.enums import SinkEntity
+from semlog.core.vocabulary import (
     NameCollisionError,
     UnsafeLocalNameError,
     is_safe_local_name,
 )
-from semanticlog.onto.sinks.ledger import NameLedger
+from semlog.onto.sinks.ledger import NameLedger
 
 CLASS = SinkEntity.CLASS
 OBJECT = SinkEntity.OBJECT_PROPERTY

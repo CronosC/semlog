@@ -11,8 +11,8 @@ back from a loaded store.
 import json
 import sqlite3
 
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind
 
 EPOCH = "1970-01-01T00:00:00Z"
 

@@ -8,9 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from semanticlog.core.enums import OWLProfile
-from semanticlog.core.errors import InputError
-from semanticlog.onto.sinks.literals import resolve_literal
+from semlog.core.enums import OWLProfile
+from semlog.core.errors import InputError
+from semlog.onto.sinks.literals import resolve_literal
 
 DL = OWLProfile.OWL2DL
 EL = OWLProfile.OWL2EL

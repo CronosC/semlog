@@ -12,21 +12,21 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import (
+from semlog.core import vocabulary as vocab
+from semlog.core.enums import (
     EventOrderRepresentation,
     InverseRepresentation,
     OWLProfile,
 )
-from semanticlog.core.errors import ConfigError
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.data.cleaning import clean_oced_data
-from semanticlog.data.declare import ConceptConstraints, DeclareResult
-from semanticlog.data.loading import loader_for
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
-from semanticlog.onto.builder import OCEDOntoBuilder
-from semanticlog.onto.reason import Reasoner
+from semlog.core.errors import ConfigError
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.data.cleaning import clean_oced_data
+from semlog.data.declare import ConceptConstraints, DeclareResult
+from semlog.data.loading import loader_for
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
+from semlog.onto.builder import OCEDOntoBuilder
+from semlog.onto.reason import Reasoner
 from tests.support.build import STREAMING, emit
 from tests.support.functional import read_functional
 from tests.support.settings import (

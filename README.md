@@ -160,7 +160,7 @@ The ontology header holds three annotations: `buildTool` with the semlog version
 ## From Python
 
 ```python
-from semanticlog import (
+from semlog import (
     BuildInputs,
     EventOrderRepresentation,
     OntoBuildSettings,

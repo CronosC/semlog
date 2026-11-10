@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "semanticlog"
+PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "semlog"
 ONTO_ROOT = PACKAGE_ROOT / "onto"
 
 ALLOWED: dict[str, set[str]] = {
@@ -78,8 +78,8 @@ def test_every_module_imports_only_the_layers_its_layer_may():
         layer = parts[0]
         permitted = ALLOWED.get(layer, set()) | {layer}
         violations += [
-            f"{module.relative_to(PACKAGE_ROOT)}:{line} imports semanticlog.{imported}"
-            for imported, line in _imports(module, ("semanticlog",))
+            f"{module.relative_to(PACKAGE_ROOT)}:{line} imports semlog.{imported}"
+            for imported, line in _imports(module, ("semlog",))
             if imported not in permitted
         ]
 
@@ -97,8 +97,8 @@ def test_every_onto_module_imports_only_the_parts_its_part_may():
             continue
         permitted = ONTO_ALLOWED[part] | {part}
         violations += [
-            f"onto/{module.relative_to(ONTO_ROOT)}:{line} imports semanticlog.onto.{imported}"
-            for imported, line in _imports(module, ("semanticlog", "onto"))
+            f"onto/{module.relative_to(ONTO_ROOT)}:{line} imports semlog.onto.{imported}"
+            for imported, line in _imports(module, ("semlog", "onto"))
             if imported not in permitted
         ]
     present = {

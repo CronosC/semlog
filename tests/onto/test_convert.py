@@ -7,13 +7,13 @@ from pathlib import Path
 import jpype
 import pytest
 
-from semanticlog.core.enums import EventOrderRepresentation, OutputFormat
-from semanticlog.core.errors import DependencyError, InputError
-from semanticlog.onto import reason as reason_module
-from semanticlog.onto.convert import convert
-from semanticlog.onto.inputs import BuildInputs
-from semanticlog.onto.pipeline import build_log
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core.enums import EventOrderRepresentation, OutputFormat
+from semlog.core.errors import DependencyError, InputError
+from semlog.onto import reason as reason_module
+from semlog.onto.convert import convert
+from semlog.onto.inputs import BuildInputs
+from semlog.onto.pipeline import build_log
+from semlog.onto.settings import OntoBuildSettings
 from tests.support import stores
 from tests.support.owlapi import load
 
@@ -80,7 +80,7 @@ def test_a_heap_exhaustion_while_loading_names_java_tool_options(
         raise jpype.JClass("java.lang.OutOfMemoryError")("Java heap space")
 
     reason_module.start_jvm()
-    monkeypatch.setattr("semanticlog.onto.reason.SyncOntology", exhaust)
+    monkeypatch.setattr("semlog.onto.reason.SyncOntology", exhaust)
 
     with pytest.raises(DependencyError, match="JAVA_TOOL_OPTIONS=-Xmx"):
         convert(built, {OutputFormat.TTL: tmp_path / "pipeline.ttl"})

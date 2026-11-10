@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from semanticlog.onto.emitters.pairs import clean_pairs, reversed_pairs
+from semlog.onto.emitters.pairs import clean_pairs, reversed_pairs
 
 
 def test_a_row_with_a_missing_endpoint_yields_no_pair():

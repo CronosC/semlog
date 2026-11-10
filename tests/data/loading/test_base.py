@@ -2,8 +2,8 @@
 
 import pytest
 
-from semanticlog.core.errors import ConfigError
-from semanticlog.data.loading.base import LoaderColumns
+from semlog.core.errors import ConfigError
+from semlog.data.loading.base import LoaderColumns
 
 
 def test_a_column_setting_no_loader_reads_is_rejected_listing_the_valid_ones():

@@ -1,0 +1,165 @@
+"""The checks a build runs before it emits anything.
+
+`audit_build` rejects a case concept the log cannot be projected onto, DECLARE
+constraints whose traces are not in this log, and a relation row naming an
+entity the store does not hold. A failed check raises before any file is
+written.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+from semlog.core.checks import CheckReport, FixIn, raise_reports
+from semlog.data.cleaning import object_type_renames
+from semlog.data.declare import DeclareResult
+from semlog.data.flatten import case_concept_candidates, projection_advice
+from semlog.data.integrity import check_integrity
+from semlog.data.readable import ReadableStore
+from semlog.data.tables import EntityKind
+from semlog.onto.inputs import BuildInputs
+from semlog.onto.settings import OntoBuildSettings
+
+
+def audit_build(
+    data: ReadableStore, settings: OntoBuildSettings, inputs: BuildInputs
+) -> None:
+    """Run every check that applies to the settings.
+
+    Raises:
+        ConfigError: If only the case concepts are wrong. The message lists
+            every finding.
+        InputError: If anything is wrong with the log or the constraints. The
+            message lists every finding.
+    """
+    raise_reports(
+        [
+            check_case_concepts(data, settings, inputs.case_concepts),
+            check_integrity(data),
+            check_declare_input(data, settings, inputs.declare),
+        ]
+    )
+
+
+def check_case_concepts(
+    data: ReadableStore, settings: OntoBuildSettings, case_concepts: Sequence[str]
+) -> CheckReport | None:
+    """Check that every case concept is an object type with an event-to-object relation.
+
+    Names are compared as cleaning left them. A log without event-to-object
+    relations is rejected only when the settings emit traces.
+
+    Returns:
+        Every case concept the log cannot be projected onto, or None when the
+        check passes.
+    """
+    if not settings.emits_traces:
+        return case_concept_report(data, case_concepts, require_relations=False)
+    return case_concept_report(
+        data,
+        case_concepts,
+        or_instead="remove df, ef and ef_explicit from order_representations",
+    )
+
+
+def case_concept_report(
+    data: ReadableStore,
+    case_concepts: Sequence[str],
+    or_instead: str = "",
+    require_relations: bool = True,
+) -> CheckReport | None:
+    """Return every case concept the log cannot be projected onto, or None if there is none.
+
+    Names are compared as cleaning left them.
+
+    Args:
+        or_instead: The other change that fixes a log without event-to-object
+            relations, as a clause starting with a verb.
+        require_relations: Whether a log no event-to-object relation reaches
+            is reported even when every case concept passes, including when
+            there are none.
+    """
+    object_types = set(data.types(EntityKind.OBJECT))
+    reachable = set(case_concept_candidates(data))
+    unknown = [c for c in case_concepts if c not in object_types]
+    unreachable = [c for c in case_concepts if c in object_types and c not in reachable]
+    if not unknown and not unreachable and (reachable or not require_relations):
+        return None
+
+    renames = object_type_renames(data)
+    problems = []
+    for case_concept in unknown:
+        moved = renames.get(case_concept)
+        if moved is None:
+            problems.append(f"{case_concept!r} is not an object type of this log")
+        else:
+            problems.append(
+                f"{case_concept!r} was renamed to {moved!r} by cleaning. Use that name"
+            )
+    for case_concept in unreachable:
+        problems.append(
+            f"{case_concept!r} is an object type of this log, but no "
+            "event-to-object relation reaches it"
+        )
+
+    if reachable:
+        fix = (
+            "'semlog inspect' lists the object types along with what each one "
+            "was called in the source."
+        )
+    else:
+        fix = "Add event-to-object relations to the log"
+        fix += f", or {or_instead}." if or_instead else "."
+    return CheckReport(
+        header=(
+            "The case concepts do not name object types this log can be projected onto:"
+        ),
+        problems=tuple(problems),
+        advice=f"{projection_advice(data)} {fix}",
+        fix_in=FixIn.CONFIG,
+    )
+
+
+def check_declare_input(
+    data: ReadableStore, settings: OntoBuildSettings, declare: DeclareResult | None
+) -> CheckReport | None:
+    """Check that every trace id in the DECLARE constraints is an object of its case concept.
+
+    Returns:
+        Everything about the constraints that does not match this log, or None
+        when the check passes or does not apply.
+    """
+    if not settings.emits_declare or declare is None:
+        return None
+
+    object_types = set(data.types(EntityKind.OBJECT))
+    problems: list[str] = []
+    for concept in declare.concepts:
+        case_concept = concept.case_concept
+        if case_concept not in object_types:
+            problems.append(
+                f"case concept {case_concept!r} is not an object type of "
+                f"this log (it has {', '.join(sorted(object_types))})"
+            )
+            continue
+        known = set(map(str, data.ids(EntityKind.OBJECT, case_concept)))
+        unknown = sorted(set(concept.trace_ids) - known)
+        if unknown:
+            problems.append(
+                f"{len(unknown)} of {len(concept.trace_ids)} "
+                f"{case_concept!r} trace id(s) are not objects of that type, "
+                f"starting with {', '.join(unknown[:5])}"
+            )
+
+    if not problems:
+        return None
+    return CheckReport(
+        header="The DECLARE constraints do not match this log:",
+        problems=tuple(problems),
+        advice=(
+            "They were most likely mined from a different log, or from this "
+            "one before it was filtered. Re-run 'semlog mine-declare' against "
+            "the log being built."
+        ),
+        fix_in=FixIn.INPUT,
+    )

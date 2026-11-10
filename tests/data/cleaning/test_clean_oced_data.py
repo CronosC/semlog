@@ -3,17 +3,17 @@
 import pandas as pd
 import pytest
 
-from semanticlog.core import vocabulary as vocab
-from semanticlog.core.errors import InputError
-from semanticlog.core.vocabulary import is_safe_local_name
-from semanticlog.data.cleaning import (
+from semlog.core import vocabulary as vocab
+from semlog.core.errors import InputError
+from semlog.core.vocabulary import is_safe_local_name
+from semlog.data.cleaning import (
     clean_oced_data,
     object_type_renames,
     verify_unique_names,
 )
-from semanticlog.data.integrity import check_integrity
-from semanticlog.data.oced import OCEDStore
-from semanticlog.data.tables import EntityKind, RelationKind
+from semlog.data.integrity import check_integrity
+from semlog.data.oced import OCEDStore
+from semlog.data.tables import EntityKind, RelationKind
 
 
 def _changes(obj_type, oid="o1", field="status", **attributes):

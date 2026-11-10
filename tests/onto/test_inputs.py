@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from semanticlog.core.enums import EventOrderRepresentation
-from semanticlog.core.errors import ConfigError
-from semanticlog.onto.inputs import BuildInputs
-from semanticlog.onto.settings import OntoBuildSettings
+from semlog.core.enums import EventOrderRepresentation
+from semlog.core.errors import ConfigError
+from semlog.onto.inputs import BuildInputs
+from semlog.onto.settings import OntoBuildSettings
 
 
 def test_case_concepts_given_as_one_string_are_rejected():

@@ -2,7 +2,7 @@
 
 import pytest
 
-from semanticlog.onto.record import BuildRecord, read_record
+from semlog.onto.record import BuildRecord, read_record
 
 CASES = r'Annotation(<https://oced#caseConcepts> "[\"order\"]")' "\n"
 FUNCTIONAL = (

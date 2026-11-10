@@ -7,8 +7,8 @@ import re
 import pandas as pd
 import pytest
 
-from semanticlog.core import vocabulary as vocab
-from semanticlog.core.enums import (
+from semlog.core import vocabulary as vocab
+from semlog.core.enums import (
     AttributeRepresentation,
     EventOrderRepresentation,
     IndividualKind,
@@ -16,12 +16,12 @@ from semanticlog.core.enums import (
     OCELExtension,
     OWLProfile,
 )
-from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.data.tables import RelationKind
-from semanticlog.onto.builder import OCEDOntoBuilder
-from semanticlog.onto.reason import Reasoner
-from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sinks import StreamingSink
+from semlog.core.vocabulary import DEFAULT_IRI
+from semlog.data.tables import RelationKind
+from semlog.onto.builder import OCEDOntoBuilder
+from semlog.onto.reason import Reasoner
+from semlog.onto.settings import OntoBuildSettings
+from semlog.onto.sinks import StreamingSink
 from tests.support import stores
 from tests.support.build import BACKENDS, emit
 from tests.support.owlapi import (
