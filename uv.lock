@@ -3188,10 +3188,12 @@ wheels = [
 
 [[package]]
 name = "semlog"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "ijson" },
+    { name = "jpype1" },
+    { name = "numpy" },
     { name = "owlapy" },
     { name = "owlready2" },
     { name = "pandas" },
@@ -3216,21 +3218,23 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "declare4py", marker = "extra == 'declare'" },
+    { name = "declare4py", marker = "extra == 'declare'", specifier = ">=2.2,<3" },
     { name = "ijson", specifier = ">=3.6.0" },
+    { name = "jpype1", specifier = ">=1.5" },
     { name = "lark", marker = "extra == 'declare'", specifier = ">=1.1.5" },
-    { name = "mypy", marker = "extra == 'dev'" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.1" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "owlapy", specifier = ">=1.6.7,<2" },
-    { name = "owlready2", specifier = ">=0.40,<0.51" },
-    { name = "pandas", specifier = ">=2.2" },
-    { name = "pm4py", specifier = ">=2.7" },
-    { name = "pre-commit", marker = "extra == 'dev'" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest-cov", marker = "extra == 'dev'" },
-    { name = "pytest-xdist", marker = "extra == 'dev'" },
-    { name = "rdflib", marker = "extra == 'dev'" },
-    { name = "ruff", marker = "extra == 'dev'" },
-    { name = "scipy", specifier = "<2" },
+    { name = "owlready2", specifier = ">=0.45" },
+    { name = "pandas", specifier = ">=3" },
+    { name = "pm4py", specifier = ">=2.7.20" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5" },
+    { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5" },
+    { name = "rdflib", marker = "extra == 'dev'", specifier = ">=7.6" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15" },
+    { name = "scipy", specifier = ">=1.12,<2" },
 ]
 provides-extras = ["declare", "dev"]
 

@@ -12,14 +12,19 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
 
-      # uv sync installs the Python version in .python-version.
+      # python-version overrides .python-version for every uv command in the job.
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          python-version: ${{ matrix.python-version }}
 
       # The reasoner tests run HermiT through the OWL API, which needs a JVM.
       - name: Set up Java

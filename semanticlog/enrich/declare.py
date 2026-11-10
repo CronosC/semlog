@@ -197,8 +197,6 @@ def _quiet_declare4py() -> Iterator[None]:
     ):
         warnings.simplefilter("ignore", DeprecationWarning)
         warnings.simplefilter("ignore", UserWarning)
-        if hasattr(pd.errors, "SettingWithCopyWarning"):
-            warnings.simplefilter("ignore", pd.errors.SettingWithCopyWarning)
         try:
             yield
         finally:

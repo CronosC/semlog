@@ -6,7 +6,7 @@ help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | sed 's/:.*## /\t/' | expand -t 12
 
 install: ## Install the dependencies and the git hooks
-	uv sync --extra dev
+	uv sync --locked --extra dev
 	$(RUN) pre-commit install
 
 test: ## Run the whole suite

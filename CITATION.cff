@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: If you use this software, please cite it as below.
+type: software
+title: semlog
+abstract: Convert OCEL 2.0, CSV and XES event logs to OWL 2 ontologies.
+authors:
+  - family-names: Dormagen
+    given-names: Christian
+    email: christian.dormagen@oth-regensburg.de
+version: 0.7.0
+license: MIT
+repository-code: https://github.com/CronosC/semlog
+keywords:
+  - process mining
+  - event log
+  - OCEL
+  - OWL
+  - ontology
