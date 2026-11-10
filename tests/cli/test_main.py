@@ -82,6 +82,17 @@ def test_an_unusable_configuration_exits_two_with_one_line(ocel, capsys):
     assert "Traceback" not in err
 
 
+def test_a_superseded_config_key_exits_two_with_the_unknown_key_error(
+    ocel, tmp_path, capsys
+):
+    config = tmp_path / "run.toml"
+    config.write_text("size_limit = 1\n", encoding="utf-8")
+
+    assert main(["build", str(ocel), "--config", str(config), "-q"]) == EXIT_USAGE
+    err = capsys.readouterr().err
+    assert "unknown setting(s): 'size_limit' (did you mean 'size_limit_mb'?)" in err
+
+
 @pytest.mark.parametrize(
     "flags",
     [
@@ -98,7 +109,7 @@ def test_a_setting_out_of_range_exits_two_with_one_line_before_the_log_is_read(
     def never(_cfg):
         raise AssertionError("build_all ran")
 
-    monkeypatch.setattr(sys.modules[MAIN_MODULE], "build_all", never)
+    monkeypatch.setattr("semanticlog.cli.run.build_all", never)
 
     assert main(["build", str(ocel), *flags, "-q"]) == EXIT_USAGE
     err = capsys.readouterr().err
@@ -149,7 +160,7 @@ def test_an_interrupted_command_exits_130(ocel, capsys, monkeypatch):
     def interrupt(_cfg):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(sys.modules[MAIN_MODULE], "build_all", interrupt)
+    monkeypatch.setattr("semanticlog.cli.run.build_all", interrupt)
 
     assert main(["build", str(ocel), "-q"]) == EXIT_INTERRUPTED
     assert capsys.readouterr().err.strip() == "semlog build: interrupted"

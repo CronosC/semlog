@@ -95,12 +95,6 @@ class BuildEnum(str, Enum):
         allowed = ", ".join(str(m.value) for m in cls)
         raise ConfigError(f"{key}: unknown value {value!r}. Choose from: {allowed}.")
 
-    @classmethod
-    def spellings(cls) -> list[str]:
-        """List the ways this enum can be written, for help text."""
-        values = [str(m.value) for m in cls]
-        return values + [m.name for m in cls if m.name not in values]
-
 
 class OWLProfile(BuildEnum):
     """OWL 2 profile the emitted ontology stays inside.

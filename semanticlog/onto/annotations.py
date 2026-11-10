@@ -579,10 +579,9 @@ class AnnotationWriter:
                 constraint name.
         """
         self.write("declare.hierarchy", hierarchy)
-        if self.sink.is_declared(vocab.TEMPLATE):
-            self.write("declare.template", vocab.TEMPLATE)
-            self.write("declare.activation", vocab.ACTIVATION)
-            self.write("declare.target", vocab.TARGET)
+        self.write("declare.template", vocab.TEMPLATE)
+        self.write("declare.activation", vocab.ACTIVATION)
+        self.write("declare.target", vocab.TARGET)
         for constraint in constraints:
             self.write(
                 "declare.constraint",

@@ -261,6 +261,24 @@ def test_rebuilding_the_same_run_does_not_warn_about_overwriting(
     assert "overwritten" not in caplog.text
 
 
+def test_a_rebuild_over_a_header_without_case_concepts_does_not_warn(
+    ocel, tmp_path, caplog
+):
+    common = ["build", str(ocel), "--output", str(tmp_path / "onto"), "-q"]
+    main([*common, "--case-concepts", "order"])
+    path = tmp_path / "onto" / "pipeline.ofn"
+    text = path.read_text(encoding="utf-8")
+    # A header written before the case concepts were recorded in it.
+    older = re.sub(r"Annotation\(<[^>]*caseConcepts> \"[^\n]*\"\)\n", "", text)
+    assert older != text
+    path.write_text(older, encoding="utf-8")
+    caplog.clear()
+
+    main([*common, "--case-concepts", "item"])
+
+    assert "overwritten" not in caplog.text
+
+
 def test_a_run_writes_one_log_file_per_input(ocel, tmp_path):
     cfg = resolve_run_config(
         {

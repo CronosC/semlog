@@ -11,28 +11,12 @@ from semanticlog.cli.settings_table import BUILD_DEFAULTS
 from semanticlog.core.enums import BuildEnum
 from semanticlog.core.errors import ConfigError
 
-RENAMED_KEYS: dict[str, str] = {
-    "order": "order_representations",
-    "data_representation": "attribute_representations",
-    "data_representations": "attribute_representations",
-    "inverse_representation": "inverse_representations",
-    "size_limit": "size_limit_mb",
-}
-
-# A setting that no longer exists, with the sentence that replaces it.
-REMOVED_KEYS: dict[str, str] = {
-    "shared_attributes": "Every attribute name is shared by the types that carry it.",
-}
-
 # `extends` is read by the loader and is not a build setting.
 _KNOWN_KEYS: tuple[str, ...] = (*sorted(BUILD_DEFAULTS), "extends")
 
 
 def _check_keys(raw: dict[str, Any], source: Path) -> None:
-    """Reject unknown settings and suggest the nearest one.
-
-    A key in `REMOVED_KEYS` is reported with what replaces it, a key in
-    `RENAMED_KEYS` is matched by name, the rest by similarity.
+    """Reject unknown settings and suggest the nearest one by spelling.
 
     Raises:
         ConfigError: If the file names a setting that does not exist.
@@ -40,17 +24,9 @@ def _check_keys(raw: dict[str, Any], source: Path) -> None:
     unknown = sorted(set(raw) - set(_KNOWN_KEYS))
     if not unknown:
         return
-    for key in unknown:
-        if key in REMOVED_KEYS:
-            raise ConfigError(
-                f"{source}: {key!r} was removed. {REMOVED_KEYS[key]} Delete the key."
-            )
     hints = []
     for key in unknown:
-        renamed = RENAMED_KEYS.get(key)
-        close = (
-            [renamed] if renamed else difflib.get_close_matches(key, _KNOWN_KEYS, n=1)
-        )
+        close = difflib.get_close_matches(key, _KNOWN_KEYS, n=1)
         hints.append(f"{key!r}" + (f" (did you mean {close[0]!r}?)" if close else ""))
     raise ConfigError(
         f"{source}: unknown setting(s): {', '.join(hints)}. Check the spelling, "

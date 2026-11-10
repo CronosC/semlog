@@ -17,13 +17,11 @@ from owlapy.owl_axiom import OWLObjectPropertyAssertionAxiom
 from owlapy.owl_ontology import SyncOntology
 from owlapy.owl_reasoner import SyncReasoner
 
-from semanticlog.core.enums import REASONER_BACKENDS as REASONER_BACKENDS
-from semanticlog.core.enums import OutputFormat
+from semanticlog.core.enums import REASONER_BACKENDS, OutputFormat
 from semanticlog.core.errors import (
     ConfigError,
     DependencyError,
     InputError,
-    SemlogError,
 )
 from semanticlog.onto.sinks.base import PARTIAL_SUFFIX
 
@@ -348,8 +346,6 @@ class Reasoner:
         """
         try:
             yield
-        except (SemlogError, FileNotFoundError):
-            raise
         except Exception as exc:
             others = ", ".join(b for b in REASONER_BACKENDS if b != self.backend)
             raise_java_error(

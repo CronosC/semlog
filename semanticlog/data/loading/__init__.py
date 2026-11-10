@@ -1,9 +1,9 @@
 """Readers that turn source event logs into an OCED store.
 
-`OCELLoader` reads OCEL 2.0, and `PM4PyLoader` reads it through PM4Py.
-`ClassicalLoader` reads flat single-case logs. `loader_for` picks the
-`OCELLoader` or the `ClassicalLoader` by file extension, and `load_and_clean` reads and
-cleans a log in one call.
+`OCELLoader` reads OCEL 2.0, and `PM4PyLoader` in `pm4py_loader` reads it
+through PM4Py. `ClassicalLoader` reads flat single-case logs. `loader_for`
+picks the `OCELLoader` or the `ClassicalLoader` by file extension, and
+`load_and_clean` reads and cleans a log in one call.
 """
 
 from collections.abc import Mapping, Sequence
@@ -21,7 +21,6 @@ from semanticlog.data.loading.classical_loader import (
 )
 from semanticlog.data.loading.ocel_frames import OCEL_SUFFIXES
 from semanticlog.data.loading.ocel_loader import OCELLoader
-from semanticlog.data.loading.pm4py_loader import PM4PyLoader
 from semanticlog.data.oced import OCEDStore
 
 LOG_SUFFIXES: frozenset[str] = OCEL_SUFFIXES | CLASSICAL_SUFFIXES
@@ -91,7 +90,6 @@ __all__ = [
     "Loader",
     "LoaderColumns",
     "OCELLoader",
-    "PM4PyLoader",
     "load_and_clean",
     "loader_for",
 ]

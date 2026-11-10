@@ -16,20 +16,17 @@ from semanticlog.cli.config import (
     resolve_log_inputs,
     resolve_run_config,
 )
-from semanticlog.cli.inspect import inspect_input
 from semanticlog.cli.logs import setup_console_logging
 from semanticlog.cli.parser import (
     _log_level,
     build_parser,
     flag_overrides,
 )
-from semanticlog.cli.run import (
-    build_all,
-    mine_declare,
-    reason,
-)
 from semanticlog.cli.settings_table import setting
 from semanticlog.core.errors import SemlogError
+
+# The command bodies are imported inside each command, so that `--help` and
+# argument errors do not load the builder, the loaders or the OWL API.
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +49,8 @@ def _cmd_build(args: argparse.Namespace) -> int:
         print(cfg.render())
         return EXIT_OK
 
+    from semanticlog.cli.run import build_all
+
     report = build_all(cfg)
     for input_path in report.built:
         print(cfg.ontology_path(input_path))
@@ -66,6 +65,8 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
 
     A log that cannot be read is logged and the rest are summarized.
     """
+    from semanticlog.cli.inspect import inspect_input
+
     inputs = resolve_log_inputs(flag_overrides(args), config_file=args.config)
     for message in inputs.warnings:
         logger.warning(message)
@@ -106,6 +107,8 @@ def _cmd_mine_declare(args: argparse.Namespace) -> int:
     for message in inputs.warnings:
         logger.warning(message)
 
+    from semanticlog.cli.run import mine_declare
+
     output = inputs.declare_file
     written = mine_declare(
         input_path=inputs.one_input(),
@@ -124,6 +127,8 @@ def _cmd_mine_declare(args: argparse.Namespace) -> int:
 
 def _cmd_reason(args: argparse.Namespace) -> int:
     """Materialize or consistency-check an existing ontology."""
+    from semanticlog.cli.run import reason
+
     onto_path = Path(args.onto)
     output_path = Path(args.output) if args.output else None
     consistent = reason(

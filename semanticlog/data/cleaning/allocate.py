@@ -56,7 +56,6 @@ def _allocate_kind(
     for name in sorted(names):
         free = registry.allocate(
             name,
-            f"{kind.word} {name!r}",
             prefix=KIND_PREFIX[kind],
             pending=pending,
             derives=derives,
@@ -70,7 +69,7 @@ def _allocate_kind(
 
 def allocate_schema_names(
     data: OCEDStore, log: RenameLog, bin_labels: Collection[str]
-) -> NameRegistry:
+) -> None:
     """Give every object type, attribute, relation and activity a free name.
 
     They are claimed in that order.
@@ -80,9 +79,6 @@ def allocate_schema_names(
         log: Rename log to append to.
         bin_labels: Bin labels the build will use. Each bin class name is
             reserved.
-
-    Returns:
-        The registry, holding every schema name the build will emit.
     """
     registry = NameRegistry()
     labels = list(bin_labels)
@@ -123,4 +119,3 @@ def allocate_schema_names(
         data.types(EntityKind.EVENT),
         partial(data.rename, EntityKind.EVENT),
     )
-    return registry

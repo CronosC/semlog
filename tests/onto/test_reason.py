@@ -10,10 +10,10 @@ from pathlib import Path
 import jpype
 import pytest
 
-from semanticlog.core.enums import IndividualKind, OWLProfile
+from semanticlog.core.enums import REASONER_BACKENDS, IndividualKind, OWLProfile
 from semanticlog.core.errors import ConfigError, DependencyError, InputError
 from semanticlog.core.vocabulary import DEFAULT_IRI
-from semanticlog.onto.reason import REASONER_BACKENDS, Reasoner, start_jvm
+from semanticlog.onto.reason import Reasoner, start_jvm
 from semanticlog.onto.sinks import InMemorySink
 from tests.support.rdf import read_rdf
 

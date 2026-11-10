@@ -8,7 +8,6 @@ written.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Sequence
 
 from semanticlog.core.checks import CheckReport, Fixed, raise_reports
@@ -20,8 +19,6 @@ from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind
 from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
-
-logger = logging.getLogger(__name__)
 
 
 def audit_build(

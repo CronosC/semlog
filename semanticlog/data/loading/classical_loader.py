@@ -12,7 +12,6 @@ import re
 from pathlib import Path
 
 import pandas as pd
-import pm4py as pm
 
 from semanticlog.core.errors import ConfigError, InputError
 from semanticlog.data.cleaning.names import free_name
@@ -101,6 +100,9 @@ def _read_xes(path: str) -> pd.DataFrame:
     Raises:
         InputError: If the file is not well-formed XML.
     """
+    # Imported here so that the CLI starts without loading PM4Py.
+    import pm4py as pm
+
     # lxml's XMLSyntaxError, which pm4py raises, subclasses SyntaxError.
     try:
         return pm.read_xes(path)

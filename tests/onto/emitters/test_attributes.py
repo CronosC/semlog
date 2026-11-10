@@ -188,7 +188,7 @@ def test_a_build_with_typed_attributes_is_consistent(awkward_store, tmp_path):
     path = tmp_path / "awkward.owl"
     OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings()).build_ontology(
         awkward_store
-    ).save(str(path))
+    ).require_onto().save(str(path))
 
     assert Reasoner(str(path)).check() is True
 

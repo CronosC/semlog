@@ -338,7 +338,6 @@ def test_a_command_that_reads_logs_takes_its_settings_from_a_build_config(
     assert inputs.declare_file == "out/constraints.csv"
     assert inputs.constraints == ["Response", "Precedence"]
     assert (inputs.constraint_support, inputs.itemset_support) == (0.1, 0.9)
-    assert inputs.config_file == path
 
 
 def test_a_command_that_reads_one_log_rejects_an_input_of_several(tmp_path, ocel):

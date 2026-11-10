@@ -138,40 +138,6 @@ CAUSED_BY = Term("caused_by")
 DF = Term("df")
 EF = Term("ef")
 
-SCHEMA_CLASSES: frozenset[str] = frozenset(
-    {
-        OBJECT,
-        EVENT,
-        ATTRIBUTE,
-        TIME,
-        OBJECT_ATTRIBUTE,
-        EVENT_ATTRIBUTE,
-        ATTRIBUTE_CHANGE,
-        DECLARE_CONSTRAINT,
-    }
-)
-
-_INVERTIBLE_PROPERTIES: frozenset[str] = frozenset(
-    {
-        OBSERVED_AT,
-        EVENT_OBJECT_RELATION,
-        OBJECT_OBJECT_RELATION,
-        HAS_ATTRIBUTE,
-        HAS_ATTRIBUTE_CHANGE,
-        ATTRIBUTE_CHANGE_VALUE,
-        CHANGED_AT,
-        CAUSED_BY,
-        DF,
-        EF,
-    }
-)
-
-SCHEMA_PROPERTIES: frozenset[str] = _INVERTIBLE_PROPERTIES | {
-    HAS_DATA_VALUE,
-    TIMESTAMP,
-}
-
-
 INVERSE_PREFIX = "inv_"
 
 _EXPLICIT_INVERSES: dict[Term, Term] = {
@@ -206,16 +172,9 @@ TEMPLATE = Term("template")
 ACTIVATION = Term("activation")
 TARGET = Term("target")
 
-SCHEMA_ANNOTATIONS: frozenset[str] = frozenset({TEMPLATE, ACTIVATION, TARGET})
-"""The annotation properties a build may attach to a DECLARE constraint class."""
-
 BUILD_TOOL = Term("buildTool")
 BUILD_CONFIGURATION = Term("buildConfiguration")
 CASE_CONCEPTS = Term("caseConcepts")
-
-PROVENANCE_ANNOTATIONS: frozenset[str] = frozenset(
-    {BUILD_TOOL, BUILD_CONFIGURATION, CASE_CONCEPTS}
-)
 
 
 def start_class(case_concept: str) -> str:

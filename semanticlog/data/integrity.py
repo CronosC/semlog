@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from semanticlog.core.checks import CheckReport, Fixed, first_five, raise_reports
+from semanticlog.core.checks import CheckReport, Fixed, first_five
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import EntityKind, RelationKind
 
@@ -123,12 +123,3 @@ def check_integrity(data: ReadableStore) -> CheckReport | None:
         advice="Fix the source data, or drop the rows before building.",
         about=Fixed.INPUT,
     )
-
-
-def require_integrity(data: ReadableStore) -> None:
-    """Raise unless the store passes `check_integrity`.
-
-    Raises:
-        InputError: Listing every violation found.
-    """
-    raise_reports([check_integrity(data)])

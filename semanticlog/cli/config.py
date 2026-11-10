@@ -17,14 +17,12 @@ from semanticlog.cli.settings_table import (
     BUILD_DEFAULTS,
     BUILD_SETTINGS,
     COLUMN_KEYS,
-    DECLARE_MINING_KEYS,
-    LOG_INPUT_KEYS,
     Setting,
     read_setting,
     setting,
     settings_targeting,
 )
-from semanticlog.cli.toml import RENAMED_KEYS, load_config_file, toml_value
+from semanticlog.cli.toml import load_config_file, toml_value
 from semanticlog.core.enums import OCELExtension, OutputFormat
 from semanticlog.core.errors import ConfigError
 from semanticlog.core.vocabulary import default_iri
@@ -34,20 +32,10 @@ from semanticlog.onto.inputs import BuildInputs
 from semanticlog.onto.settings import OntoBuildSettings
 
 __all__ = [
-    "BUILD_DEFAULTS",
-    "BUILD_SETTINGS",
-    "COLUMN_KEYS",
-    "DECLARE_MINING_KEYS",
-    "LOG_INPUT_KEYS",
-    "RENAMED_KEYS",
     "LogInputs",
     "RunConfig",
-    "Setting",
-    "load_config_file",
     "resolve_log_inputs",
     "resolve_run_config",
-    "setting",
-    "settings_targeting",
 ]
 
 _ANNOTATION_KEYS = {"label", "comment"}
@@ -117,7 +105,6 @@ class LogInputs:
             discovery proposes.
         constraint_support: Share of traces a constraint has to hold in.
         itemset_support: Share of traces an activity set has to occur in.
-        config_file: Config these came from.
         warnings: Warnings to log before the command runs.
     """
 
@@ -130,7 +117,6 @@ class LogInputs:
     constraints: list[str] | None
     constraint_support: float
     itemset_support: float
-    config_file: Path | None = None
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
     def one_input(self) -> Path:
@@ -178,7 +164,6 @@ def resolve_log_inputs(
         constraints=read("constraints"),
         constraint_support=read("constraint_support"),
         itemset_support=read("itemset_support"),
-        config_file=None if config_file is None else Path(config_file),
         warnings=tuple(_column_warnings(merged, inputs)),
     )
 

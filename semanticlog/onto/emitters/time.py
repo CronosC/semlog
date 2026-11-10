@@ -64,5 +64,4 @@ class TimeEmitter(Emitter):
                 "event",
                 "time_str",
                 (IndividualKind.EVENT, IndividualKind.TIME),
-                inverse_name=vocab.OBSERVES,
             )

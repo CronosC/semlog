@@ -31,8 +31,6 @@ from semanticlog.data.tables import EntityKind, RelationKind
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 PIPELINE_OCEL = FIXTURES / "pipeline.jsonocel"
 
-_DAY = datetime(2024, 1, 1, 9, 0)
-
 
 def _day(n: int) -> datetime:
     """Return day n of January 2024 at 09:00."""

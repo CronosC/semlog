@@ -6,7 +6,6 @@ import pandas as pd
 import pytest
 
 from semanticlog.core.errors import InputError, SemlogError
-from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, EntityTable, RelationKind, Relations
 
@@ -192,25 +191,6 @@ def test_a_negative_count_of_common_object_types_is_a_programming_error(oced):
     assert not isinstance(excinfo.value, SemlogError)
 
 
-def test_an_iri_under_the_base_maps_back_to_its_source_name():
-    store = OCEDStore()
-    store.backmap = {"id": {"o__1": "o #1"}}
-
-    assert store.get_original("id", f"{DEFAULT_IRI}o__1") == "o #1"
-    assert store.get_original(
-        "id", "https://x.org/#o__1", base_iri="https://x.org/#"
-    ) == ("o #1")
-    assert store.get_original("id", "o_2") is None
-
-
-def test_get_original_strips_a_kind_path():
-    store = OCEDStore()
-    store.backmap = {"id": {"o__1": "o #1"}}
-
-    assert store.get_original("id", f"{DEFAULT_IRI}object/o__1") == "o #1"
-    assert store.get_original("id", "object/o__1") == "o #1"
-
-
 # --------------------------------------------------------------------------
 # Renaming
 # --------------------------------------------------------------------------
@@ -320,7 +300,7 @@ def test_only_an_object_to_object_relation_names_its_source_types(
         (
             "touches",
             {},
-            "'touches' already exists in the event-to-object family. Pass overwrite=True",
+            "'touches' already exists in the event-to-object family. Give it another name",
         ),
         ("x", {"to_type": ["A", "Z"]}, r"names 1 unknown object type\(s\): \['Z'\]"),
         (
@@ -334,14 +314,6 @@ def test_only_an_object_to_object_relation_names_its_source_types(
 def test_a_relation_the_store_cannot_hold_is_rejected(oced, name, kwargs, message):
     with pytest.raises(InputError, match=message):
         _add_relation(oced, name, **kwargs)
-
-
-def test_a_relation_added_with_overwrite_replaces_the_one_of_that_name(oced):
-    replacement = pd.DataFrame({"eid": ["e2"], "oid": ["a2"]})
-
-    _add_relation(oced, "touches", data=replacement, overwrite=True)
-
-    assert oced.get_relation("touches").data is replacement
 
 
 def test_an_unknown_relation_is_rejected_listing_both_families(oced):

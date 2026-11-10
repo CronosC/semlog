@@ -33,15 +33,3 @@ def test_a_value_is_named_under_its_column_and_follows_the_column_when_renamed()
     log.rename_value_column("event", "attribute_event")
 
     assert log.backmap() == {"value": {"attribute_event.by_hand": "by hand"}}
-
-
-def test_a_value_rewritten_again_keeps_its_source_form():
-    log = RenameLog()
-    log.record_value("status", "d_f", "d f")
-
-    log.rename_value("status", "d_f", "value_d_f")
-    log.rename_value("status", "df", "value_df")
-
-    assert log.backmap() == {
-        "value": {"status.value_d_f": "d f", "status.value_df": "df"}
-    }

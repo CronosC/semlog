@@ -31,11 +31,6 @@ class ReadableStore(Protocol):
     def ocel_mode(self) -> bool:
         """Whether this store may hold attribute change history."""
 
-    def get_original(
-        self, kind: str, iri_or_local_name: str, base_iri: str = ...
-    ) -> str | None:
-        """Look up what a name in the store was called in the source log."""
-
     def tables(self, *, changes: bool = True) -> Iterator[TableView]:
         """Yield every table in the store, with its structural columns named."""
 

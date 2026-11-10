@@ -12,7 +12,7 @@ import re
 import pytest
 
 from semanticlog import __version__
-from semanticlog.cli import build_parser
+from semanticlog.cli import EXIT_USAGE, build_parser, main
 from semanticlog.cli.parser import _log_level, flag_overrides
 from semanticlog.cli.settings_table import BUILD_DEFAULTS, BUILD_SETTINGS
 from semanticlog.core.errors import ConfigError
@@ -121,14 +121,21 @@ def test_a_superseded_flag_is_rejected(argv, capsys):
     assert "unrecognized arguments" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize(
-    ("value", "problem"), [("50", "above 0 and up to 1"), ("half", "expected a number")]
-)
-def test_a_support_flag_that_is_not_a_share_is_rejected(value, problem, capsys):
+def test_a_support_flag_that_is_not_a_number_is_rejected(capsys):
     with pytest.raises(SystemExit):
-        parse("mine-declare", "log.json", "--constraint-support", value)
+        parse("mine-declare", "log.json", "--constraint-support", "half")
 
-    assert problem in capsys.readouterr().err
+    assert "invalid float value: 'half'" in capsys.readouterr().err
+
+
+def test_a_support_flag_that_is_not_a_share_exits_two(ocel, capsys):
+    argv = ["mine-declare", str(ocel), "--constraint-support", "50", "-q"]
+
+    assert main(argv) == EXIT_USAGE
+    assert (
+        "--constraint-support: expected a share of the traces above 0 and up to 1"
+        in (capsys.readouterr().err)
+    )
 
 
 @pytest.mark.parametrize(

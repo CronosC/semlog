@@ -1,5 +1,4 @@
 import pandas as pd
-import pytest
 
 from semanticlog.core.enums import IndividualKind, InverseRepresentation
 from semanticlog.onto.annotations import AnnotationWriter
@@ -30,18 +29,14 @@ def test_without_implicit_inverses_only_the_property_itself_is_asserted(
     ]
 
 
-@pytest.mark.parametrize(
-    ("inverse_name", "inverse"),
-    [(None, "inv_concerns"), ("concerned_by", "concerned_by")],
-)
 def test_implicit_inverses_assert_the_reversed_pairs_under_the_inverse(
-    recording_sink, inverse_name, inverse
+    recording_sink,
 ):
     sink = recording_sink()
     emitter = _emitter(sink, InverseRepresentation.IMPLICIT)
-    emitter.assert_relations("concerns", PAIRS, "eid", "oid", KINDS, inverse_name)
+    emitter.assert_relations("concerns", PAIRS, "eid", "oid", KINDS)
 
-    assert [c for c in sink.of_kind("relation") if c[1] == inverse] == [
-        ("relation", inverse, "o1", "e1"),
-        ("relation", inverse, "o1", "e2"),
+    assert [c for c in sink.of_kind("relation") if c[1] == "inv_concerns"] == [
+        ("relation", "inv_concerns", "o1", "e1"),
+        ("relation", "inv_concerns", "o1", "e2"),
     ]

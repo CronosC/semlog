@@ -27,11 +27,6 @@ class RenameKind(str, Enum):
     ATTRIBUTE = "attribute"
     ID = "id"
 
-    @property
-    def word(self) -> str:
-        """The word a message uses for one name of this kind."""
-        return WORDS[self.value][0]
-
 
 WORDS: dict[str, tuple[str, str]] = {
     RenameKind.ACTIVITY.value: ("activity", "activities"),
@@ -54,10 +49,6 @@ class RenameLog:
     def record_value(self, column: str, value: str, original: str) -> None:
         """Record the source form of one cleaned attribute value."""
         self._values[(column, value)] = original
-
-    def rename_value(self, column: str, old: str, new: str) -> None:
-        """Record that a value was rewritten again, keeping its source form."""
-        self._values[(column, new)] = self._values.pop((column, old), old)
 
     def rename_value_column(self, old: str, new: str) -> None:
         """Move the values of a renamed column under its new name."""

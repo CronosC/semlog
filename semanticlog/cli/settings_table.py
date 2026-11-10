@@ -37,30 +37,9 @@ from semanticlog.onto.settings import (
 _SETTINGS_DEFAULTS: dict[str, Any] = OntoBuildSettings().to_dict()
 
 
-def settings_default(key: str) -> Any:
-    """Return the default of one `OntoBuildSettings` field, as a config writes it.
-
-    Args:
-        key: Field name, which is also its TOML key.
-
-    Returns:
-        The value, with an enum as its spelling and a tuple as a list.
-
-    Raises:
-        KeyError: If the settings hold no such field.
-    """
-    return _SETTINGS_DEFAULTS[key]
-
-
 def enum_choices(enum_cls: type[BuildEnum]) -> str:
-    """Return the spellings of an enum for help text, one per member."""
-    seen: set[str] = set()
-    kept: list[str] = []
-    for spelling in enum_cls.spellings():
-        if spelling.casefold() not in seen:
-            seen.add(spelling.casefold())
-            kept.append(spelling)
-    return " | ".join(kept)
+    """Return the values of an enum for help text."""
+    return " | ".join(str(member.value) for member in enum_cls)
 
 
 Reader = Callable[[Any, str], Any]
@@ -113,17 +92,6 @@ def _as_support(value: Any, key: str) -> float:
     if not 0 < value <= 1:
         raise ConfigError(f"{key}: expected {_SUPPORT_RANGE}, got {value}.")
     return float(value)
-
-
-def _support_flag(value: str) -> float:
-    """Read a support threshold flag. Raises `ArgumentTypeError`."""
-    try:
-        share = float(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"expected a number, got {value!r}") from None
-    if not 0 < share <= 1:
-        raise argparse.ArgumentTypeError(f"expected {_SUPPORT_RANGE}, got {share}")
-    return share
 
 
 def _as_str(value: Any, key: str) -> str:
@@ -345,7 +313,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         "tbox_iri",
-        settings_default("tbox_iri"),
+        _SETTINGS_DEFAULTS["tbox_iri"],
         _as_tbox_iri,
         "settings",
         help=(
@@ -356,18 +324,18 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         "profile",
-        settings_default("profile"),
+        _SETTINGS_DEFAULTS["profile"],
         _enum_of(OWLProfile),
         "settings",
         help=(
             f"OWL profile: {enum_choices(OWLProfile)} "
-            f"(default: {settings_default('profile')})."
+            f"(default: {_SETTINGS_DEFAULTS['profile']})."
         ),
         argparse={"metavar": "PROFILE"},
     ),
     Setting(
         "order_representations",
-        settings_default("order_representations"),
+        _SETTINGS_DEFAULTS["order_representations"],
         _list_of(_enum_of(EventOrderRepresentation)),
         "settings",
         help=(
@@ -448,7 +416,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         "attribute_representations",
-        settings_default("attribute_representations"),
+        _SETTINGS_DEFAULTS["attribute_representations"],
         _list_of(_enum_of(AttributeRepresentation)),
         "settings",
         help=(
@@ -463,7 +431,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         "bins",
-        settings_default("bins"),
+        _SETTINGS_DEFAULTS["bins"],
         _as_int,
         "settings",
         help=f"Bin count for the binning modes (default: {DEFAULT_BINS}).",
@@ -471,7 +439,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         "bin_labels",
-        settings_default("bin_labels"),
+        _SETTINGS_DEFAULTS["bin_labels"],
         _list_of(_as_str),
         "settings",
         help=(
@@ -482,7 +450,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         "inverse_representations",
-        settings_default("inverse_representations"),
+        _SETTINGS_DEFAULTS["inverse_representations"],
         _list_of(_enum_of(InverseRepresentation)),
         "settings",
         help=(
@@ -495,7 +463,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         "ocel_extensions",
-        settings_default("ocel_extensions"),
+        _SETTINGS_DEFAULTS["ocel_extensions"],
         _list_of(_enum_of(OCELExtension)),
         "settings",
         help=(f"OCEL 2.0 extensions: {enum_choices(OCELExtension)} (default: none)."),
@@ -514,7 +482,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         "derive_annotations",
-        settings_default("derive_annotations"),
+        _SETTINGS_DEFAULTS["derive_annotations"],
         _as_bool,
         "settings",
         help=(
@@ -552,7 +520,7 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         _as_support,
         "run",
         help="Minimum per-constraint support, above 0 and up to 1 (default: 0.5).",
-        argparse={"type": _support_flag, "metavar": "T"},
+        argparse={"type": float, "metavar": "T"},
     ),
     Setting(
         "itemset_support",
@@ -560,11 +528,11 @@ BUILD_SETTINGS: tuple[Setting, ...] = (
         _as_support,
         "run",
         help="Minimum itemset support, above 0 and up to 1 (default: 0.5).",
-        argparse={"type": _support_flag, "metavar": "T"},
+        argparse={"type": float, "metavar": "T"},
     ),
     Setting(
         "max_ef_pairs",
-        settings_default("max_ef_pairs"),
+        _SETTINGS_DEFAULTS["max_ef_pairs"],
         _int_from(0),
         "settings",
         help=(

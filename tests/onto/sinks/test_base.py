@@ -496,9 +496,9 @@ def test_a_class_and_an_event_of_one_name_are_two_entities(real_sink, read_back)
 @pytest.mark.parametrize(
     ("kwargs", "match"),
     [
-        ({"range_class": ["double", "integer"], "data_prop": True}, "is a list"),
+        ({"range_class": ["decimal", "integer"], "data_prop": True}, "is a list"),
         ({"range_class": "order", "data_prop": True}, "is not a datatype"),
-        ({"range_class": "double"}, "is a datatype"),
+        ({"range_class": "decimal"}, "is a datatype"),
         ({"data_prop": True, "create_inverse": True}, "cannot have an inverse"),
         ({"inverse_name": "p_inv"}, "inverse_name='p_inv' without create_inverse"),
         ({"axiomatic_inverse": True}, "axiomatic_inverse=True without"),
@@ -512,9 +512,9 @@ def test_property_arguments_that_contradict_each_other_are_rejected(
 
 
 def test_a_data_property_range_is_written_as_its_datatype(sink):
-    sink.add_property("has_score", range_class="double", data_prop=True)
+    sink.add_property("has_score", range_class="decimal", data_prop=True)
 
-    assert sink.of_kind("range") == [("range", "has_score", ["double"], True)]
+    assert sink.of_kind("range") == [("range", "has_score", ["decimal"], True)]
 
 
 def test_the_inverse_of_a_parent_without_one_is_declared_before_use(sink):

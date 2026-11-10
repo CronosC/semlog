@@ -92,23 +92,3 @@ def test_aborting_leaves_no_file(streaming, tmp_path):
     streaming.abort()
 
     assert list(tmp_path.iterdir()) == []
-
-
-def test_leaving_the_context_writes_the_file(path):
-    with StreamingSink(str(path), DEFAULT_IRI, PROFILE) as sink:
-        sink.add_class("order", source="a build step")
-
-    assert [p.name for p in path.parent.iterdir()] == ["streamed.ofn"]
-    assert path.read_text(encoding="utf-8").rstrip().endswith(")")
-
-
-def test_an_exception_inside_the_context_leaves_no_file(path):
-    def failing_build() -> None:
-        with StreamingSink(str(path), DEFAULT_IRI, PROFILE) as sink:
-            sink.add_class("order", source="a build step")
-            raise RuntimeError("build failed")
-
-    with pytest.raises(RuntimeError, match="build failed"):
-        failing_build()
-
-    assert list(path.parent.iterdir()) == []

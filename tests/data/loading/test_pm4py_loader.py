@@ -374,14 +374,6 @@ def _status_of_o1(path: str, extensions=()) -> str:
     return orders.data.set_index("ocel:oid").loc["o1", "status"]
 
 
-def test_an_object_carries_the_latest_attribute_value(tmp_path):
-    path = _timed_values_log(
-        tmp_path,
-        [("2024-01-01T09:00:00Z", "pending"), ("2024-01-05T09:00:00Z", "shipped")],
-    )
-    assert _status_of_o1(path) == "shipped"
-
-
 def test_the_latest_value_is_chosen_by_timestamp_not_file_order(tmp_path):
     path = _timed_values_log(
         tmp_path,

@@ -38,7 +38,6 @@ class TBoxEmitter(Emitter):
             range_class=vocab.TIME,
             create_inverse=has_inverses,
             axiomatic_inverse=axiomatic,
-            inverse_name=vocab.OBSERVES if has_inverses else None,
             source="the TBox",
         )
         self.sink.add_property(
@@ -63,7 +62,6 @@ class TBoxEmitter(Emitter):
             range_class=vocab.ATTRIBUTE,
             create_inverse=has_inverses,
             axiomatic_inverse=axiomatic,
-            inverse_name=vocab.ATTRIBUTE_OF if has_inverses else None,
             source="the TBox",
         )
         self.sink.add_property(vocab.HAS_DATA_VALUE, data_prop=True, source="the TBox")

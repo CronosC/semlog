@@ -113,7 +113,7 @@ def inspect_input(
     renamed = {
         name: original
         for name, kind in schema_names
-        if (original := data.get_original(kind.value, name)) is not None
+        if (original := data.backmap.get(kind.value, {}).get(name)) is not None
         and original != name
     }
 

@@ -29,12 +29,11 @@ BOOLEAN = "boolean"
 DATE = "date"
 DATE_TIME = "dateTime"
 DECIMAL = "decimal"
-DOUBLE = "double"
 INTEGER = "integer"
 STRING = "string"
 
 OWL_DATATYPES: frozenset[str] = frozenset(
-    {INTEGER, DECIMAL, DOUBLE, BOOLEAN, DATE_TIME, STRING}
+    {INTEGER, DECIMAL, BOOLEAN, DATE_TIME, STRING}
 )
 """The datatypes a data property may be declared to range over."""
 

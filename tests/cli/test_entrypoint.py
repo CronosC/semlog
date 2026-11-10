@@ -32,13 +32,6 @@ def run(*argv: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_the_console_script_builds_an_ontology(ocel, tmp_path):
-    finished = run("build", str(ocel), "--output", str(tmp_path), "-q")
-
-    assert finished.returncode == 0, finished.stderr
-    assert (tmp_path / "pipeline.ofn").is_file()
-
-
 def test_the_committed_example_builds(tmp_path):
     finished = run(
         "build", "--config", str(EXAMPLE_CONFIG), "--output", str(tmp_path), "-q"

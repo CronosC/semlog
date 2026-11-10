@@ -14,9 +14,7 @@ from types import MappingProxyType
 
 import pandas as pd
 
-from semanticlog.core.enums import IndividualKind
 from semanticlog.core.errors import InputError
-from semanticlog.core.vocabulary import DEFAULT_IRI as _DEFAULT_IRI
 from semanticlog.data.readable import ReadableStore
 from semanticlog.data.tables import (
     OCEL_PREFIX,
@@ -62,26 +60,6 @@ class OCEDStore:
     @backmap.setter
     def backmap(self, mapping: dict[str, dict[str, str]]) -> None:
         self._backmap = mapping
-
-    def get_original(
-        self, kind: str, iri_or_local_name: str, base_iri: str = _DEFAULT_IRI
-    ) -> str | None:
-        """Look up what a name in the store was called in the source log.
-
-        Args:
-            kind: The kind of name, a key of `backmap`.
-            iri_or_local_name: A local name, or a full IRI to strip first. The
-                path of an individual kind below the base is stripped too.
-
-        Returns:
-            The original name, or None if the name was never changed.
-        """
-        local_name = iri_or_local_name.removeprefix(base_iri)
-        for individual in IndividualKind:
-            if local_name.startswith(individual.path):
-                local_name = local_name.removeprefix(individual.path)
-                break
-        return self._backmap.get(kind, {}).get(local_name)
 
     @property
     def ocel_mode(self) -> bool:
@@ -282,7 +260,6 @@ class OCEDStore:
         to_id: str,
         to_type: Sequence[str],
         from_type: Sequence[str] | None = None,
-        overwrite: bool = False,
     ) -> None:
         """Add a named relation of one family.
 
@@ -295,14 +272,11 @@ class OCEDStore:
             from_type: Object types the sources may belong to. Required for an
                 object-to-object relation, not allowed for an event-to-object
                 relation.
-            overwrite: Replace a relation of this name in the same family.
 
         Raises:
             ValueError: If `kind` is `RelationKind.ALL`.
             InputError: If `from_type` is missing or misplaced, the name is
-                taken by the other family, the name exists in this one and
-                overwrite is off, a named type is unknown, or a named column
-                is missing.
+                taken, a named type is unknown, or a named column is missing.
         """
         if kind is RelationKind.ALL:
             raise ValueError(
@@ -321,9 +295,7 @@ class OCEDStore:
 
         sources = list(from_type or [])
         targets = list(to_type)
-        self._check_relation(
-            kind, name, data, from_id, to_id, sources + targets, overwrite
-        )
+        self._check_relation(kind, name, data, from_id, to_id, sources + targets)
         self._relations.of(kind)[name] = RelationTable(
             from_id=from_id,
             to_id=to_id,
@@ -340,26 +312,22 @@ class OCEDStore:
         from_id: str,
         to_id: str,
         object_types: list[str],
-        overwrite: bool,
     ) -> None:
         """Raise for a relation the store cannot hold.
 
         Raises:
-            InputError: If the name is taken by the other family, the name
-                exists in this one and overwrite is off, a named object type
-                is unknown, or a named column is missing.
+            InputError: If the name is taken by either family, a named object
+                type is unknown, or a named column is missing.
         """
-        other = RelationKind.O2O if kind is RelationKind.E2O else RelationKind.E2O
-        if name in self._relations.of(other):
-            raise InputError(
-                f"Relation {name!r} already exists in the {other.word} family. "
-                f"Give it another name."
-            )
-        if not overwrite and name in self._relations.of(kind):
-            raise InputError(
-                f"Relation {name!r} already exists in the {kind.word} family. "
-                f"Pass overwrite=True to replace it."
-            )
+        for family in (
+            kind,
+            RelationKind.O2O if kind is RelationKind.E2O else RelationKind.E2O,
+        ):
+            if name in self._relations.of(family):
+                raise InputError(
+                    f"Relation {name!r} already exists in the {family.word} family. "
+                    f"Give it another name."
+                )
         objects = self._entities[EntityKind.OBJECT]
         unknown = set(object_types) - set(objects)
         if unknown:

@@ -177,14 +177,12 @@ class OrderEmitter(Emitter):
         self.annotations.ef_property(case_concept, ef_rel)
 
         if self.settings.emits_ef_axiomatic:
-            self._axiomatize_eventually_follows(df_rel, ef_rel, events)
+            self._axiomatize_eventually_follows(df_rel, ef_rel)
 
         if self.settings.emits_ef_explicit:
             self._materialize_eventually_follows(ef_rel, events)
 
-    def _axiomatize_eventually_follows(
-        self, df_rel: str, ef_rel: str, events: pd.DataFrame
-    ) -> None:
+    def _axiomatize_eventually_follows(self, df_rel: str, ef_rel: str) -> None:
         """Declare eventually-follows transitive with directly-follows below it.
 
         With implicit inverses and no inverse axiom, the inverse properties

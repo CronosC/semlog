@@ -45,11 +45,3 @@ class BuildResult:
                 "memory. Read it from that file, or build with streaming off."
             )
         return self.onto
-
-    def save(self, path: str) -> None:
-        """Save the ontology to a file.
-
-        Raises:
-            ValueError: If the build streamed to a file.
-        """
-        self.require_onto().save(path)

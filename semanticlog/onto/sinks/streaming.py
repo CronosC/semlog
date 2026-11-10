@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from types import TracebackType
 from typing import TextIO
 
 from semanticlog.core import vocabulary as vocab
@@ -49,20 +48,6 @@ class StreamingSink(AxiomSink):
         self.path = path
         self._partial = Path(path + PARTIAL_SUFFIX)
         self._file: TextIO | None = open(self._partial, "w", encoding="utf-8")
-
-    def __enter__(self) -> StreamingSink:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        if exc is None:
-            self.close()
-        else:
-            self.abort()
 
     @property
     def _out(self) -> TextIO:

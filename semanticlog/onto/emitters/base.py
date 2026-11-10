@@ -67,7 +67,6 @@ class Emitter:
         from_key: str,
         to_key: str,
         kinds: tuple[IndividualKind, IndividualKind],
-        inverse_name: str | None = None,
     ) -> None:
         """Assert an object property for every row of a table.
 
@@ -80,16 +79,15 @@ class Emitter:
             from_key: Column holding the subject.
             to_key: Column holding the target.
             kinds: The kind of every subject and the kind of every target.
-            inverse_name: Property for the reversed pairs. Defaults to
-                `sink.inverse_name(prop)`.
         """
         if not self.settings.implicit_inverses:
             self.sink.assert_relations(prop, clean_pairs(df, from_key, to_key), kinds)
             return
         pairs = list(clean_pairs(df, from_key, to_key))
         self.sink.assert_relations(prop, pairs, kinds)
-        inverse = inverse_name or self.sink.inverse_name(prop)
-        self.sink.assert_relations(inverse, reversed_pairs(pairs), kinds[::-1])
+        self.sink.assert_relations(
+            self.sink.inverse_name(prop), reversed_pairs(pairs), kinds[::-1]
+        )
 
     def assert_data(
         self,

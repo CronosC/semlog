@@ -12,6 +12,7 @@ import logging
 import textwrap
 from collections.abc import Iterable
 
+from semanticlog import __version__
 from semanticlog.cli.settings_table import (
     BUILD_DEFAULTS,
     BUILD_SETTINGS,
@@ -31,13 +32,6 @@ _BUILD_ONLY_KEYS: tuple[str, ...] = tuple(
 )
 
 _INSPECT_EXCLUDED: tuple[str, ...] = ("case_concepts", "auto_case_concepts")
-
-
-def semlog_version() -> str:
-    """Return the package version."""
-    from semanticlog import __version__
-
-    return __version__
 
 
 _EPILOG = textwrap.dedent("""\
@@ -63,14 +57,12 @@ def _add_setting_flag(
 ) -> None:
     """Add the flag of one setting, with its own help unless `help` is given."""
     declared = setting(key)
-    if declared.argparse is None:
-        return
     parser.add_argument(
         declared.flag,
         dest=key,
         default=None,
         help=help or declared.help,
-        **declared.argparse,
+        **(declared.argparse or {}),
     )
 
 
@@ -242,9 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument(
-        "--version", action="version", version=f"semlog {semlog_version()}"
-    )
+    parser.add_argument("--version", action="version", version=f"semlog {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
     _add_build_parser(sub, parent)
     _add_inspect_parser(sub, parent)

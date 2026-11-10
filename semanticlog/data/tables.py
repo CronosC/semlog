@@ -39,11 +39,6 @@ class EntityKind(str, Enum):
             IndividualKind.EVENT if self is EntityKind.EVENT else IndividualKind.OBJECT
         )
 
-    @property
-    def plural(self) -> str:
-        """The plural word for this kind in a message, `activities` or `object types`."""
-        return "activities" if self is EntityKind.EVENT else "object types"
-
 
 class RelationKind(str, Enum):
     """Which family of relations a lookup is about.

@@ -1,8 +1,8 @@
 """The registry of the schema names a build emits.
 
-Classes and properties share one namespace. `NameRegistry` records the owner
-of each name and returns a free name to an owner whose name is taken. Claiming
-a name also claims every name the build derives from it.
+Classes and properties share one namespace. `NameRegistry` records each
+claimed name and returns a free name to a claimant whose name is taken.
+Claiming a name also claims every name the build derives from it.
 """
 
 from __future__ import annotations
@@ -10,8 +10,6 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Iterable, Iterator
 
 from semanticlog.core.vocabulary import is_safe_local_name
-
-UPPER_SCHEMA = "the upper schema"
 
 
 def candidates(name: str, prefix: str) -> Iterator[str]:
@@ -30,38 +28,17 @@ def candidates(name: str, prefix: str) -> Iterator[str]:
 
 
 class NameRegistry:
-    """The owner of each schema name a build will emit.
+    """The schema names a build will emit.
 
     Individuals are not registered. Each kind has a path of its own.
-
-    Args:
-        reserved: Names no claimant may take.
-        owner: The owner recorded for the reserved names.
     """
 
-    def __init__(self, reserved: Iterable[str] = (), owner: str = UPPER_SCHEMA) -> None:
-        self._owners: dict[str, str] = dict.fromkeys(reserved, owner)
-
-    def __contains__(self, name: object) -> bool:
-        return name in self._owners
-
-    @property
-    def names(self) -> frozenset[str]:
-        """Every name claimed so far."""
-        return frozenset(self._owners)
-
-    def owner(self, name: str) -> str | None:
-        """Return the owner of a name, or None if it is free."""
-        return self._owners.get(name)
-
-    def starting_with(self, prefix: str) -> frozenset[str]:
-        """Return the claimed names that start with a prefix."""
-        return frozenset(name for name in self._owners if name.startswith(prefix))
+    def __init__(self) -> None:
+        self._claimed: set[str] = set()
 
     def allocate(
         self,
         name: str,
-        owner: str,
         *,
         prefix: str,
         pending: Collection[str] = (),
@@ -94,11 +71,10 @@ class NameRegistry:
             if not accepts(candidate):
                 return False
             return all(
-                claim not in self._owners and (claim == name or claim not in pending)
+                claim not in self._claimed and (claim == name or claim not in pending)
                 for claim in wanted(candidate)
             )
 
         free = next(c for c in candidates(name, prefix) if fits(c))
-        for claim in wanted(free):
-            self._owners[claim] = owner
+        self._claimed.update(wanted(free))
         return free

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_BINS = 5
 DEFAULT_BIN_LABELS = ("very_low", "low", "average", "high", "very_high")
 
-DEFAULT_MIN_VALUES = 10
+_MIN_VALUES = 10
 
 # The interquartile range of a normal distribution in standard deviations.
 _IQR_PER_SD = 1.349
@@ -93,7 +93,6 @@ def fit_equal_bins(
     values: pd.Series,
     bins: int = DEFAULT_BINS,
     labels: Sequence[str] = DEFAULT_BIN_LABELS,
-    min_values: int = DEFAULT_MIN_VALUES,
 ) -> Binning | None:
     """Fit equal-frequency bins.
 
@@ -103,7 +102,6 @@ def fit_equal_bins(
     Args:
         values: Every value the attribute takes.
         labels: One label per bin, in order from low to high.
-        min_values: Cardinality below which the attribute is not binned.
 
     Returns:
         The fitted cut, or None when the attribute has too few distinct values
@@ -115,7 +113,7 @@ def fit_equal_bins(
     """
     check_bins(bins, labels)
     clean = values.dropna()
-    if clean.nunique() <= max(bins, min_values):
+    if clean.nunique() <= max(bins, _MIN_VALUES):
         return None
     try:
         edges = pd.qcut(clean, q=bins, duplicates="drop")
@@ -134,7 +132,6 @@ def fit_dist_bins(
     values: pd.Series,
     bins: int = DEFAULT_BINS,
     labels: Sequence[str] = DEFAULT_BIN_LABELS,
-    min_values: int = DEFAULT_MIN_VALUES,
 ) -> Binning | None:
     """Fit bins by distance from the typical value, after a power transform.
 
@@ -147,7 +144,6 @@ def fit_dist_bins(
     Args:
         values: Every value the attribute takes.
         labels: One label per bin, in order from low to high.
-        min_values: Cardinality below which the attribute is not binned.
 
     Returns:
         The fitted cut, or None when the attribute has too few distinct values
@@ -160,7 +156,7 @@ def fit_dist_bins(
     """
     check_bins(bins, labels)
     clean = values.dropna().astype(float)
-    if clean.nunique() <= max(bins, min_values):
+    if clean.nunique() <= max(bins, _MIN_VALUES):
         return None
 
     x = clean.to_numpy()

@@ -353,6 +353,8 @@ def test_a_mined_constraint_is_labeled_with_its_template_and_activities(writer):
     annotations, sink = writer(backmap={"activity": {"place_order": "place order"}})
     for name in ("DeclareConstraint", "Response__place_order__ship__"):
         sink.add_class(name, source="a test")
+    for prop in (vocab.TEMPLATE, vocab.ACTIVATION, vocab.TARGET):
+        sink.declare_annotation_property(prop, "a test")
 
     annotations.declare_constraints(
         "DeclareConstraint", ["Response__place_order__ship__"]

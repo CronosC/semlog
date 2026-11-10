@@ -44,13 +44,10 @@ class FakeEventLog:
 
 
 class FakeModel:
-    """Fake `DeclareModel`."""
+    """Fake DECLARE model, as `DeclareMiner.run` returns it."""
 
     def __init__(self, text: str | None = None):
         self.text = text
-
-    def parse_from_string(self, text: str) -> FakeModel:
-        return FakeModel(text)
 
 
 class FakeAnalyzer:
@@ -93,7 +90,6 @@ def fakes(monkeypatch):
     monkeypatch.setattr(declare_module, "_DECLARE4PY_AVAILABLE", True)
     for name, fake in (
         ("D4PyEventLog", FakeEventLog),
-        ("DeclareModel", FakeModel),
         ("MPDeclareAnalyzer", FakeAnalyzer),
         ("DeclareMiner", FakeMiner),
     ):
@@ -130,33 +126,6 @@ def test_a_missing_declare4py_names_the_command_and_the_install_steps(
     assert "DeclareEnricher" not in message
 
 
-def test_the_model_declares_every_activity_once(enricher, log):
-    assert (
-        enricher.construct_model_string(log) == "activity a\nactivity b\nactivity c\n"
-    )
-
-
-def test_a_unary_template_is_instantiated_once_per_activity(enricher, log):
-    model = enricher.construct_model_string(log, constraint_set=["Init"])
-
-    assert [line for line in model.splitlines() if line.startswith("Init")] == [
-        "Init[a] | |",
-        "Init[b] | |",
-        "Init[c] | |",
-    ]
-
-
-def test_a_binary_template_takes_every_ordered_pair_of_distinct_activities(
-    enricher, log
-):
-    model = enricher.construct_model_string(log, constraint_set=["Response"])
-    pairs = [line for line in model.splitlines() if line.startswith("Response")]
-
-    assert len(pairs) == 6
-    assert {"Response[a, b] | | |", "Response[b, a] | | |"} <= set(pairs)
-    assert [line for line in pairs if "[a, a]" in line] == []
-
-
 def test_a_misspelled_template_is_rejected(enricher):
     with pytest.raises(ConfigError, match="Responce"):
         enricher.get_constraints_via_discovery(["order"], constraint_set=["Responce"])
@@ -164,28 +133,17 @@ def test_a_misspelled_template_is_rejected(enricher):
 
 def test_mining_over_no_case_concept_is_rejected(enricher):
     with pytest.raises(ConfigError, match="No case concepts to mine"):
-        enricher.get_constraints_via_enumeration([], ["Init"])
+        enricher.get_constraints_via_discovery([])
 
 
-def test_enumeration_checks_each_case_concept_against_the_model_it_built(enricher, log):
-    result = enricher.get_constraints_via_enumeration(["order", "item"], ["Init"])
+def test_discovery_checks_each_case_concept_against_its_own_traces(enricher):
+    result = enricher.get_constraints_via_discovery(["order", "item"])
 
-    assert [call["model"].text for call in FakeAnalyzer.calls] == [
-        enricher.construct_model_string(log, constraint_set=["Init"])
-    ] * 2
+    assert len(FakeAnalyzer.calls) == 2
     assert [(c.case_concept, c.trace_ids) for c in result.concepts] == [
         ("order", ("order1", "order2")),
         ("item", ("item1", "item2")),
     ]
-    assert result.mining == MiningSettings("enumeration", ("Init",))
-
-
-def test_enumeration_passes_the_vacuity_setting_through(enricher):
-    enricher.get_constraints_via_enumeration(
-        ["order"], ["Init"], vacuous_is_considered=True
-    )
-
-    assert FakeAnalyzer.calls[0]["consider_vacuity"] is True
 
 
 def test_discovery_checks_the_model_the_miner_found_with_its_thresholds(enricher):

@@ -1,8 +1,8 @@
 """Reading the provenance record back out of an ontology file.
 
-`ProvenanceEmitter` writes the record as ontology annotations. These functions
-find one annotation in the head of a written file, in functional syntax or in
-RDF/XML, and parse its JSON. The file may be one semlog wrote or one the OWL
+`ProvenanceEmitter` writes the record as ontology annotations. `read_record`
+finds them in the head of a written file, in functional syntax or in RDF/XML,
+and parses their JSON. The file may be one semlog wrote or one the OWL
 API rewrote.
 """
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import unescape
@@ -48,23 +49,16 @@ def _unescape_xml(text: str) -> str:
     return unescape(text, {"&quot;": '"', "&apos;": "'"})
 
 
-def recorded_annotation(path: Path, annotation: str) -> Any:
-    """Return one JSON annotation of the ontology header, or None.
+@dataclass(frozen=True)
+class BuildRecord:
+    """The settings and case concepts an ontology records itself as built from."""
 
-    Args:
-        path: Ontology file to read.
-        annotation: Local name of the annotation property.
+    configuration: dict[str, Any]
+    case_concepts: list[str]
 
-    Returns:
-        The parsed value, or None when the file cannot be read, holds no such
-        annotation, or holds one that is not JSON.
-    """
-    try:
-        with path.open(encoding="utf-8", errors="replace") as handle:
-            head = handle.read(RECORD_HEAD_CHARS)
-    except OSError:
-        return None
 
+def _annotation(head: str, annotation: str) -> Any:
+    """Return one JSON annotation found in `head`, or None if absent or not JSON."""
     for pattern, decode in _record_patterns(annotation):
         found = pattern.search(head)
         if found is None:
@@ -76,14 +70,21 @@ def recorded_annotation(path: Path, annotation: str) -> Any:
     return None
 
 
-def recorded_configuration(path: Path) -> dict[str, Any] | None:
-    """Return the settings an ontology records itself as built from.
-
-    Args:
-        path: Ontology file to read.
+def read_record(path: Path) -> BuildRecord | None:
+    """Return the build record in the header of an ontology file.
 
     Returns:
-        The recorded settings, or None if the file holds none that can be read.
+        The record, or None when the file cannot be read or its header lacks
+        a readable configuration or case concepts entry.
     """
-    recorded = recorded_annotation(path, vocab.BUILD_CONFIGURATION)
-    return recorded if isinstance(recorded, dict) else None
+    try:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            head = handle.read(RECORD_HEAD_CHARS)
+    except OSError:
+        return None
+
+    configuration = _annotation(head, vocab.BUILD_CONFIGURATION)
+    case_concepts = _annotation(head, vocab.CASE_CONCEPTS)
+    if not isinstance(configuration, dict) or not isinstance(case_concepts, list):
+        return None
+    return BuildRecord(configuration, case_concepts)

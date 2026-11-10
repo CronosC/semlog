@@ -46,9 +46,9 @@ def test_equal_bins_reach_beyond_the_values_they_were_fitted_on():
 
 
 def test_bins_lost_to_repeated_values_take_the_labels_around_the_center():
-    series = pd.Series([1] * 30 + [2] * 30 + [3] * 30 + [4, 5, 6])
+    series = pd.Series([1] * 30 + [2] * 30 + [3] * 30 + list(range(4, 15)))
 
-    binning = fit_equal_bins(series, bins=5, labels=LABELS, min_values=0)
+    binning = fit_equal_bins(series, bins=5, labels=LABELS)
 
     assert binning.labels == ("low", "average", "high")
 

@@ -14,6 +14,10 @@ LOADS = {
     "import semanticlog": set(),
     "from semanticlog import OCEDStore": set(),
     "from semanticlog import Reasoner": {"owlapy", "jpype"},
+    "from semanticlog.cli import main\n"
+    "from contextlib import redirect_stdout, suppress\n"
+    "with redirect_stdout(None), suppress(SystemExit):\n"
+    "    main(['--help'])": set(),
 }
 
 
@@ -26,7 +30,7 @@ def _loaded(statement: str) -> set[str]:
 
 
 @pytest.mark.slow
-def test_only_the_reasoner_loads_the_owl_api_and_the_java_bridge():
+def test_only_the_reasoner_loads_the_owl_api_the_java_bridge_or_pm4py():
     assert {statement: _loaded(statement) for statement in LOADS} == LOADS
 
 

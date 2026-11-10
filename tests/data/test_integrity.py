@@ -3,12 +3,9 @@
 import pandas as pd
 import pytest
 
+from semanticlog.core.checks import raise_reports
 from semanticlog.core.errors import InputError
-from semanticlog.data.integrity import (
-    check_integrity,
-    check_missing_ids,
-    require_integrity,
-)
+from semanticlog.data.integrity import check_integrity, check_missing_ids
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, RelationKind
 
@@ -151,4 +148,4 @@ def test_a_store_with_violations_is_rejected_listing_them_with_advice(store):
         InputError,
         match=r"could not emit an individual for: e2o 'stray': 1 event id[^\n]*\. Fix the source data",
     ):
-        require_integrity(store)
+        raise_reports([check_integrity(store)])

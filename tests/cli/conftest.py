@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from semanticlog.cli.config import RunConfig, resolve_run_config
-
 _FLAT_CSV = """case_id,activity,timestamp,resource
 o1,place_order,2024-01-01 08:00:00,alice
 o1,pay,2024-01-02 09:00:00,bob
@@ -34,9 +32,3 @@ def write_config(tmp_path: Path):
         return path
 
     return _write
-
-
-@pytest.fixture
-def cfg(ocel: Path, tmp_path: Path) -> RunConfig:
-    """A run of the fixture log into `tmp_path / "onto"`."""
-    return resolve_run_config({"input": [str(ocel)], "output": str(tmp_path / "onto")})

@@ -17,7 +17,6 @@ from typing import Any
 
 from semanticlog.cli.config import RunConfig
 from semanticlog.cli.logs import FileLog
-from semanticlog.core import vocabulary as vocab
 from semanticlog.core.checks import raise_reports
 from semanticlog.core.enums import OCELExtension, OutputFormat
 from semanticlog.core.errors import ConfigError, SemlogError
@@ -29,7 +28,7 @@ from semanticlog.onto.convert import convert
 from semanticlog.onto.emitters.provenance import build_configuration
 from semanticlog.onto.pipeline import build_log
 from semanticlog.onto.reason import Reasoner
-from semanticlog.onto.record import recorded_annotation, recorded_configuration
+from semanticlog.onto.record import read_record
 from semanticlog.onto.result import BuildResult
 from semanticlog.onto.settings import OntoBuildSettings
 
@@ -50,15 +49,13 @@ def _warn_on_changed_settings(
 ) -> None:
     """Warn when the file about to be written holds a build of other settings.
 
-    The case concepts are compared along with the settings.
+    The case concepts are compared along with the settings. A file without a
+    complete build record is overwritten without a warning.
     """
-    recorded = recorded_configuration(onto_path)
-    if recorded is None:
+    record = read_record(onto_path)
+    if record is None:
         return
-    recorded = {
-        **recorded,
-        "case_concepts": recorded_annotation(onto_path, vocab.CASE_CONCEPTS),
-    }
+    recorded = {**record.configuration, "case_concepts": record.case_concepts}
     current = {**build_configuration(settings), "case_concepts": list(case_concepts)}
     changed = sorted(
         key

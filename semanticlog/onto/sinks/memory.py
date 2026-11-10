@@ -59,17 +59,13 @@ _RDFS_LABEL = OWLAnnotationProperty(IRI(RDFS, "label"))
 _RDFS_COMMENT = OWLAnnotationProperty(IRI(RDFS, "comment"))
 
 
-def owl_literal(value: Any, datatype: Any = None) -> Any:
-    """Return the owlapy literal for a plain Python value.
+def owl_literal(value: Any) -> Any:
+    """Return the owlapy literal for a plain Python value, typed by its Python type.
 
     `OWLLiteral` is declared abstract and picks the concrete subclass for a
     value in `__new__`, which a type checker cannot follow.
-
-    Args:
-        value: The value to carry.
-        datatype: Datatype override. Default: inferred from the Python type.
     """
-    return OWLLiteral(value, datatype)  # type: ignore[abstract]
+    return OWLLiteral(value)  # type: ignore[abstract]
 
 
 class InMemorySink(AxiomSink):

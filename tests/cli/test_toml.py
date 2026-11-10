@@ -38,27 +38,11 @@ def test_an_unknown_key_is_reported_on_one_line(write_config):
     assert "\n" not in str(failure.value)
 
 
-def test_a_renamed_key_is_rejected_with_its_current_name(write_config):
-    path = write_config("run.toml", "order = []\n")
-
-    with pytest.raises(ConfigError, match="did you mean 'order_representations'"):
-        load_config_file(path)
-
-
-def test_data_representations_is_reported_as_renamed(write_config):
-    path = write_config("run.toml", 'data_representations = ["values"]\n')
-
-    with pytest.raises(ConfigError, match="did you mean 'attribute_representations'"):
-        load_config_file(path)
-
-
-def test_a_removed_key_is_reported_with_what_replaces_it(write_config):
+def test_a_superseded_key_is_rejected_as_an_unknown_setting(write_config):
     path = write_config("run.toml", "shared_attributes = true\n")
 
     with pytest.raises(
-        ConfigError,
-        match="'shared_attributes' was removed. Every attribute name is shared by "
-        "the types that carry it. Delete the key.",
+        ConfigError, match="unknown setting\\(s\\): 'shared_attributes'"
     ):
         load_config_file(path)
 
