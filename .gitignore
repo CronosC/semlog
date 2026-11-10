@@ -22,10 +22,7 @@ htmlcov/
 .ruff_cache/
 .mypy_cache/
 
-# Build logs
-logs/
-
-# Generated data. The default output directories are tracked empty.
+# Logs, labels, run configs and built ontologies stay local. The output directories the run configs name are tracked empty.
 datasets/*
 !datasets/onto/
 !datasets/declare/
@@ -35,18 +32,9 @@ datasets/declare/*
 !datasets/declare/.gitkeep
 examples/out/
 out/
-simulated.csv
-*.semlog
 
-# Project-specific
-cache/
-results/
 # Scratch notebooks.
 experiments/
-KGs/
-synthetic_problems.json
-RDFox_Export_With_Declare.ttl
-components/RDFox/RDFox.lic
 
 # IDE
 .idea/
