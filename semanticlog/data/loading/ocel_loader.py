@@ -102,8 +102,9 @@ def to_frames(tables: OCELTables, path: str) -> Frames:
     """Return the OCEL tables in PM4Py's column names, ready for `fill_store`.
 
     Objects carry the earliest value of each attribute, even a missing one,
-    and every later value that is not missing is a change. Relation rows naming an event or object the log does not
-    contain are dropped with a warning, and repeated ones are dropped.
+    and every later value that is not missing is a change. Relation rows
+    naming an event or object the log does not contain are dropped with a
+    warning, and repeated ones are dropped.
 
     Args:
         path: The file the tables were read from, named in warnings.

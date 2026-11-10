@@ -37,7 +37,7 @@ dev = [
     "ruff",
     "mypy",
     "pre-commit",
-    # Reads an emitted ontology back as triples, in tests/support/ontology.py.
+    # Reads an emitted ontology back as triples, in tests/support/rdf.py.
     "rdflib",
 ]
 

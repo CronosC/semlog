@@ -150,9 +150,9 @@ class ClassicalLoader(Loader):
         Raises:
             ConfigError: If a configured column is not in the file.
             InputError: If the file cannot be read, a row has no case id or
-                no activity, if the time
-                column holds a value that is not a timestamp, or if an object
-                attribute column varies within every object type.
+                no activity, the time column holds a value that is not a
+                timestamp, or an object attribute column varies within every
+                object type.
         """
         logger.info("Loading classical data from file %s", self.path)
         log = (

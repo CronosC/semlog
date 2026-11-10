@@ -102,8 +102,8 @@ class OrderEmitter(Emitter):
             include_df: Also emit directly-follows.
             include_ef: Also emit eventually-follows.
         """
-        # `iter_logs` returns the frame in this order. The sort is kept
-        # because it reallocates the frame more compactly than a copy.
+        # `iter_logs` returns the frame in this order already. The sort returns
+        # a new frame, so the columns added below stay out of the caller's.
         events = events.sort_values(
             ["case:concept:name", "time:timestamp"], kind="mergesort"
         )

@@ -37,6 +37,7 @@ The test files at the root check the package as a whole:
 | [test_imports.py](test_imports.py) | the exported names, and which modules load the JVM bridge and PM4Py |
 | [test_raises_docs.py](test_raises_docs.py) | every `Raises:` block names the classes its function raises |
 | [test_benchmarks.py](test_benchmarks.py) | each script in `benchmarks/` runs at a tiny size |
+| [test_support_functional.py](test_support_functional.py) | the functional-syntax reader in `support/` reads a file the OWL API rewrote |
 
 [cli/test_entrypoint.py](cli/test_entrypoint.py) mirrors no module. It runs the console script and `python -m semanticlog.cli.main` as subprocesses.
 

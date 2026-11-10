@@ -71,10 +71,10 @@ def _annotation(head: str, annotation: str) -> Any:
 
 
 def read_record(path: Path) -> BuildRecord | None:
-    """Return the build record in the header of an ontology file.
+    """Return the build record in the head of an ontology file.
 
     Returns:
-        The record, or None when the file cannot be read or its header lacks
+        The record, or None when the file cannot be read or its head lacks
         a readable configuration or case concepts entry.
     """
     try:

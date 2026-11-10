@@ -231,12 +231,7 @@ class OCEDOntoBuilder:
         document: Mapping[str, Mapping[str, str]],
         attribute_history: bool,
     ) -> Emitters:
-        """Create the emitters for one store and its annotation document.
-
-        Args:
-            attribute_history: Whether this build emits the attribute change
-                history.
-        """
+        """Create the emitters for one store and its annotation document."""
         owners = attribute_owners_by_kind(data)
         annotations = AnnotationWriter(self.sink, self.settings, data.backmap, document)
         parts = (self.sink, self.settings, annotations, self.emitted)
@@ -262,13 +257,7 @@ class OCEDOntoBuilder:
 
     @contextmanager
     def _phase(self, message: str, absent: str = "", count: int = 1) -> Iterator[None]:
-        """Log a build step, then the names and axioms it produced.
-
-        Args:
-            message: Log line written before the step runs.
-            absent: Log line written instead when `count` is zero.
-            count: Number of items the step works on.
-        """
+        """Log `message`, or `absent` when `count` is zero, then what the step produced."""
         logger.info(absent if absent and not count else message)
         mark = self.sink.declared_count
         axioms = self.sink.axiom_count

@@ -33,24 +33,12 @@ logger = logging.getLogger(__name__)
 
 
 def template_of(column: str) -> str:
-    """Return the template name of a mined constraint column.
-
-    A column is named `Response[a, b] | | |`. The template is the part before
-    `[`.
-    """
+    """Return the template name of a mined constraint column such as `Response[a, b] | | |`."""
     return str(column).split("[", 1)[0].strip()
 
 
 def _keep_templates(constraints: pd.DataFrame, wanted: list[str]) -> pd.DataFrame:
-    """Drop the columns whose template is not in `wanted`.
-
-    Args:
-        constraints: One column per mined constraint.
-        wanted: Template names to keep.
-
-    Returns:
-        The frame with the unwanted columns removed.
-    """
+    """Return a copy of the constraint columns whose template is in `wanted`."""
     keep = [c for c in constraints.columns if template_of(c) in wanted]
     return constraints[keep].copy()
 

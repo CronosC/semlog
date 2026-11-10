@@ -254,7 +254,8 @@ def attribute_value(attribute: str, value: Any) -> str:
     Values are qualified by their attribute, so the same literal under two
     attributes stays two individuals. The name is the attribute and the value
     joined by a dot. Cleaning removes every dot from an attribute name, so
-    the first dot ends the attribute and two values never share a name.
+    the first dot ends the attribute and values of two attributes never share
+    a name.
 
     A float with no fraction names the same individual as the integer.
 

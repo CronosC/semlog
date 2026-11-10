@@ -20,18 +20,13 @@ def construct_tbox(
     attribute_history: bool | None = None,
     sink: AxiomSink | None = None,
 ) -> BuildResult:
-    """Emit only the TBox.
+    """Emit only the TBox and return the finished build.
 
     Args:
-        iri: Base IRI for the ontology.
-        settings: Settings for this build.
         path: Where to save it. Nothing is written when this is None.
         attribute_history: Whether to include the attribute change schema.
             Defaults to what the settings ask for.
         sink: Where to write. Defaults to an in-memory sink.
-
-    Returns:
-        The finished build.
     """
     sink = InMemorySink(iri, settings.profile) if sink is None else sink
     TBoxEmitter(

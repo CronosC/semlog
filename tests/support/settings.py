@@ -87,8 +87,8 @@ def settings(**overrides) -> Configuration:
     return configuration(**base)
 
 
-# The matrix: every value of every enum and boolean setting appears in at least one entry, and
-# the entries pair values that meet in one emitter.
+# Every value of every enum and boolean setting appears in at least one entry,
+# and the entries pair values that meet in one emitter.
 MATRIX: dict[str, Callable[[], Configuration]] = {
     "dl_df": lambda: settings(),
     "dl_inverses": lambda: settings(

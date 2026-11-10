@@ -230,7 +230,7 @@ def test_a_rebuild_over_a_header_the_owl_api_wrote_warns_before_overwriting(
     path = tmp_path / "onto" / "pipeline.ofn"
     tbox = re.escape(OntoBuildSettings().tbox_iri)
     text = path.read_text(encoding="utf-8")
-    # The OWL API writes header properties as prefixed names.
+    # The OWL API writes the build record properties as prefixed names.
     owlapi = re.sub(rf"Annotation\(<{tbox}(\w+)>", r"Annotation(oced:\1", text)
     assert owlapi != text
     path.write_text(owlapi, encoding="utf-8")
@@ -268,7 +268,7 @@ def test_a_rebuild_over_a_header_without_case_concepts_does_not_warn(
     main([*common, "--case-concepts", "order"])
     path = tmp_path / "onto" / "pipeline.ofn"
     text = path.read_text(encoding="utf-8")
-    # A header written before the case concepts were recorded in it.
+    # A build record without its case concepts entry.
     older = re.sub(r"Annotation\(<[^>]*caseConcepts> \"[^\n]*\"\)\n", "", text)
     assert older != text
     path.write_text(older, encoding="utf-8")

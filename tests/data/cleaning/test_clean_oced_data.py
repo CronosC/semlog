@@ -195,7 +195,7 @@ def test_only_a_moved_object_type_is_listed_with_its_new_name(make_store):
 def test_a_dot_in_an_attribute_name_becomes_an_underscore_so_values_stay_apart(
     make_store, events
 ):
-    """`a.b = c` and `a = b.c` named one value individual `a.b.c`."""
+    """With the dot kept, `a.b = c` and `a = b.c` would name one value individual `a.b.c`."""
     cleaned = clean_oced_data(
         make_store(events=events("e1", **{"a.b": ["c"], "a": ["b.c"]}))
     )

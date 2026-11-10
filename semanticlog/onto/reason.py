@@ -56,8 +56,7 @@ _GENERATORS = [
 # before use.
 _PROPERTY_ASSERTIONS = "InferredPropertyAssertionGenerator"
 
-# Generators a backend raises UnsupportedOperationException for, found by
-# running each generator on each backend over the example ontology. HermiT and
+# Generators a backend raises UnsupportedOperationException for. HermiT and
 # Pellet support all of them.
 _UNSUPPORTED: dict[ReasonerBackend, frozenset[str]] = {
     ReasonerBackend.ELK: frozenset(

@@ -71,16 +71,11 @@ class BuildEnum(str, Enum):
 
     @classmethod
     def parse(cls, value: object, *, key: str) -> Self:
-        """Return the member a written setting names.
-
-        The value is accepted in any case.
+        """Return the member a written setting names, in any case.
 
         Args:
             value: What was written. A member is returned unchanged.
             key: Setting name, quoted in the error.
-
-        Returns:
-            The member the value names.
 
         Raises:
             ConfigError: If no member matches. The message lists the accepted

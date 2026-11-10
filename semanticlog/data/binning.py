@@ -137,9 +137,9 @@ def fit_dist_bins(
 
     The values are shifted to start at zero, scaled, made close to normal by
     a Yeo-Johnson transform and standardized by their median and
-    interquartile range. The bins are one
-    standard deviation wide and centered on the median: five bins cut at
-    -1.5, -0.5, 0.5 and 1.5. The cuts are mapped back to the values.
+    interquartile range. The bins are one standard deviation wide and centered
+    on the median, so five bins cut at -1.5, -0.5, 0.5 and 1.5. The cuts are
+    mapped back to the values.
 
     Args:
         values: Every value the attribute takes.
@@ -163,9 +163,9 @@ def fit_dist_bins(
     # Shifted to start at zero and scaled, so the transform acts on the
     # shape of the column, not its offset or magnitude.
     offset = float(x.min())
-    scale = _robust_location(x)[1]
+    scale = _center_and_spread(x)[1]
     transformed, lmbda = stats.yeojohnson((x - offset) / scale)
-    y_center, y_spread = _robust_location(transformed)
+    y_center, y_spread = _center_and_spread(transformed)
 
     z = np.arange(1, bins) - bins / 2
     inner = _inverse_yeojohnson(y_center + z * y_spread, lmbda) * scale + offset
@@ -181,11 +181,12 @@ def fit_dist_bins(
     )
 
 
-def _robust_location(x: np.ndarray) -> tuple[float, float]:
-    """Return the median and a robust standard deviation of the values.
+def _center_and_spread(x: np.ndarray) -> tuple[float, float]:
+    """Return the median of the values and their spread in standard deviations.
 
-    The deviation is the interquartile range scaled to a normal one, or the
-    plain standard deviation when more than half of the values are equal.
+    The spread is the interquartile range scaled to one standard deviation of a
+    normal distribution, or the plain standard deviation when more than half of
+    the values are equal.
     """
     q1, median, q3 = np.percentile(x, [25, 50, 75])
     spread = (q3 - q1) / _IQR_PER_SD

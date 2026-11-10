@@ -22,14 +22,7 @@ DECLARED_ENTITY_TYPES: frozenset[str] = frozenset(
 
 
 def load(path: str | Path) -> Any:
-    """Return the OWL API ontology a file holds.
-
-    Args:
-        path: Ontology file, in either syntax a sink writes.
-
-    Returns:
-        The `OWLOntology` the OWL API parsed, not the owlapy wrapper around it.
-    """
+    """Return the `OWLOntology` the OWL API parses from a file, not the owlapy wrapper."""
     from owlapy.owl_ontology import SyncOntology
 
     from semanticlog.onto.reason import start_jvm
@@ -40,10 +33,6 @@ def load(path: str | Path) -> Any:
 
 def profile_violations(path: str | Path, profile: OWLProfile) -> dict[str, list[str]]:
     """Return what keeps a file out of a profile.
-
-    Args:
-        path: Ontology file to check.
-        profile: Profile to check it against.
 
     Returns:
         Violation kind to the text of each violation of that kind. Empty when
@@ -64,9 +53,6 @@ def ontology_annotations(path: str | Path) -> dict[str, str]:
 
     An `AnnotationAssertion` whose subject is the ontology IRI is not one of
     these.
-
-    Args:
-        path: Ontology file to read.
 
     Returns:
         Local name of the annotation property to its text.
@@ -92,11 +78,8 @@ def undeclared_signature(
     """Return the entities a file uses without declaring.
 
     Only the entity types OWL 2 DL requires a declaration for, and only names
-    in the build namespace, so a built-in such as `rdfs:label` is not counted.
-
-    Args:
-        path: Ontology file to read.
-        iri: Base IRI whose names are checked.
+    under `iri` or the TBox namespace, so a built-in such as `rdfs:label` is not
+    counted.
 
     Returns:
         Entity type to the local names of that type that were never declared.
@@ -116,14 +99,7 @@ def undeclared_signature(
 
 
 def ontology_iris(path: str | Path) -> tuple[str | None, str | None]:
-    """Return the ontology IRI and the version IRI, either of which may be absent.
-
-    Args:
-        path: Ontology file to read.
-
-    Returns:
-        The two IRIs, each None when the file states none.
-    """
+    """Return the ontology IRI and the version IRI, each None when the file states none."""
     ontology_id = load(path).getOntologyID()
     return (
         _optional(ontology_id.getOntologyIRI()),

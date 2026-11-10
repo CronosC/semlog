@@ -46,12 +46,8 @@ def check_case_concepts(
 ) -> CheckReport | None:
     """Check that every case concept is an object type with an event-to-object relation.
 
-    Names are compared as cleaning left them.
-
-    Args:
-        data: Store being built from.
-        settings: Settings. The check applies only when traces are emitted.
-        case_concepts: Object types the build will project onto.
+    Names are compared as cleaning left them. The check applies only when the
+    settings emit traces.
 
     Returns:
         Every case concept the log cannot be projected onto, or None when the

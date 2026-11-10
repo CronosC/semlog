@@ -121,13 +121,5 @@ class Emitter:
         to_key: str,
         kind: IndividualKind,
     ) -> None:
-        """Assert a data property for every row of a table.
-
-        Args:
-            prop: Property to assert.
-            df: Table holding the individuals and their values.
-            from_key: Column holding the subject.
-            to_key: Column holding the literal value.
-            kind: The kind of every subject.
-        """
+        """Assert a data property from `from_key` to the literal in `to_key`, per row."""
         self.sink.assert_data(prop, clean_pairs(df, from_key, to_key), kind)

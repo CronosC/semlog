@@ -22,7 +22,7 @@ from semanticlog.cli.settings_table import (
 )
 from semanticlog.core.errors import ConfigError
 
-# `input` is positional.
+# `input` is positional, so it has no flag.
 _LOG_INPUT_FLAGS: tuple[str, ...] = tuple(k for k in LOG_INPUT_KEYS if k != "input")
 
 _BUILD_ONLY_KEYS: tuple[str, ...] = tuple(

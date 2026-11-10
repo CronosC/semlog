@@ -101,12 +101,7 @@ class AxiomSink(ABC):
         return self.iri.removesuffix("/")
 
     def iri_of(self, name: str, kind: IndividualKind | None = None) -> str:
-        """Return the full IRI of a name.
-
-        Args:
-            name: A `Term`, a class or property name, or an individual name.
-            kind: The kind of an individual, which places it under its path.
-        """
+        """Return the full IRI of a name, under the path of `kind` for an individual."""
         if vocab.is_tbox(name):
             return f"{self.tbox_iri}{name}"
         if kind is None:
@@ -134,14 +129,7 @@ class AxiomSink(ABC):
         return self._names.by_kind()
 
     def declared_since(self, mark: int) -> dict[str, list[str]]:
-        """Return the names declared after a mark, grouped by kind.
-
-        Args:
-            mark: A `declared_count` read before the step being measured.
-
-        Returns:
-            Names by kind, in declaration order.
-        """
+        """Return the names declared since `mark`, a `declared_count`, by kind in order."""
         return self._names.since(mark)
 
     @property

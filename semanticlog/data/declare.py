@@ -69,8 +69,10 @@ class MiningSettings:
     Attributes:
         method: `discovery` or `enumeration`.
         templates: The templates kept, or None for every template.
-        constraint_support: Share of traces a discovered constraint had to hold in. None under enumeration.
-        itemset_support: Share of traces an activity set had to occur in. None under enumeration.
+        constraint_support: Share of traces a discovered constraint had to
+            hold in. None under enumeration.
+        itemset_support: Share of traces an activity set had to occur in. None
+            under enumeration.
     """
 
     method: str
@@ -93,7 +95,8 @@ class ConceptConstraints:
         satisfied: Constraint class name to the traces that satisfy it.
 
     Raises:
-        InputError: If a trace is listed twice, or a satisfying trace is not among `trace_ids`.
+        InputError: If a trace is listed twice, or a satisfying trace is not
+            among `trace_ids`.
     """
 
     case_concept: str
@@ -128,7 +131,8 @@ class ConceptConstraints:
 class DeclareResult:
     """DECLARE constraints mined from one log, per case concept.
 
-    A constraint name mined for several case concepts is one constraint. Its members are the satisfying traces of each.
+    A constraint name mined for several case concepts is one constraint. Its
+    members are the satisfying traces of each.
 
     Attributes:
         concepts: One entry per case concept, in mining order.
@@ -203,7 +207,8 @@ class DeclareResult:
         """Read a result `write` wrote.
 
         Raises:
-            InputError: If the file is not JSON or does not have the structure `write` gives it.
+            InputError: If the file is not JSON or does not have the structure
+                `write` gives it.
         """
         try:
             document = json.loads(Path(path).read_text(encoding="utf-8"))

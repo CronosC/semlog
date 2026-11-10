@@ -14,13 +14,7 @@ Pair = tuple[Any, Any]
 
 
 def clean_pairs(df: pd.DataFrame, from_key: str, to_key: str) -> Iterator[Pair]:
-    """Yield the distinct pairs of two columns, skipping rows with a missing endpoint.
-
-    Args:
-        df: Table holding the pairs.
-        from_key: Column holding the subject.
-        to_key: Column holding the target, or the literal value.
-    """
+    """Yield the distinct pairs of two columns, skipping rows with a missing endpoint."""
     rows = df[[from_key, to_key]]
     rows = rows[rows[from_key].notna() & rows[to_key].notna()]
     rows = rows.drop_duplicates([from_key, to_key])

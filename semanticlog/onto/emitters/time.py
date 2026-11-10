@@ -24,13 +24,9 @@ class TimeEmitter(Emitter):
     """
 
     def emit_individuals(self, ids: pd.Series, stamps: pd.Series) -> None:
-        """Emit the time individuals not yet emitted.
+        """Emit the time individuals in `ids` not yet emitted, with the aligned `stamps`.
 
         Rows with a missing timestamp are dropped.
-
-        Args:
-            ids: Individual name per timestamp.
-            stamps: Timestamps, aligned with `ids`.
         """
         written = self.emitted.timestamps
         frame = pd.DataFrame({"time_str": ids.to_numpy(), "time": stamps.to_numpy()})
