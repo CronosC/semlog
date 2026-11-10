@@ -17,12 +17,12 @@ def test_renames_are_listed_by_kind_with_one_name_kept_apart_per_kind():
     log.record(RenameKind.ID, "o 1", "o_1")
     log.record(RenameKind.ACTIVITY, "o.1", "o_1")
     log.record(RenameKind.OBJECT_TYPE, "item", "item")
-    log.record_value("colour", "off_white", "off white")
+    log.record_value("color", "off_white", "off white")
 
     assert log.by_kind() == {
         "activity": ["o.1 -> o_1"],
         "id": ["o 1 -> o_1"],
-        "value": ["off white -> colour.off_white"],
+        "value": ["off white -> color.off_white"],
     }
 
 

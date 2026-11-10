@@ -1,3 +1,5 @@
+"""Reading the build record back out of an ontology file."""
+
 import pytest
 
 from semanticlog.onto.record import BuildRecord, read_record

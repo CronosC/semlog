@@ -1,3 +1,5 @@
+"""The relations of the log, as properties between individuals."""
+
 from __future__ import annotations
 
 import pytest

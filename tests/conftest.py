@@ -16,7 +16,7 @@ from semanticlog.core.errors import SemlogError
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.oced import OCEDStore
 from tests.support import stores
-from tests.support.build import STREAMING, emit
+from tests.support.build import STREAMING, SinkCounts, emit_through
 from tests.support.emitted import Emitted
 from tests.support.recording import RecordingSink
 from tests.support.settings import CONFIGURATIONS
@@ -65,16 +65,21 @@ def _jvm_available() -> bool:
     return True
 
 
+# Every xdist worker that runs a reasoner test starts a JVM, which takes
+# seconds, so they share one group. tryfirst sets the group before xdist reads it.
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items) -> None:
-    """Skip the reasoner tests when the machine has no JVM to run them on."""
-    if not any(item.get_closest_marker("reasoner") for item in items):
+    """Put the reasoner tests in one xdist group, and skip them without a JVM."""
+    reasoner = [item for item in items if item.get_closest_marker("reasoner")]
+    if not reasoner:
         return
+    for item in reasoner:
+        item.add_marker(pytest.mark.xdist_group("jvm"))
     if _jvm_available():
         return
     skip = pytest.mark.skip(reason="no JVM found")
-    for item in items:
-        if item.get_closest_marker("reasoner"):
-            item.add_marker(skip)
+    for item in reasoner:
+        item.add_marker(skip)
 
 
 # --------------------------------------------------------------------------
@@ -141,20 +146,23 @@ def recording_sink() -> Callable[..., RecordingSink]:
 
 
 @pytest.fixture(scope="session")
-def matrix(tmp_path_factory) -> Callable[..., tuple[Emitted, Path]]:
-    """Return one configuration as the ontology it emits and the file it wrote.
+def matrix(tmp_path_factory) -> Callable[..., tuple[Emitted, Path, SinkCounts]]:
+    """Return one configuration as the ontology it emits, the file it wrote and the counts of its sink.
 
-    Builds are cached for the session and shared with `built` and `built_path`.
+    Builds are cached for the session and shared with `built`, `built_path`
+    and `built_counts`.
     """
     root = tmp_path_factory.mktemp("matrix")
-    cache: dict[tuple[str, str], tuple[Emitted, Path]] = {}
+    cache: dict[tuple[str, str], tuple[Emitted, Path, SinkCounts]] = {}
 
-    def get(name: str, backend: str = STREAMING) -> tuple[Emitted, Path]:
+    def get(name: str, backend: str = STREAMING) -> tuple[Emitted, Path, SinkCounts]:
         key = (name, backend)
         if key not in cache:
             suffix = "ofn" if backend == STREAMING else "owl"
             path = root / f"{name}.{backend}.{suffix}"
-            cache[key] = (emit(CONFIGURATIONS[name](), path, backend), path)
+            emitted, sink = emit_through(CONFIGURATIONS[name](), path, backend)
+            counts = SinkCounts(sink.declared_by_kind(), sink.axiom_count)
+            cache[key] = (emitted, path, counts)
         return cache[key]
 
     return get
@@ -176,5 +184,15 @@ def built_path(matrix) -> Callable[..., Path]:
 
     def get(name: str, backend: str = STREAMING) -> Path:
         return matrix(name, backend)[1]
+
+    return get
+
+
+@pytest.fixture(scope="session")
+def built_counts(matrix) -> Callable[..., SinkCounts]:
+    """Return what the sink of one configuration counted while it built."""
+
+    def get(name: str, backend: str = STREAMING) -> SinkCounts:
+        return matrix(name, backend)[2]
 
     return get

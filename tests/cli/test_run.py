@@ -258,7 +258,7 @@ def test_rebuilding_the_same_run_does_not_warn_about_overwriting(
 
     main(argv)
 
-    assert "overwritten" not in caplog.text
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
 def test_a_rebuild_over_a_header_without_case_concepts_does_not_warn(
@@ -276,7 +276,7 @@ def test_a_rebuild_over_a_header_without_case_concepts_does_not_warn(
 
     main([*common, "--case-concepts", "item"])
 
-    assert "overwritten" not in caplog.text
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
 def test_a_run_writes_one_log_file_per_input(ocel, tmp_path):
@@ -384,16 +384,20 @@ def test_an_oversized_input_is_skipped_and_reported(tmp_path):
 
 
 @pytest.mark.reasoner
-def test_materializing_during_a_build_grows_the_file(ocel, tmp_path):
+def test_materializing_during_a_build_writes_the_inferred_types(ocel, tmp_path):
     main(["build", str(ocel), "--output", str(tmp_path / "plain"), "-q"])
 
     code = main(
         ["build", str(ocel), "--materialize", "--output", str(tmp_path / "grown"), "-q"]
     )
 
+    asserted = read_built(tmp_path / "plain" / "pipeline.ofn").types["pay_e1"]
     assert code == EXIT_OK
-    grown = tmp_path / "grown" / "pipeline.ofn"
-    assert grown.stat().st_size > (tmp_path / "plain" / "pipeline.ofn").stat().st_size
+    assert asserted == {"pay"}
+    assert read_built(tmp_path / "grown" / "pipeline.ofn").types["pay_e1"] == {
+        "pay",
+        "Event",
+    }
 
 
 @pytest.mark.reasoner
@@ -425,6 +429,7 @@ def test_the_converted_files_hold_what_the_reasoner_added(ocel, tmp_path):
     )
 
 
+@pytest.mark.reasoner
 def test_no_progress_line_of_a_build_ends_in_two_dots(ocel, tmp_path, caplog):
     argv = ["build", str(ocel), "--output", str(tmp_path / "onto")]
     with caplog.at_level(logging.INFO, logger="semanticlog"):

@@ -7,7 +7,6 @@ over `InMemorySink` and `StreamingSink`.
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -20,9 +19,7 @@ from semanticlog.core.vocabulary import (
     TBOX_IRI,
     NameCollisionError,
 )
-from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.sinks import InMemorySink, StreamingSink
-from tests.support import stores
 from tests.support.build import BACKENDS, IN_MEMORY, STREAMING, emit
 from tests.support.owlapi import ontology_annotations
 from tests.support.settings import CONFIGURATIONS, NAMES
@@ -79,21 +76,9 @@ def test_both_sinks_annotate_the_ontology_itself_with_the_same_record(built_path
     assert len(in_memory) > 0
 
 
-@pytest.mark.slow
-def test_both_sinks_count_the_same_entities_and_axioms(tmp_path):
-    for name in NAMES:
-        config = CONFIGURATIONS[name]()
-        streamed = StreamingSink(
-            str(tmp_path / f"{name}.ofn"), DEFAULT_IRI, config.settings.profile
-        )
-        in_memory = InMemorySink(DEFAULT_IRI, config.settings.profile)
-        for sink in (streamed, in_memory):
-            OCEDOntoBuilder(DEFAULT_IRI, config.settings, sink=sink).build_ontology(
-                stores.build(stores.MATRIX_STORE), CONFIGURATIONS[name]().inputs
-            )
-
-        assert streamed.declared_by_kind() == in_memory.declared_by_kind(), name
-        assert streamed.axiom_count == in_memory.axiom_count, name
+@pytest.mark.parametrize("name", NAMES)
+def test_both_sinks_count_the_same_entities_and_axioms(name, built_counts):
+    assert built_counts(name, STREAMING) == built_counts(name, IN_MEMORY)
 
 
 def test_a_class_with_a_parent_and_two_members_counts_four_axioms(real_sink):
@@ -307,19 +292,34 @@ def test_a_union_with_a_fallback_writes_the_fallback_under_el(recording_sink):
     assert (sink.dropped_unions, sink.replaced_unions) == (0, 2)
 
 
-def test_an_infinite_bin_edge_omits_its_facet(real_sink, tmp_path):
-    sink = real_sink()
+@pytest.mark.parametrize(
+    ("backend", "upper_facet"),
+    [
+        (STREAMING, 'xsd:maxInclusive "6.5"^^xsd:decimal'),
+        (
+            IN_MEMORY,
+            '<xsd:maxInclusive rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">'
+            "6.5</xsd:maxInclusive>",
+        ),
+    ],
+)
+def test_an_infinite_bin_edge_omits_its_facet(backend, upper_facet, tmp_path):
+    path = tmp_path / "bins.owl"
+    sink = (
+        StreamingSink(str(path), DEFAULT_IRI, OWLProfile.OWL2DL)
+        if backend == STREAMING
+        else InMemorySink(DEFAULT_IRI, OWLProfile.OWL2DL)
+    )
     sink.add_class("price", source="a test")
     sink.add_class("price_bin_low", "price", source="a test")
     sink.add_property("price_value", data_prop=True, source="a test")
 
     sink.add_bin_definition("price_bin_low", "price", "price_value", None, 6.5)
-    sink.close()
+    sink.save(str(path))
 
-    if isinstance(sink, StreamingSink):
-        text = Path(sink.path).read_text(encoding="utf-8")
-        assert "minExclusive" not in text
-        assert 'xsd:maxInclusive "6.5"^^xsd:decimal' in text
+    text = path.read_text(encoding="utf-8")
+    assert "minExclusive" not in text
+    assert upper_facet in text
 
 
 def test_a_bin_definition_under_el_is_rejected(recording_sink):

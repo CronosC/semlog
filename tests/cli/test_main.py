@@ -77,9 +77,10 @@ def test_an_unusable_configuration_exits_two_with_one_line(ocel, capsys):
     )
 
     assert code == EXIT_USAGE
-    err = capsys.readouterr().err
-    assert err.startswith("semlog build: error: The settings contradict each other")
-    assert "Traceback" not in err
+    assert capsys.readouterr().err == (
+        "semlog build: error: The settings contradict each other: ef is not "
+        "available under OWL2EL. Use ef_explicit, or set profile to OWL2DL.\n"
+    )
 
 
 def test_a_superseded_config_key_exits_two_with_the_unknown_key_error(
@@ -143,7 +144,9 @@ def test_an_os_error_exits_two_with_one_line(ocel, tmp_path, capsys):
     taken.write_text("not a directory", encoding="utf-8")
 
     assert main(["build", str(ocel), "--output", str(taken), "-q"]) == EXIT_USAGE
-    assert capsys.readouterr().err.startswith("semlog build: error: ")
+    err = capsys.readouterr().err
+    assert err.startswith("semlog build: error: ")
+    assert err.count("\n") == 1
 
 
 def test_an_error_that_is_not_a_semlog_error_propagates(ocel, monkeypatch):

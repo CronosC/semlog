@@ -6,12 +6,10 @@ import pytest
 
 from semanticlog.cli.settings_table import (
     BUILD_SETTINGS,
-    enum_choices,
     expand_inputs,
     read_setting,
     setting,
 )
-from semanticlog.core.enums import EventOrderRepresentation, OCELExtension
 from semanticlog.core.errors import ConfigError
 from semanticlog.onto.settings import OntoBuildSettings
 
@@ -21,11 +19,6 @@ def test_every_settings_field_has_a_row_with_the_same_default():
     declared = {s.key: s.default for s in BUILD_SETTINGS if s.target == "settings"}
 
     assert declared == written
-
-
-def test_enum_choices_list_each_member_once():
-    assert enum_choices(EventOrderRepresentation) == "df | ef | ef_explicit | declare"
-    assert enum_choices(OCELExtension) == "attribute_history"
 
 
 @pytest.mark.parametrize(

@@ -1,3 +1,5 @@
+"""The ledger of what each emitted name is declared as and which schema statements were written."""
+
 from __future__ import annotations
 
 import pytest

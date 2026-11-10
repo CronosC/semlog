@@ -22,14 +22,19 @@ def sink(recording_sink):
 
 @pytest.fixture(params=BACKENDS)
 def real_sink(request, tmp_path):
-    """Return a factory for a sink of each backend in turn."""
+    """Return a factory for a sink of each backend in turn. Open streaming sinks are aborted on teardown."""
+    streaming: list[StreamingSink] = []
 
     def make(profile: OWLProfile = OWLProfile.OWL2DL) -> AxiomSink:
         if request.param == STREAMING:
-            return StreamingSink(str(tmp_path / "streamed.ofn"), DEFAULT_IRI, profile)
+            sink = StreamingSink(str(tmp_path / "streamed.ofn"), DEFAULT_IRI, profile)
+            streaming.append(sink)
+            return sink
         return InMemorySink(DEFAULT_IRI, profile)
 
-    return make
+    yield make
+    for sink in streaming:
+        sink.abort()
 
 
 @pytest.fixture

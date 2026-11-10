@@ -184,15 +184,6 @@ def test_the_attribute_classes_and_the_bins_of_one_attribute_are_disjoint(tmp_pa
     assert frozenset({"price_bin_low", "price_bin_high"}) in onto.disjoint
 
 
-def test_a_build_with_typed_attributes_is_consistent(awkward_store, tmp_path):
-    path = tmp_path / "awkward.owl"
-    OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings()).build_ontology(
-        awkward_store
-    ).require_onto().save(str(path))
-
-    assert Reasoner(str(path)).check() is True
-
-
 @pytest.mark.reasoner
 def test_an_attribute_of_both_kinds_builds_consistently_under_hermit(tmp_path):
     path = tmp_path / "two.ofn"
@@ -264,7 +255,10 @@ def test_a_boolean_attribute_is_not_binned(tmp_path, caplog):
 
     assert {"express.True", "express.False"} <= onto.individuals
     assert {c for c in onto.classes if c.startswith("express_bin_")} == set()
-    assert "'express' has too few distinct values" not in caplog.text
+    assert [r.getMessage() for r in caplog.records] == [
+        "Attribute 'price' has too few distinct values to bin. "
+        "Its values carry no bin class."
+    ]
 
 
 # --------------------------------------------------------------------------

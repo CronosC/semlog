@@ -65,7 +65,13 @@ def _try_numeric(
     num = pd.to_numeric(series, errors="coerce")
     if (num.notna().sum() / non_null) < min_ratio:
         return None
-    if (num.dropna() % 1 == 0).all():
+    whole = num.dropna()
+    # pandas warns before it rejects a value outside int64, so those stay float here.
+    if (
+        (whole % 1 == 0).all()
+        and (whole >= _INT64_MIN).all()
+        and (whole < -_INT64_MIN).all()
+    ):
         try:
             return num.astype("Int64")
         except (TypeError, OverflowError):

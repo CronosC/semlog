@@ -1,3 +1,5 @@
+"""The checks a build runs before it emits anything."""
+
 from __future__ import annotations
 
 from datetime import datetime

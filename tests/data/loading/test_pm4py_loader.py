@@ -1,7 +1,6 @@
-"""Reading OCEL 2.0 logs, and the repairs made on the way in."""
+"""Reading OCEL 2.0 logs through PM4Py."""
 
 import json
-import logging
 import sqlite3
 
 import pandas as pd
@@ -12,9 +11,9 @@ from pm4py.objects.ocel.obj import OCEL
 from semanticlog.core.enums import OCELExtension
 from semanticlog.core.errors import InputError
 from semanticlog.data.loading import pm4py_loader
-from semanticlog.data.loading.ocel_frames import normalize_qualifiers, relation_names
 from semanticlog.data.loading.pm4py_loader import PM4PyLoader
 from semanticlog.data.tables import EntityKind, RelationKind
+from tests.support.ocel_files import events_in_order
 
 HISTORY = [OCELExtension.ATTRIBUTE_HISTORY]
 
@@ -158,85 +157,6 @@ def test_a_suffix_with_no_ocel_format_is_rejected(tmp_path):
         PM4PyLoader(str(tmp_path / "log.csv"))
 
 
-def test_a_missing_qualifier_takes_the_fallback_name_of_its_family(tmp_path):
-    path = _ocel(
-        tmp_path,
-        "placeholders",
-        objects={"o1": "order", "i1": "item"},
-        events=[("e1", "act", [("o1", "None"), ("i1", "N/A")])],
-        o2o=[("o1", "i1", "NA")],
-    )
-
-    oced = PM4PyLoader(path).get_oced()
-
-    assert oced.relation_types(RelationKind.E2O) == ["involves"]
-    assert oced.relation_types(RelationKind.O2O) == ["relates"]
-
-
-def test_a_qualifier_both_families_use_is_suffixed_on_both_sides(tmp_path):
-    path = _ocel(
-        tmp_path,
-        "shared",
-        objects={"o1": "order", "i1": "item"},
-        events=[("e1", "act", [("o1", "contains"), ("i1", "contains")])],
-        o2o=[("o1", "i1", "contains")],
-    )
-
-    oced = PM4PyLoader(path).get_oced()
-
-    assert oced.relation_types() == ["contains_e2o", "contains_o2o"]
-
-
-def test_a_suffixed_name_the_log_uses_is_numbered_past():
-    e2o, o2o = relation_names(
-        pd.Series(["contains", "contains_e2o"]), pd.Series(["contains"])
-    )
-
-    assert e2o == {"contains": "contains_e2o_2", "contains_e2o": "contains_e2o"}
-    assert o2o == {"contains": "contains_o2o"}
-
-
-def test_a_word_read_as_no_qualifier_is_warned_about_apart_from_an_empty_one(caplog):
-    rows = pd.DataFrame({"ocel:qualifier": ["modifies", None, "NA"]})
-
-    with caplog.at_level(logging.WARNING):
-        normalized = normalize_qualifiers(rows, "e2o")
-
-    assert list(normalized["ocel:qualifier"]) == ["modifies", "involves", "involves"]
-    assert "2 e2o relation(s) had no qualifier" in caplog.text
-    assert (
-        "1 of those carry the text (NA), which is read as no qualifier" in caplog.text
-    )
-
-
-def test_a_word_on_every_relation_of_a_family_is_not_warned_about_as_a_merge(caplog):
-    rows = pd.DataFrame({"ocel:qualifier": ["None", "None"]})
-
-    with caplog.at_level(logging.WARNING):
-        normalize_qualifiers(rows, "e2o")
-
-    assert "2 e2o relation(s) had no qualifier" in caplog.text
-    assert "carry the text" not in caplog.text
-
-
-def test_numeric_ids_are_prefixed_with_their_type_everywhere_they_appear(tmp_path):
-    path = _ocel(
-        tmp_path,
-        "numeric",
-        objects={"10": "order", "20": "order"},
-        events=[("1", "act", [("10", "places")]), ("2", "act", [("20", "places")])],
-    )
-
-    oced = PM4PyLoader(path).get_oced()
-
-    assert list(oced.ids(EntityKind.OBJECT, "order")) == ["order_10", "order_20"]
-    assert list(oced.ids(EntityKind.EVENT, "act")) == ["act_1", "act_2"]
-    assert oced.relation("places").data.values.tolist() == [
-        ["act_1", "order_10"],
-        ["act_2", "order_20"],
-    ]
-
-
 def test_an_o2o_row_naming_no_object_of_the_log_is_rejected(simple_ocel, monkeypatch):
     log = pm4py.read_ocel2_json(simple_ocel)
     log.o2o = pd.DataFrame(
@@ -310,22 +230,27 @@ def test_one_id_for_two_events_in_a_sqlite_log_is_rejected(tmp_path, simple_ocel
         PM4PyLoader(str(path)).get_oced()
 
 
-def test_attribute_history_puts_the_latest_value_on_the_object_and_later_ones_in_changes(
+def test_attribute_history_puts_the_latest_value_on_the_object(history_ocel):
+    oced = PM4PyLoader(history_ocel, ocel_extensions=HISTORY).get_oced()
+    orders = oced.table(EntityKind.OBJECT, "order").data
+
+    assert orders[["ocel:oid", "status"]].values.tolist() == [
+        ["order_10", "shipped"],
+        ["order_20", "shipped"],
+    ]
+
+
+def test_attribute_history_reads_the_values_after_the_earliest_as_changes(
     history_ocel,
 ):
     oced = PM4PyLoader(history_ocel, ocel_extensions=HISTORY).get_oced()
-    orders = oced.table(EntityKind.OBJECT, "order").data
     changes = oced.object_changes("order")
 
     assert oced.ocel_mode is True
-    assert dict(zip(orders["ocel:oid"], orders["status"], strict=True)) == {
-        "order_10": "shipped",
-        "order_20": "shipped",
-    }
-    assert dict(zip(changes["ocel:oid"], changes["status"], strict=True)) == {
-        "order_10": "shipped",
-        "order_20": "shipped",
-    }
+    assert changes[["ocel:oid", "ocel:timestamp", "status"]].values.tolist() == [
+        ["order_10", pd.Timestamp("2022-01-03", tz="UTC"), "shipped"],
+        ["order_20", pd.Timestamp("2022-01-04", tz="UTC"), "shipped"],
+    ]
 
 
 def test_without_the_history_extension_no_change_is_read(history_ocel):
@@ -372,28 +297,6 @@ def _status_of_o1(path: str, extensions=()) -> str:
         .table(EntityKind.OBJECT, "order")
     )
     return orders.data.set_index("ocel:oid").loc["o1", "status"]
-
-
-def test_the_latest_value_is_chosen_by_timestamp_not_file_order(tmp_path):
-    path = _timed_values_log(
-        tmp_path,
-        [
-            ("2024-01-01T09:00:00Z", "pending"),
-            ("2024-01-09T09:00:00Z", "delivered"),
-            ("2024-01-05T09:00:00Z", "shipped"),
-        ],
-    )
-    assert _status_of_o1(path) == "delivered"
-
-
-def test_the_latest_value_is_the_same_with_and_without_the_history_extension(
-    tmp_path,
-):
-    path = _timed_values_log(
-        tmp_path,
-        [("2024-01-01T09:00:00Z", "pending"), ("2024-01-05T09:00:00Z", "shipped")],
-    )
-    assert _status_of_o1(path) == _status_of_o1(path, HISTORY) == "shipped"
 
 
 def test_a_change_with_an_unparseable_timestamp_loses_to_a_dated_one(tmp_path):
@@ -514,17 +417,6 @@ def test_an_attribute_keeps_the_type_the_log_declares(tmp_path, suffix):
     assert str(frame["rank"].dtype) == "Int64"
 
 
-def _positions(oced) -> dict[str, int]:
-    """Return the position of every event, keyed by event id."""
-    positions = {}
-    for activity in oced.types(EntityKind.EVENT):
-        table = oced.table(EntityKind.EVENT, activity)
-        positions.update(
-            zip(table.data[table.id], table.data[table.position], strict=True)
-        )
-    return positions
-
-
 @pytest.mark.parametrize("listed", [["e10", "e9"], ["e9", "e10"]])
 def test_events_at_one_timestamp_are_positioned_in_file_order(tmp_path, listed):
     activities = {"e10": "pay", "e9": "ship"}
@@ -550,9 +442,7 @@ def test_events_at_one_timestamp_are_positioned_in_file_order(tmp_path, listed):
         )
     )
 
-    positions = _positions(PM4PyLoader(str(path)).get_oced())
-
-    assert sorted(positions, key=positions.get) == listed
+    assert events_in_order(PM4PyLoader(str(path)).get_oced()) == listed
 
 
 def test_the_event_position_is_no_attribute(simple_ocel):

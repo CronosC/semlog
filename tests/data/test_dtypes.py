@@ -80,14 +80,20 @@ def test_a_column_of_mostly_other_words_stays_text():
     assert out["flag"].tolist() == ["yes", "no", "maybe"]
 
 
-def test_empty_rows_and_columns_are_dropped_and_blank_text_is_missing():
+def test_empty_rows_and_columns_are_dropped():
     df = pd.DataFrame(
-        {"empty": [None, None, None], "x": ["a", None, "  "], "y": [1, None, 3]}
+        {"empty": [None, None, None], "x": ["a", None, "b"], "y": [1, None, 3]}
     )
 
     out = infer_dtypes(df)
 
     assert list(out.columns) == ["x", "y"]
+    assert out["x"].tolist() == ["a", "b"]
+
+
+def test_blank_text_is_missing():
+    out = infer_dtypes(pd.DataFrame({"x": ["a", "  "], "y": [1, 3]}))
+
     assert out["x"].isna().tolist() == [False, True]
 
 

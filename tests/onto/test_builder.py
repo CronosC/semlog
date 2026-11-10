@@ -10,7 +10,6 @@ import pytest
 
 from semanticlog.core.enums import (
     EventOrderRepresentation,
-    IndividualKind,
     InverseRepresentation,
     OCELExtension,
     OWLProfile,
@@ -97,7 +96,7 @@ def test_a_build_that_fails_validation_spends_the_builder(tiny_store):
 def test_a_build_that_fails_while_emitting_spends_the_builder(tiny_store):
     builder = OCEDOntoBuilder(DEFAULT_IRI, OntoBuildSettings())
 
-    with pytest.raises(ValueError, match="cannot be an IRI local name"):
+    with pytest.raises(UnsafeLocalNameError, match="cannot be an IRI local name"):
         builder.build_ontology(_event_store(activity="bad name"))
 
     with pytest.raises(ValueError, match="has produced an ontology"):
@@ -173,7 +172,7 @@ def test_the_steps_of_a_build_are_announced_in_order(pipeline_store, caplog):
     ]
 
 
-def test_the_history_step_runs_only_when_the_settings_ask_for_it(caplog):
+def test_the_history_step_runs_only_when_the_settings_ask_for_it(recording_sink):
     data = OCEDStore(ocel_mode=True)
     for kind, name, frame, kwargs in [
         (EntityKind.OBJECT, "order", pd.DataFrame({"oid": ["o1"]}), {"id_col": "oid"}),
@@ -197,16 +196,17 @@ def test_the_history_step_runs_only_when_the_settings_ask_for_it(caplog):
             }
         ),
     )
-    history = "Instantiating object attribute change history"
     with_history = NO_ORDER.replace(ocel_extensions=[OCELExtension.ATTRIBUTE_HISTORY])
 
-    with caplog.at_level(logging.INFO, logger="semanticlog.onto.builder"):
-        OCEDOntoBuilder(DEFAULT_IRI, NO_ORDER).build_ontology(clean_oced_data(data))
-        without = caplog.text
-        OCEDOntoBuilder(DEFAULT_IRI, with_history).build_ontology(clean_oced_data(data))
+    def change_records(settings: OntoBuildSettings) -> list[str]:
+        sink = recording_sink()
+        OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
+            clean_oced_data(data)
+        )
+        return [c[1] for c in sink.of_kind("individual") if c[2] == "statusChange"]
 
-    assert history not in without
-    assert history in caplog.text
+    assert change_records(NO_ORDER) == []
+    assert change_records(with_history) == ["status.o1.20240102T000000_000000"]
 
 
 def test_the_unions_el_drops_are_reported_once_for_the_build(awkward_store, caplog):
@@ -242,15 +242,6 @@ def test_the_property_axioms_el_drops_are_reported_once_for_the_build(
         f"  omitted {dropped} axioms declaring an object property functional or "
         "inverse functional, which OWL 2 EL does not allow"
     ]
-
-
-def test_the_declaration_order_check_finds_a_late_declaration(recording_sink):
-    sink = recording_sink()
-
-    sink.assert_individuals("some_class", ["late"], IndividualKind.OBJECT)
-    sink.add_class("late", source="a class declared too late")
-
-    assert sink.declaration_order_violations() == [("late", "some_class")]
 
 
 # --------------------------------------------------------------------------

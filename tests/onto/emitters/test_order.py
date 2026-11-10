@@ -22,9 +22,7 @@ from semanticlog.core.errors import ConfigError
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.cleaning import clean_oced_data
 from semanticlog.data.declare import ConceptConstraints, DeclareResult
-from semanticlog.data.loading.base import LoaderColumns
-from semanticlog.data.loading.classical_loader import ClassicalLoader
-from semanticlog.data.loading.pm4py_loader import PM4PyLoader
+from semanticlog.data.loading import loader_for
 from semanticlog.data.oced import OCEDStore
 from semanticlog.data.tables import EntityKind, RelationKind
 from semanticlog.onto.builder import OCEDOntoBuilder
@@ -302,11 +300,10 @@ def _load_tied_log(
         its events by row, after the nine rows of another order.
     """
     path = _write_tied_log(tmp_path, file_format, listed)
+    store = loader_for(path, {"case_col": "order"}).get_oced()
     if file_format == "csv":
-        store = ClassicalLoader(path, LoaderColumns(case_col="order")).get_oced()
         ids = {eid: f"e{row}" for row, eid in enumerate(listed, start=9)}
     else:
-        store = PM4PyLoader(path).get_oced()
         ids = {eid: eid for eid in listed}
     return clean_oced_data(store), ids
 
@@ -353,7 +350,7 @@ def test_ef_explicit_over_a_shared_event_logs_nothing(tmp_path, caplog):
             data=_shared_event_store(),
         )
 
-    assert "more than one 'order' trace" not in caplog.text
+    assert caplog.records == []
 
 
 def test_an_event_in_no_relation_is_in_no_trace(tiny_store, tmp_path):

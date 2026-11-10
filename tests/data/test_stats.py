@@ -1,3 +1,5 @@
+"""Measurements of a loaded store."""
+
 from semanticlog.data.stats import rows_by_kind
 from semanticlog.data.tables import EntityKind
 

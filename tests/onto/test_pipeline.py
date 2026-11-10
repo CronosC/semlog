@@ -1,3 +1,5 @@
+"""`build_log`: one build, from a cleaned store to an ontology file."""
+
 from __future__ import annotations
 
 import json

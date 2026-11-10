@@ -74,14 +74,19 @@ def test_the_attribute_history_extension_adds_its_class_and_properties():
     }
 
 
-def test_caused_by_relates_a_change_record_to_an_event_and_is_functional_under_dl(
-    awkward_store, tmp_path
-):
-    settings = OntoBuildSettings(ocel_extensions=[OCELExtension.ATTRIBUTE_HISTORY])
-    onto = emit(settings, tmp_path / "awkward.ofn", data=awkward_store)
+HISTORY = OntoBuildSettings(ocel_extensions=[OCELExtension.ATTRIBUTE_HISTORY])
+
+
+def test_caused_by_relates_a_change_record_to_an_event(awkward_store, tmp_path):
+    onto = emit(HISTORY, tmp_path / "awkward.ofn", data=awkward_store)
 
     assert onto.domains["caused_by"] == {"AttributeChange"}
     assert onto.ranges["caused_by"] == {"Event"}
+
+
+def test_caused_by_is_functional_under_dl(awkward_store, tmp_path):
+    onto = emit(HISTORY, tmp_path / "awkward.ofn", data=awkward_store)
+
     assert "caused_by" in onto.functional
 
 

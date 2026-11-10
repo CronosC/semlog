@@ -56,13 +56,17 @@ semanticlog = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --strict-config"
+addopts = "-ra --strict-markers --strict-config --dist loadgroup"
 markers = [
     "slow: runs a subprocess or otherwise takes seconds",
     "reasoner: needs a JVM and the OWL API",
 ]
 filterwarnings = [
-    "error::DeprecationWarning",
+    "error",
+    # PM4Py advises an optional reader on every XES read. semlog does not depend on it.
+    "ignore:Install the optional requirement `r4pm`:UserWarning:pm4py",
+    # pm4py.read_xes leaves the file open when the XML does not parse.
+    "ignore:unclosed file <_io\\.\\w+ name='[^']*\\.xes':ResourceWarning",
 ]
 
 [tool.coverage.run]

@@ -1,3 +1,5 @@
+"""Events and objects, as one class per type and one individual per row."""
+
 import pytest
 
 from semanticlog.core import vocabulary as vocab

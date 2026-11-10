@@ -1,3 +1,5 @@
+"""`BuildInputs`: what a build reads from the log or from a file."""
+
 from __future__ import annotations
 
 import pytest

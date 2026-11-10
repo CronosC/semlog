@@ -51,6 +51,7 @@ class Shape:
     inverse_pairs: int = 0
 
     def counts(self) -> dict[str, int]:
+        """Return the expected entity and axiom counts, keyed by what they count."""
         return {
             "classes": self.classes,
             "object_properties": self.object_properties,

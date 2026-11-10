@@ -1,3 +1,5 @@
+"""`InMemorySink`, which builds an owlapy ontology in memory."""
+
 from __future__ import annotations
 
 from semanticlog.core.enums import InverseRepresentation, OWLProfile

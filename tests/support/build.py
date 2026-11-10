@@ -1,17 +1,18 @@
 """Building one configuration through either sink and reading it back.
 
-`emit` is the one build helper the suite shares. `STREAMING` and `IN_MEMORY` name the two sinks.
+`emit` is the one build helper the suite shares, and `emit_through` also returns the sink. `STREAMING` and `IN_MEMORY` name the two sinks.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NamedTuple
 
 from semanticlog.core.vocabulary import DEFAULT_IRI
 from semanticlog.data.oced import OCEDStore
 from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.settings import OntoBuildSettings
-from semanticlog.onto.sinks import StreamingSink
+from semanticlog.onto.sinks import AxiomSink, StreamingSink
 from tests.support import stores
 from tests.support.emitted import Emitted
 from tests.support.functional import read_functional
@@ -23,12 +24,19 @@ IN_MEMORY = "in_memory"
 BACKENDS = (STREAMING, IN_MEMORY)
 
 
-def emit(
+class SinkCounts(NamedTuple):
+    """What a sink counted while it built."""
+
+    declared_by_kind: dict[str, int]
+    axiom_count: int
+
+
+def emit_through(
     spec: Configuration | OntoBuildSettings,
     path: Path,
     backend: str = STREAMING,
     data: OCEDStore | None = None,
-) -> Emitted:
+) -> tuple[Emitted, AxiomSink]:
     """Build one ontology, write it, and read it back.
 
     Args:
@@ -38,7 +46,7 @@ def emit(
         data: Store to build from. Defaults to the matrix store.
 
     Returns:
-        The ontology that was written, read back from the file.
+        The ontology that was written, read back from the file, and the closed sink that wrote it.
     """
     config = configured(spec)
     data = stores.build(stores.MATRIX_STORE) if data is None else data
@@ -50,9 +58,19 @@ def emit(
         OCEDOntoBuilder(DEFAULT_IRI, settings, sink=sink).build_ontology(
             data, config.inputs
         )
-        return read_functional(path)
+        return read_functional(path), sink
 
     builder = OCEDOntoBuilder(DEFAULT_IRI, settings)
     builder.build_ontology(data, config.inputs)
     builder.sink.save(str(path))
-    return read_rdf(path, DEFAULT_IRI, settings.tbox_iri)
+    return read_rdf(path, DEFAULT_IRI, settings.tbox_iri), builder.sink
+
+
+def emit(
+    spec: Configuration | OntoBuildSettings,
+    path: Path,
+    backend: str = STREAMING,
+    data: OCEDStore | None = None,
+) -> Emitted:
+    """Build one ontology, write it, and return it as read back from the file."""
+    return emit_through(spec, path, backend, data)[0]

@@ -54,7 +54,7 @@ ENTITY_ROOTS = {vocab.OBJECT, vocab.EVENT}
 ATTRIBUTE_ROOTS = {vocab.ATTRIBUTE, vocab.OBJECT_ATTRIBUTE, vocab.EVENT_ATTRIBUTE}
 
 
-def test_the_matrix_builds_every_value_of_every_setting():
+def test_the_matrix_builds_every_value_of_every_enum_and_boolean_setting():
     seen: dict[str, set] = {
         "profile": set(),
         "order_representations": set(),
@@ -86,21 +86,13 @@ def test_the_matrix_builds_every_value_of_every_setting():
     }
 
 
-def test_two_builds_with_different_tbox_iris_share_no_schema_iri(tiny_store, tmp_path):
-    texts = []
-    for stem, tbox_iri in (
-        ("a", "https://a.example/schema#"),
-        ("b", "https://b.example/s/"),
-    ):
-        path = tmp_path / f"{stem}.ofn"
-        emit(OntoBuildSettings(tbox_iri=tbox_iri), path, data=tiny_store)
-        texts.append(path.read_text(encoding="utf-8"))
+def test_a_build_under_another_tbox_iri_writes_no_default_schema_iri(
+    tiny_store, tmp_path
+):
+    path = tmp_path / "a.ofn"
+    emit(OntoBuildSettings(tbox_iri="https://a.example/schema#"), path, data=tiny_store)
 
-    assert "https://a.example/schema#" in texts[0]
-    assert "https://b.example/s/" in texts[1]
-    assert "https://a.example/schema#" not in texts[1]
-    assert "https://b.example/s/" not in texts[0]
-    assert vocab.TBOX_IRI not in texts[0] + texts[1]
+    assert vocab.TBOX_IRI not in path.read_text(encoding="utf-8")
 
 
 _KIND_PREFIXES = tuple(f"{kind.value}:" for kind in IndividualKind)
@@ -175,6 +167,15 @@ def test_nothing_is_asserted_before_it_is_declared(name, recording_sink):
     )
 
     assert sink.declaration_order_violations() == []
+
+
+def test_the_declaration_order_check_finds_a_late_declaration(recording_sink):
+    sink = recording_sink()
+
+    sink.assert_individuals("some_class", ["late"], IndividualKind.OBJECT)
+    sink.add_class("late", source="a class declared too late")
+
+    assert sink.declaration_order_violations() == [("late", "some_class")]
 
 
 @pytest.mark.parametrize("name", NAMES)

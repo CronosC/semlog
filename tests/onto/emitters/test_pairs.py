@@ -1,3 +1,5 @@
+"""Pairs of names read from a table, for a sink to assert."""
+
 import pandas as pd
 
 from semanticlog.onto.emitters.pairs import clean_pairs, reversed_pairs

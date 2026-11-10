@@ -1,3 +1,5 @@
+"""The base class of every emitter."""
+
 import pandas as pd
 
 from semanticlog.core.enums import IndividualKind, InverseRepresentation

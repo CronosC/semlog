@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from semanticlog.core.enums import EventOrderRepresentation, OCELExtension
+from semanticlog.core.errors import ConfigError
 from semanticlog.core.vocabulary import DEFAULT_IRI, NameCollisionError
 from semanticlog.onto.builder import OCEDOntoBuilder
 from semanticlog.onto.inputs import BuildInputs
@@ -23,7 +24,7 @@ def _declared(builder: OCEDOntoBuilder) -> set[str]:
 def test_a_build_that_fails_the_audit_writes_no_axioms(tiny_store):
     builder = OCEDOntoBuilder(NS, OntoBuildSettings(order_representations=[DF]))
 
-    with pytest.raises(ValueError, match="no_such_type"):
+    with pytest.raises(ConfigError, match="'no_such_type' is not an object type"):
         builder.build_ontology(tiny_store, BuildInputs(case_concepts=["no_such_type"]))
 
     assert _declared(builder) == set()

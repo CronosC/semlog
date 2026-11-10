@@ -1,6 +1,6 @@
 # tests
 
-The test suite for `semanticlog`. Each module with logic has one test file at the mirrored path: `semanticlog/data/cleaning/allocate.py` is tested in `tests/data/cleaning/test_allocate.py`, and a package `__init__.py` in a file named after its main function. Tests of a whole build live in `tests/output/`.
+The test suite for `semanticlog`. Each module with logic has one test file at the mirrored path: `semanticlog/data/cleaning/allocate.py` is tested in `tests/data/cleaning/test_allocate.py`, and a package `__init__.py` in a file named after its main function. Modules without logic of their own, such as `core/errors.py`, have no test file. Tests of a whole build live in `tests/output/`.
 
 ## Running
 
@@ -12,17 +12,33 @@ uv run pytest -n auto -m "not reasoner and not slow"
 uv run pytest tests/data/test_flatten.py -k timestamp
 ```
 
-The second command skips the tests that need a JVM (`reasoner`) and the ones that take seconds (`slow`). Reasoner tests skip themselves on a machine without a JVM.
+The second command skips the tests that need a JVM (`reasoner`) and the ones that run a subprocess or take seconds (`slow`). Every test that starts the JVM carries the `reasoner` marker, and the marked tests skip themselves on a machine without a JVM.
+
+Under `-n auto`, the reasoner tests run on one worker, because each worker that runs one starts its own JVM. `conftest.py` puts them in one `xdist_group`, and `--dist loadgroup` in `pyproject.toml` keeps a group on one worker.
+
+Every warning is an error, apart from the two PM4Py warnings `pyproject.toml` filters.
 
 ## Layout
 
 ```
-conftest.py   shared fixtures, and the JVM check for the reasoner marker
-fixtures/     the one committed OCEL 2.0 file
+conftest.py   shared fixtures, and the JVM check and xdist group for the reasoner marker
+fixtures/     the one committed OCEL 2.0 file, with a README on what it holds
 support/      importable helpers, never collected
 core/ data/ enrich/ onto/ cli/   one test file per module
 output/       whole builds, read back and checked
+test_*.py     checks over the whole package, listed below
 ```
+
+The test files at the root check the package as a whole:
+
+| File | What it checks |
+|---|---|
+| [test_layering.py](test_layering.py) | no layer imports a layer above it |
+| [test_imports.py](test_imports.py) | the exported names, and which modules load the JVM bridge and PM4Py |
+| [test_raises_docs.py](test_raises_docs.py) | every `Raises:` block names the classes its function raises |
+| [test_benchmarks.py](test_benchmarks.py) | each script in `benchmarks/` runs at a tiny size |
+
+[cli/test_entrypoint.py](cli/test_entrypoint.py) mirrors no module. It runs the console script and `python -m semanticlog.cli.main` as subprocesses.
 
 ## Stores
 
@@ -38,9 +54,9 @@ The build matrix builds from `awkward`. Every configuration meets a name cleanin
 
 ## Building and reading back
 
-[support/settings.py](support/settings.py) names the build configurations. `MATRIX` covers every value of every setting at least once, and `test_build_invariants.py` checks that it does. [support/build.py](support/build.py) holds `emit`, which builds one configuration through either sink.
+[support/settings.py](support/settings.py) names the build configurations. `MATRIX` covers every value of every enum and boolean setting at least once, and `test_build_invariants.py` checks that it does. [support/build.py](support/build.py) holds `emit`, which builds one configuration through either sink, and `emit_through`, which also returns the sink.
 
-The `built` fixture builds a configuration once per session and returns it as an [`Emitted`](support/emitted.py) object. `built_path` returns the file the same build wrote.
+The `built` fixture builds a configuration once per session and returns it as an [`Emitted`](support/emitted.py) object. `built_path` returns the file the same build wrote, and `built_counts` what its sink counted.
 
 `Emitted` holds what a build's axioms say. [support/functional.py](support/functional.py) reads functional syntax into it, and [support/rdf.py](support/rdf.py) reads RDF/XML. [support/owlapi.py](support/owlapi.py) asks the OWL API about the same file: its profile, its ontology annotations and its undeclared signature. Tests that use it need the `reasoner` marker.
 

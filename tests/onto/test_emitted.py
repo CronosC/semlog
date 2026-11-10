@@ -1,3 +1,5 @@
+"""The record of the individuals a build has asserted."""
+
 from semanticlog.onto.emitted import EmittedIndividuals
 
 

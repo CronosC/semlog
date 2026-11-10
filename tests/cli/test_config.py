@@ -32,11 +32,6 @@ def test_a_flag_beats_the_config_file_which_beats_the_default(ocel, write_config
     assert cfg.settings.derive_annotations is False
 
 
-def test_an_unknown_enum_value_names_the_setting(ocel):
-    with pytest.raises(ConfigError, match="profile: unknown value 'OWL2QL'"):
-        resolve(ocel, profile="OWL2QL")
-
-
 def test_an_unknown_value_given_as_a_flag_names_the_flag(ocel):
     with pytest.raises(ConfigError, match="^--profile: unknown value 'foo'"):
         resolve(ocel, profile="foo")

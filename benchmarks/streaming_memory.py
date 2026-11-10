@@ -7,6 +7,7 @@ and name.
 
 from __future__ import annotations
 
+import argparse
 import gc
 import resource
 import sys
@@ -29,6 +30,7 @@ from semanticlog.onto.sinks import StreamingSink
 
 ACTS = 5
 NAMES = ["ann", "bo", "cy"]
+DEFAULT_EVENTS = 200_000
 
 
 def rss() -> float:
@@ -122,17 +124,39 @@ def measure(n: int, distinct: bool, path: Path) -> None:
     print("  kept             : " + ", ".join(f"{k}={v:,}" for k, v in kept.items()))
 
 
-def main(n: int, directory: Path) -> None:
+def run(n: int, directory: Path) -> None:
+    """Measure a low and a high cardinality log of n events, writing into `directory`."""
     print(f"events           : {n:,}")
     for distinct in (False, True):
-        print("high cardinality" if distinct else "low cardinality")
-        measure(n, distinct, directory / f"bench-{distinct}.ofn")
+        mode = "high" if distinct else "low"
+        print(f"{mode} cardinality")
+        measure(n, distinct, directory / f"{mode}.ofn")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the measurement and return the exit code."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "events",
+        nargs="?",
+        type=int,
+        default=DEFAULT_EVENTS,
+        help=f"events per log (default: {DEFAULT_EVENTS:,})",
+    )
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        type=Path,
+        help="where to keep the written files (default: a temporary directory)",
+    )
+    args = parser.parse_args(argv)
+    if args.directory is not None:
+        run(args.events, args.directory)
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            run(args.events, Path(tmp))
+    return 0
 
 
 if __name__ == "__main__":
-    events = int(sys.argv[1]) if len(sys.argv) > 1 else 200_000
-    if len(sys.argv) > 2:
-        main(events, Path(sys.argv[2]))
-    else:
-        with tempfile.TemporaryDirectory() as tmp:
-            main(events, Path(tmp))
+    sys.exit(main())

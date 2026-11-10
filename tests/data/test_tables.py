@@ -1,3 +1,5 @@
+"""The tables an OCED store is made of."""
+
 from unittest.mock import Mock
 
 import pandas as pd
@@ -39,10 +41,6 @@ def test_every_column_outside_the_keys_of_a_view_is_an_attribute():
 
 def test_the_structural_columns_of_a_view_leave_out_its_id():
     assert _view().structural == ["ts"]
-
-
-def test_new_relations_hold_both_families_empty():
-    assert Relations().families == {RelationKind.E2O: {}, RelationKind.O2O: {}}
 
 
 def test_relations_are_listed_event_to_object_first():

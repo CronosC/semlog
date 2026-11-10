@@ -70,14 +70,21 @@ def test_keeping_no_files_is_rejected():
         FileLog("logs", keep=0)
 
 
-def test_leaving_a_file_log_detaches_its_handler_and_closing_again_changes_nothing(
-    tmp_path,
-):
+def test_leaving_a_file_log_detaches_its_handler(tmp_path):
     root = logging.getLogger()
     before = len(root.handlers)
     with FileLog(tmp_path) as log:
         log.switch_to("stem")
         assert len(root.handlers) == before + 1
+
+    assert len(root.handlers) == before
+
+
+def test_closing_a_left_file_log_again_changes_nothing(tmp_path):
+    root = logging.getLogger()
+    before = len(root.handlers)
+    with FileLog(tmp_path) as log:
+        log.switch_to("stem")
 
     log.close()
 

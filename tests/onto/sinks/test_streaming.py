@@ -1,3 +1,5 @@
+"""`StreamingSink`, which writes OWL functional syntax to a file."""
+
 from __future__ import annotations
 
 import pytest
@@ -16,7 +18,9 @@ def path(tmp_path):
 
 @pytest.fixture
 def streaming(path):
-    return StreamingSink(str(path), DEFAULT_IRI, PROFILE)
+    sink = StreamingSink(str(path), DEFAULT_IRI, PROFILE)
+    yield sink
+    sink.abort()
 
 
 def test_a_schema_name_is_written_under_the_tbox_prefix(streaming, path):

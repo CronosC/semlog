@@ -1,3 +1,5 @@
+"""`DeclareResult`: mined DECLARE constraints per case concept, and their JSON file."""
+
 from __future__ import annotations
 
 import json

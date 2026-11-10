@@ -1,7 +1,8 @@
 """OCEL 2.0 logs written in the JSON, XML and SQLite forms.
 
 `small_log` describes a log in the JSON form, and `write_log` writes any such
-description in the form a suffix names.
+description in the form a suffix names. `events_in_order` reads the event order
+back from a loaded store.
 """
 
 # S608: the SQLite logs are built from table names the tests chose.
@@ -9,6 +10,9 @@ description in the form a suffix names.
 
 import json
 import sqlite3
+
+from semanticlog.data.oced import OCEDStore
+from semanticlog.data.tables import EntityKind
 
 EPOCH = "1970-01-01T00:00:00Z"
 
@@ -237,3 +241,14 @@ def write_log(tmp_path, log: dict, suffix: str = ".jsonocel") -> str:
     else:
         write_sqlite(log, path)
     return str(path)
+
+
+def events_in_order(store: OCEDStore) -> list[str]:
+    """Return the event ids of a store, sorted by the position the loader gave them."""
+    positions: dict[str, int] = {}
+    for activity in store.types(EntityKind.EVENT):
+        table = store.table(EntityKind.EVENT, activity)
+        positions.update(
+            zip(table.data[table.id], table.data[table.position], strict=True)
+        )
+    return sorted(positions, key=positions.__getitem__)
